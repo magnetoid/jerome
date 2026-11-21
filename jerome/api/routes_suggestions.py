@@ -2,9 +2,8 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
-from sqlalchemy.orm import Session
 
-from jerome.api.deps import Principal, current_principal, get_session
+from jerome.api.deps import Principal, SessionDep, current_principal
 from jerome.api.schemas import (
     BlockOut,
     BulkBody,
@@ -20,7 +19,6 @@ from jerome.types import Category, Severity, Source, Status
 
 router = APIRouter()
 
-SessionDep = Annotated[Session, Depends(get_session)]
 PrincipalDep = Annotated[Principal, Depends(current_principal)]
 
 

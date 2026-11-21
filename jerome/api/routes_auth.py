@@ -4,15 +4,14 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
 
 from jerome.api.auth import LoginThrottle, client_ip
 from jerome.api.deps import (
     SESSION_COOKIE,
     Principal,
+    SessionDep,
     clear_session_cookie,
     current_principal,
-    get_session,
     get_settings_dep,
     set_session_cookie,
 )
@@ -25,7 +24,6 @@ from jerome.orm import User
 # routes ask for the principal themselves.
 router = APIRouter()
 
-SessionDep = Annotated[Session, Depends(get_session)]
 SettingsDep = Annotated[Settings, Depends(get_settings_dep)]
 PrincipalDep = Annotated[Principal, Depends(current_principal)]
 

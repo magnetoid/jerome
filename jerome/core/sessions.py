@@ -9,6 +9,11 @@ from sqlalchemy.orm import Session
 
 from jerome.orm import User, UserSession
 
+# A live session's slide is written at most this often. Writing on every request would hold
+# a row lock on the session for the whole request transaction, queueing a browser's other
+# requests behind any long one and blocking revocation.
+SLIDE_INTERVAL = timedelta(minutes=5)
+
 
 def _hash(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
@@ -33,7 +38,8 @@ def create_session(session: Session, user: User, *, days: int, now: datetime) ->
 def resolve_session(session: Session, token: str, *, days: int, now: datetime) -> User | None:
     """The session's user, or None if the session is unknown, expired or the user inactive.
 
-    A live session slides: it now expires ``days`` after this use.
+    A live session slides: once ``last_seen_at`` is ``SLIDE_INTERVAL`` old, this use is
+    recorded and the session now expires ``days`` after it.
     """
     row = session.scalar(select(UserSession).where(UserSession.token_hash == _hash(token)))
     if row is None or row.expires_at <= now:
@@ -41,9 +47,10 @@ def resolve_session(session: Session, token: str, *, days: int, now: datetime) -
     user = session.get(User, row.user_id)
     if user is None or not user.active:
         return None
-    row.last_seen_at = now
-    row.expires_at = now + timedelta(days=days)
-    session.flush()
+    if now - row.last_seen_at >= SLIDE_INTERVAL:
+        row.last_seen_at = now
+        row.expires_at = now + timedelta(days=days)
+        session.flush()
     return user
 
 

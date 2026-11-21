@@ -1,10 +1,11 @@
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import func, select
 from starlette.requests import Request
 
+from jerome.api.app import create_app
 from jerome.api.auth import LoginThrottle, client_ip
 from jerome.core.users import create_user, reset_password, update_user
-from jerome.orm import Decision, Suggestion, UserSession
+from jerome.orm import Decision, Suggestion, User, UserSession
 from tests.fixtures.suggestions import add_one
 
 PASSWORD = "correct-horse-1"
@@ -260,3 +261,50 @@ def test_openapi_declares_bearer_scheme(client):
     assert {name: []} in spec["paths"]["/v1/books"]["get"]["security"]
     assert {name: []} in spec["paths"]["/v1/auth/me"]["get"]["security"]
     assert "security" not in spec["paths"]["/v1/auth/login"]["post"]
+
+
+class _SnapshotOnResponseStart:
+    """ASGI wrapper: when a response starts, read what is *committed* through a separate
+    connection. The TestClient only returns once the app has finished, so back-to-back
+    requests alone cannot show whether the commit happened before the response was sent."""
+
+    def __init__(self, app, engine):
+        self.app, self.engine, self.seen = app, engine, {}
+
+    async def __call__(self, scope, receive, send):
+        async def checked_send(message):
+            if message["type"] == "http.response.start":
+                with self.engine.connect() as conn:
+                    self.seen[(scope["method"], scope["path"])] = (
+                        conn.scalar(select(func.count()).select_from(UserSession)),
+                        conn.scalar(select(User.must_change_password)),
+                    )
+            await send(message)
+
+        await self.app(scope, receive, checked_send)
+
+
+def test_auth_writes_are_committed_before_the_response_is_sent(
+    engine, session_factory, test_settings
+):
+    with session_factory() as s:
+        _, temporary = create_user(s, "ana@x.org", "Ana")
+        s.commit()
+    app = create_app(test_settings)  # the real get_session: each request commits for real
+    probe = _SnapshotOnResponseStart(app, engine)
+    try:
+        c = TestClient(probe, base_url="https://testserver")
+        r = c.post("/v1/auth/login", json={"email": "ana@x.org", "password": temporary})
+        assert r.status_code == 200
+        assert probe.seen[("POST", "/v1/auth/login")] == (1, True)  # session row already durable
+        assert c.get("/v1/auth/me").status_code == 200  # the new cookie works at once
+
+        body = {"current": temporary, "new": "a-new-password-1"}
+        assert c.post("/v1/auth/password", headers=WEB, json=body).status_code == 204
+        assert probe.seen[("POST", "/v1/auth/password")] == (1, False)
+        assert c.get("/v1/books").status_code == 200
+
+        assert c.post("/v1/auth/logout", headers=WEB).status_code == 204
+        assert probe.seen[("POST", "/v1/auth/logout")] == (0, False)
+    finally:
+        app.state.engine.dispose()

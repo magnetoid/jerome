@@ -49,6 +49,15 @@ def get_session(request: Request) -> Iterator[Session]:
         yield session
 
 
+# Every route and dependency takes the session through this one alias. scope="function" ends
+# the transaction (commit, or rollback on error) when the endpoint and its serialization
+# finish, *before* the response is sent: a client that sees success can rely on the write.
+# (The default "request" scope commits only after the response has gone out.) It must be
+# the same everywhere: FastAPI caches dependencies by callable and scope, so mixing scopes
+# would open two transactions in one request.
+SessionDep = Annotated[Session, Depends(get_session, scope="function")]
+
+
 def get_storage(request: Request) -> Storage:
     return Storage(request.app.state.settings.data_dir)
 
@@ -96,7 +105,7 @@ def clear_session_cookie(response: Response, settings: Settings) -> None:
 def current_principal(
     request: Request,
     response: Response,
-    session: Annotated[Session, Depends(get_session)],
+    session: SessionDep,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
 ) -> Principal:
     """Who is calling: an API key (Bearer) first, else the session cookie."""

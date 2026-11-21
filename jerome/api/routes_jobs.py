@@ -4,9 +4,8 @@ from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy.orm import Session
 
-from jerome.api.deps import current_actor, get_registry, get_session
+from jerome.api.deps import SessionDep, current_actor, get_registry
 from jerome.jobs import service
 from jerome.jobs.estimate import ALL_PASSES, PassName, estimate_job
 from jerome.models import Registry
@@ -14,7 +13,6 @@ from jerome.orm import Job
 
 router = APIRouter()
 
-SessionDep = Annotated[Session, Depends(get_session)]
 RegistryDep = Annotated[Registry, Depends(get_registry)]
 Passes = Annotated[list[PassName], Field(min_length=1)]
 MaxCost = Annotated[Decimal, Field(gt=0, max_digits=12, decimal_places=4)]

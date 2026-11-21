@@ -3,9 +3,8 @@ from typing import Annotated
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Query, Response, UploadFile
-from sqlalchemy.orm import Session
 
-from jerome.api.deps import current_actor, get_session, get_settings_dep, get_storage, read_limited
+from jerome.api.deps import SessionDep, current_actor, get_settings_dep, get_storage, read_limited
 from jerome.config import Settings
 from jerome.core.exports import ExportFormat, ReviewFilters, export_book
 from jerome.core.review_imports import import_review
@@ -30,7 +29,7 @@ def content_disposition(filename: str) -> str:
 def export(
     book_id: int,
     format: Annotated[ExportFormat, Query()],
-    session: Annotated[Session, Depends(get_session)],
+    session: SessionDep,
     storage: Annotated[Storage, Depends(get_storage)],
     actor: Annotated[str, Depends(current_actor)],
     min_severity: Annotated[Severity | None, Query()] = None,
@@ -50,7 +49,7 @@ def export(
 def create_review_import(
     book_id: int,
     file: Annotated[UploadFile, File()],
-    session: Annotated[Session, Depends(get_session)],
+    session: SessionDep,
     settings: Annotated[Settings, Depends(get_settings_dep)],
     actor: Annotated[str, Depends(current_actor)],
 ):
@@ -62,7 +61,7 @@ def create_review_import(
 def get_review_import(
     book_id: int,
     import_id: int,
-    session: Annotated[Session, Depends(get_session)],
+    session: SessionDep,
 ):
     row = session.get(ReviewImport, import_id)
     if row is None or row.book_id != book_id:

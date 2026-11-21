@@ -2,9 +2,8 @@ from dataclasses import asdict
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Form, Response, UploadFile
-from sqlalchemy.orm import Session
 
-from jerome.api.deps import get_session, get_settings_dep, get_storage, read_limited
+from jerome.api.deps import SessionDep, get_settings_dep, get_storage, read_limited
 from jerome.api.schemas import (
     BookOut,
     ChapterOut,
@@ -19,7 +18,6 @@ from jerome.types import Variant
 
 router = APIRouter()
 
-SessionDep = Annotated[Session, Depends(get_session)]
 StorageDep = Annotated[Storage, Depends(get_storage)]
 SettingsDep = Annotated[Settings, Depends(get_settings_dep)]
 

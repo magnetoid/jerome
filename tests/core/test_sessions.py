@@ -34,6 +34,22 @@ def test_session_round_trip_and_sliding_expiry(session):
     assert resolve_session(session, token + "x", days=30, now=later) is None
 
 
+def test_resolve_within_five_minutes_writes_nothing(session):
+    """The slide is written at most every five minutes, so most requests take no row lock."""
+    user, _ = create_user(session, "ana@x.org", "Ana")
+    token = create_session(session, user, days=30, now=NOW)
+    row = session.scalar(select(UserSession).where(UserSession.user_id == user.id))
+
+    soon = NOW + timedelta(minutes=4, seconds=59)
+    assert resolve_session(session, token, days=30, now=soon) is user
+    assert (row.last_seen_at, row.expires_at) == (NOW, NOW + timedelta(days=30))
+    assert row not in session.dirty
+
+    stale = NOW + timedelta(minutes=5)
+    assert resolve_session(session, token, days=30, now=stale) is user
+    assert (row.last_seen_at, row.expires_at) == (stale, stale + timedelta(days=30))
+
+
 def test_expired_session_is_refused(session):
     user, _ = create_user(session, "ana@x.org", "Ana")
     token = create_session(session, user, days=30, now=NOW)
