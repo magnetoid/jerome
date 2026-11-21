@@ -121,10 +121,15 @@ def _ins_at(ops: Sequence[Opcode]) -> dict[int, int]:
     return {i1: k for k, (tag, i1, i2, _, _) in enumerate(ops) if tag == "insert"}
 
 
-def _pending_hits(pending: Sequence[PendingRevision], ms: int, me: int) -> bool:
+def _pending_hits(pending: Sequence[PendingRevision], ms: int, me: int, sv: SuggestionView) -> bool:
+    zero = sv.start == sv.end
     for r in pending:
-        if r.start == r.end:
-            if ms < r.start < me or ms == me == r.start:
+        if zero:
+            # a zero-width suggestion owns only an insertion of its own text at its point
+            if r.start == r.end and ms <= r.start <= me and r.text == sv.replacement:
+                return True
+        elif r.start == r.end:
+            if ms < r.start < me:
                 return True
         elif r.start < me and r.end > ms:
             return True
@@ -142,10 +147,9 @@ class _Plan:
     claimed: set[int] = field(default_factory=set)  # insertion opcodes claimed by a suggestion
     consumed: set[int] = field(default_factory=set)  # opcodes accounted for by a suggestion
     blocked: list[tuple[int, int]] = field(default_factory=list)
-    segs: list[tuple[int, int, str]] = field(default_factory=list)
+    skipped: list[int] = field(default_factory=list)
     extra: list[EditorChange] = field(default_factory=list)
     results: dict[int, tuple[Result, str | None]] = field(default_factory=dict)
-    notes: list[str] = field(default_factory=list)
 
     def ins_text(self, pos: int) -> str | None:
         k = self.ins.get(pos)
@@ -154,7 +158,8 @@ class _Plan:
         return self.text[self.ops[k][3] : self.ops[k][4]]
 
 
-def _plan_suggestion(pl: _Plan, sv: SuggestionView, pending: Sequence[PendingRevision]) -> None:
+def _bounds(pl: _Plan, sv: SuggestionView) -> tuple[list[int], int, int, int | None, int | None]:
+    """Opcodes overlapping the span, and the reviewed range ``[ms, me)`` they map it to."""
     ops, s, e = pl.ops, sv.start, sv.end
     zero = s == e
     over = [
@@ -176,7 +181,13 @@ def _plan_suggestion(pl: _Plan, sv: SuggestionView, pending: Sequence[PendingRev
         me = ops[ins_e][3]
     else:
         me = _linear(ops, e)
-    me = max(ms, me)
+    return over, ms, max(ms, me), ins_s, ins_e
+
+
+def _plan_suggestion(pl: _Plan, sv: SuggestionView, pending: bool) -> None:
+    ops, s, e = pl.ops, sv.start, sv.end
+    zero = s == e
+    over, ms, me, ins_s, ins_e = _bounds(pl, sv)
     pl.consumed.update(over)
     solid = [k for k in over if ops[k][1] != ops[k][2]]
     left = any(ops[k][1] < s for k in solid)
@@ -185,16 +196,12 @@ def _plan_suggestion(pl: _Plan, sv: SuggestionView, pending: Sequence[PendingRev
     hi = max([e] + [ops[k][2] for k in solid])
     core = pl.text[ms:me]
     pl.blocked.append((lo, hi))
-    if _pending_hits(pending, ms, me):
+    if pending:
         pl.results[sv.id] = ("unchanged", None)
-        pl.segs.append((lo, hi, core))
         return
     if left and right or (zero and solid):
         pl.results[sv.id] = ("unchanged", None)
-        pl.segs.append((lo, hi, core))
-        pl.notes.append(
-            f"suggestion {sv.id}: the editor's change runs across its edges; left as it was"
-        )
+        pl.skipped.append(sv.id)
         return
     if left or right:
         fits = [
@@ -204,14 +211,10 @@ def _plan_suggestion(pl: _Plan, sv: SuggestionView, pending: Sequence[PendingRev
         ]
         if not fits:
             pl.results[sv.id] = ("unchanged", None)
-            pl.segs.append((lo, hi, core))
-            pl.notes.append(
-                f"suggestion {sv.id}: the editor's change runs across its edges; left as it was"
-            )
+            pl.skipped.append(sv.id)
             return
         name, f = max(fits, key=lambda t: len(t[1]))
         pl.results[sv.id] = (name, None)  # type: ignore[assignment]
-        pl.segs.append((s, e, f))
         if right:
             rest = core[len(f) :]
             pl.extra.append(EditorChange(e, hi, pl.original[e:hi], rest, False))
@@ -235,10 +238,8 @@ def _plan_suggestion(pl: _Plan, sv: SuggestionView, pending: Sequence[PendingRev
                 if use_r and ins_e is not None:
                     pl.claimed.add(ins_e)
                 pl.results[sv.id] = (name, None)  # type: ignore[assignment]
-                pl.segs.append((s, e, target))
                 return
     pl.results[sv.id] = ("edited", core)
-    pl.segs.append((s, e, core))
 
 
 def _expand_regions(pl: _Plan) -> list[EditorChange]:
@@ -309,17 +310,163 @@ def _bound_end(pl: _Plan, b: int, inc: set[int]) -> int:
     return _linear(pl.ops, b)
 
 
-def _reconstructs(pl: _Plan, changes: Sequence[EditorChange]) -> bool:
-    segs = pl.segs + [(c.start, c.end, c.replacement) for c in changes]
+def _reconstructs(
+    original: str,
+    text: str,
+    suggestions: Sequence[SuggestionView],
+    results: dict[int, tuple[Result, str | None]],
+    changes: Sequence[EditorChange],
+) -> bool:
+    """Whether what Jerome will hold (unchanged = original) plus the editor changes is ``text``."""
+    segs = [(c.start, c.end, c.replacement) for c in changes if not c.pending]
+    for sv in suggestions:
+        result, final = results[sv.id]
+        written = {
+            "unchanged": sv.original,
+            "accepted": sv.replacement,
+            "rejected": sv.original,
+            "edited": final or "",
+        }[result]
+        segs.append((sv.start, sv.end, written))
     out: list[str] = []
     pos = 0
     for a, b, t in sorted(segs, key=lambda x: (x[0], x[1])):
         if a < pos:
             return False
-        out += [pl.original[pos:a], t]
+        out += [original[pos:a], t]
         pos = b
-    out.append(pl.original[pos:])
-    return "".join(out) == pl.text
+    out.append(original[pos:])
+    return "".join(out) == text
+
+
+def _candidate(
+    original: str, svs: Sequence[SuggestionView], accepted: set[int]
+) -> tuple[str, list[tuple[int, int, int, int]]] | None:
+    """The original with the accepted suggestions applied, and each span as (cs, ce, s, e)."""
+    out: list[str] = []
+    spans: list[tuple[int, int, int, int]] = []
+    pos = n = 0
+    for sv in svs:
+        if sv.start < pos:
+            return None
+        out.append(original[pos : sv.start])
+        n += sv.start - pos
+        piece = sv.replacement if sv.id in accepted else original[sv.start : sv.end]
+        out.append(piece)
+        spans.append((n, n + len(piece), sv.start, sv.end))
+        n += len(piece)
+        pos = sv.end
+    out.append(original[pos:])
+    return "".join(out), spans
+
+
+def _exact_assignments(
+    original: str, text: str, svs: Sequence[SuggestionView], pending: Sequence[PendingRevision]
+) -> list[tuple[set[int], set[int]]]:
+    """(accepted, still-pending) id sets that reproduce ``text`` exactly; stops after two.
+
+    A suggestion is pending only where a pending revision sits exactly on its span (a deletion
+    over its text, or an insertion of its text for a zero-width one), in base-view offsets.
+    """
+    dels = {(r.start, r.end) for r in pending if r.kind == "del"}
+    inss = {(r.start, r.text) for r in pending if r.kind == "ins"}
+    found: list[tuple[set[int], set[int]]] = []
+    budget = [20000]
+
+    def walk(i: int, o: int, t: int, acc: tuple[int, ...], pend: tuple[int, ...]) -> None:
+        if len(found) > 1 or budget[0] <= 0:
+            return
+        budget[0] -= 1
+        if i == len(svs):
+            if text[t:] == original[o:]:
+                found.append((set(acc), set(pend)))
+            return
+        sv = svs[i]
+        if sv.start < o:
+            budget[0] = 0  # overlapping spans: no clear answer
+            return
+        gap = original[o : sv.start]
+        if not text.startswith(gap, t):
+            return
+        t += len(gap)
+        end = t + len(sv.original)
+        if sv.start == sv.end:
+            is_pending = (t, sv.replacement) in inss
+        else:
+            is_pending = (t, end) in dels
+        if is_pending:
+            if text.startswith(sv.original, t):
+                walk(i + 1, sv.end, end, acc, (*pend, sv.id))
+            return
+        if text.startswith(sv.replacement, t):
+            walk(i + 1, sv.end, t + len(sv.replacement), (*acc, sv.id), pend)
+        if text.startswith(sv.original, t):
+            walk(i + 1, sv.end, end, acc, pend)
+
+    walk(0, 0, 0, (), ())
+    return found if budget[0] > 0 else []
+
+
+def _assign(
+    original: str,
+    text: str,
+    svs: Sequence[SuggestionView],
+    pending: set[int],
+    revisions: Sequence[PendingRevision],
+) -> tuple[dict[int, tuple[Result, str | None]], list[EditorChange]] | None:
+    """Accepted/rejected assignment of the decided suggestions; None if it is not clear."""
+
+    def results(accepted: set[int], pend: set[int]) -> dict[int, tuple[Result, str | None]]:
+        return {
+            sv.id: ("unchanged", None)
+            if sv.id in pend
+            else (("accepted" if sv.id in accepted else "rejected"), None)
+            for sv in svs
+        }
+
+    exact = _exact_assignments(original, text, svs, revisions)
+    if len(exact) == 1:
+        return results(*exact[0]), []
+    free = [sv for sv in svs if sv.id not in pending]
+    if exact or not free or len(free) > 8:
+        return None
+    cands = []
+    for mask in range(1 << len(free)):
+        accepted = {free[i].id for i in range(len(free)) if mask >> i & 1}
+        built = _candidate(original, svs, accepted)
+        if built is None:
+            return None
+        cands.append((accepted, *built))
+    kept = []
+    for accepted, cand, spans in cands:
+        full = difflib.SequenceMatcher(None, cand, text, autojunk=False).get_opcodes()
+        rops = [op for op in full if op[0] != "equal"]
+        if all(i2 < cs or i1 > ce for _, i1, i2, _, _ in rops for cs, ce, _, _ in spans):
+            size = sum(max(i2 - i1, j2 - j1) for _, i1, i2, j1, j2 in rops)
+            kept.append((size, accepted, cand, spans, full))
+    if not kept:
+        return None
+    kept.sort(key=lambda k: k[0])
+    if len(kept) > 1 and kept[0][0] == kept[1][0]:
+        return None
+    _, accepted, cand, spans, full = kept[0]
+    pl = _Plan(cand, text, full, _ins_at(full))
+    pl.blocked = [(cs, ce) for cs, ce, _, _ in spans]
+
+    def to_original(c: int, *, end: bool) -> int:
+        delta = sum(
+            (e - s) - (ce - cs)
+            for cs, ce, s, e in spans
+            if ce < c or (ce == c and (not end or cs < ce))
+        )
+        return c + delta
+
+    changes = []
+    for ch in _expand_regions(pl):
+        a = to_original(ch.start, end=False)
+        b = to_original(ch.end, end=True) if ch.end > ch.start else a
+        changes.append(EditorChange(a, b, original[a:b], ch.replacement, False))
+    return results(accepted, pending), changes
 
 
 def classify_block(
@@ -329,21 +476,35 @@ def classify_block(
     block_id: int | None = None,
 ) -> BlockOutcome:
     text = reviewed.text
+    label = f"block {block_id}" if block_id is not None else "block"
+    svs = sorted(suggestions, key=lambda v: (v.start, v.end, v.id))
     ops = difflib.SequenceMatcher(None, original, text, autojunk=False).get_opcodes()
     pl = _Plan(original, text, ops, _ins_at(ops))
-    for sv in sorted(suggestions, key=lambda v: (v.start, v.end, v.id)):
-        _plan_suggestion(pl, sv, reviewed.pending)
-    changes = _expand_regions(pl)
-    if not _reconstructs(pl, changes + pl.extra):
-        label = f"block {block_id}" if block_id is not None else "block"
-        return BlockOutcome(
-            {sv.id: ("unchanged", None) for sv in suggestions},
-            [],
-            [f"{label}: could not align the editor's changes reliably; left as it was"],
+    pending = {sv.id for sv in svs if _pending_hits(reviewed.pending, *_bounds(pl, sv)[1:3], sv)}
+    found = _assign(original, text, svs, pending, reviewed.pending)
+    if found is not None:
+        results, changes = found
+    else:
+        for sv in svs:
+            _plan_suggestion(pl, sv, sv.id in pending)
+        if pl.skipped:
+            ids = ", ".join(map(str, pl.skipped))
+            return _fallback(
+                suggestions,
+                f"{label}: the editor's change runs across the edges of suggestion(s) {ids}; "
+                "left as it was",
+            )
+        results = pl.results
+        changes = sorted(_expand_regions(pl) + pl.extra, key=lambda c: (c.start, c.end))
+    if not _reconstructs(original, text, svs, results, changes):
+        return _fallback(
+            suggestions, f"{label}: could not align the editor's changes reliably; left as it was"
         )
-    changes = sorted(changes + pl.extra, key=lambda c: (c.start, c.end))
-    changes += _pending_changes(original, ops, reviewed.pending)
-    return BlockOutcome(pl.results, changes, pl.notes)
+    return BlockOutcome(results, changes + _pending_changes(original, ops, reviewed.pending))
+
+
+def _fallback(suggestions: Sequence[SuggestionView], note: str) -> BlockOutcome:
+    return BlockOutcome({sv.id: ("unchanged", None) for sv in suggestions}, [], [note])
 
 
 def _bookmark_id(rb: ReviewedBlock) -> int | None:

@@ -324,3 +324,30 @@ def test_filtered_copy_has_no_structural_note(session, tmp_storage):
     ).data
     r = import_review(session, book.id, copy, actor="ed")
     assert r.notes == [] and r.counts["unchanged"] == 2
+
+
+def test_neighbouring_accepted_suggestions_write_clean_text(session, tmp_storage):
+    from tests.fixtures.docx_builders import all_blocks
+
+    book = import_book(
+        session,
+        tmp_storage,
+        filename="n.docx",
+        data=make_docx(["teh hte fox.", "teh cat sat."]),
+        variant="en-US",
+    )
+    first, second = _blocks(session, book)
+    add_one(session, first, 0, 3, "teh", "the")
+    add_one(session, first, 4, 7, "hte", "the")
+    add_one(session, second, 0, 3, "teh", "the")
+    add_one(session, second, 3, 4, " ", ", ")
+    copy = _copy(session, tmp_storage, book)
+    r = import_review(
+        session,
+        book.id,
+        simulate_word_review(copy, accept=["the", ", "]),
+        actor="ed",
+    )
+    assert r.counts["accepted"] == 4 and r.counts["edited"] == 0 and r.notes == []
+    clean = export_book(session, tmp_storage, book.id, "docx-clean").data
+    assert [b.text for b in all_blocks(clean)] == ["the the fox.", "the, cat sat."]
