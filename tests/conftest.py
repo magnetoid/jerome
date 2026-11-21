@@ -59,3 +59,24 @@ def book_factory(session):
         return book
 
     return make
+
+
+@pytest.fixture
+def tmp_storage(tmp_path):
+    from jerome.storage import Storage
+
+    return Storage(tmp_path / "data")
+
+
+@pytest.fixture
+def imported_docx_book(session, tmp_storage):
+    from jerome.core.books import import_book
+    from tests.fixtures.docx_builders import make_docx
+
+    return import_book(
+        session,
+        tmp_storage,
+        filename="manuscript.docx",
+        data=make_docx(["# One", "Teh first paragraph.", "Second one here."]),
+        variant="en-GB",
+    )

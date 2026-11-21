@@ -31,6 +31,7 @@ packages = ["jerome"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = [
+    "slow: large-input performance tests",
     "integration: needs an external program (e.g. LibreOffice); skipped when it is missing",
 ]
 filterwarnings = [
