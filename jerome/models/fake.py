@@ -1,3 +1,5 @@
+from collections.abc import Callable
+
 from jerome.models.base import CompletionResult, SystemPart, Usage
 
 
@@ -6,7 +8,7 @@ class FakeProvider:
 
     def __init__(
         self,
-        responses: list[dict | Exception],
+        responses: list[dict | Exception | Callable[[dict], dict]],
         local: bool = False,
         usage: Usage = Usage(1000, 150),  # noqa: B008
         token_count: int | None = None,
@@ -24,6 +26,8 @@ class FakeProvider:
         item = self.responses.pop(0)
         if isinstance(item, Exception):
             raise item
+        if callable(item):  # a side effect that runs during the call and returns the reply
+            item = item(kwargs)
         return CompletionResult(item, self.usage, self.name, kwargs.get("model", "fake"))
 
     def count_tokens(self, *, model: str, system: list[SystemPart], user: str) -> int | None:

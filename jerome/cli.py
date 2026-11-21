@@ -26,3 +26,27 @@ def keys_create(name: str) -> None:
 def serve(host: str = "127.0.0.1", port: int = 8000) -> None:
     """Run the REST API."""
     uvicorn.run("jerome.api.app:create_app", factory=True, host=host, port=port)
+
+
+@app.command()
+def worker(poll_interval: float = 1.0) -> None:
+    """Run the background job worker."""
+    from sqlalchemy.orm import sessionmaker
+
+    from jerome.jobs.worker import WorkerDeps, work_forever
+    from jerome.models import build_registry
+    from jerome.proofread.languagetool import LanguageToolClient
+
+    settings = get_settings()
+    engine = make_engine(settings.database_url)
+    deps = WorkerDeps(
+        registry=build_registry(settings),
+        lt=LanguageToolClient(settings.languagetool_url),
+        webhook_secret=settings.webhook_secret,
+    )
+    try:
+        work_forever(sessionmaker(engine), deps, poll_interval)
+    except KeyboardInterrupt:
+        typer.echo("worker stopped")
+    finally:
+        engine.dispose()

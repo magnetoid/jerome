@@ -5,7 +5,7 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import create_engine, text
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 ROOT = Path(__file__).resolve().parent.parent
 TEST_DB_URL = os.environ.get(
@@ -43,6 +43,18 @@ def session(engine):
         sess.close()
         outer.rollback()
         conn.close()
+
+
+@pytest.fixture
+def session_factory(engine):
+    """Real commits, for code that opens its own sessions (the worker). Every application
+    table is truncated afterwards, so savepoint-based tests are unaffected."""
+    from jerome.orm import Base
+
+    yield sessionmaker(engine)
+    tables = ", ".join(t.name for t in Base.metadata.sorted_tables)
+    with engine.begin() as conn:
+        conn.execute(text(f"TRUNCATE {tables} RESTART IDENTITY CASCADE"))
 
 
 @pytest.fixture
