@@ -1,0 +1,43 @@
+[project]
+name = "jerome"
+version = "0.1.0"
+description = "Book proofreading and translation engine"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "sqlalchemy>=2",
+    "psycopg[binary]",
+    "alembic",
+    "pydantic-settings",
+    "python-multipart",
+    "lxml",
+    "pysbd",
+    "httpx",
+    "anthropic",
+    "typer",
+]
+
+[dependency-groups]
+dev = ["pytest", "respx", "ruff", "python-docx"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["jerome"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = [
+    # pysbd ships invalid escape sequences in regex strings (third-party noise)
+    "ignore::SyntaxWarning",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
