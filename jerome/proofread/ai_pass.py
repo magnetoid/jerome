@@ -180,6 +180,35 @@ def _locate(text: str, original: str, n: int) -> tuple[int, int, _Fold | None] |
     return starts[pos], ends[pos + len(needle) - 1], _Fold(pos, starts, ends)
 
 
+def _anchored_opcodes(a: str, b: str) -> list[tuple[str, int, int, int, int]]:
+    """``difflib`` opcodes for ``a`` -> ``b`` with the common prefix and suffix pinned in
+    place first, so repeated text ("'teh'teh") cannot pull an unchanged stretch out of
+    position. Adjacent equal stretches are merged."""
+    p = 0
+    while p < min(len(a), len(b)) and a[p] == b[p]:
+        p += 1
+    s = 0
+    while s < min(len(a), len(b)) - p and a[len(a) - 1 - s] == b[len(b) - 1 - s]:
+        s += 1
+    ops: list[tuple[str, int, int, int, int]] = []
+    if p:
+        ops.append(("equal", 0, p, 0, p))
+    middle = difflib.SequenceMatcher(None, a[p : len(a) - s], b[p : len(b) - s], autojunk=False)
+    ops.extend((t, i1 + p, i2 + p, j1 + p, j2 + p) for t, i1, i2, j1, j2 in middle.get_opcodes())
+    if s:
+        ops.append(("equal", len(a) - s, len(a), len(b) - s, len(b)))
+    merged: list[tuple[str, int, int, int, int]] = []
+    for op in ops:
+        if op[1] == op[2] and op[3] == op[4]:
+            continue  # an empty middle
+        if merged and op[0] == "equal" and merged[-1][0] == "equal":
+            _, i1, _, j1, _ = merged[-1]
+            merged[-1] = ("equal", i1, op[2], j1, op[4])
+        else:
+            merged.append(op)
+    return merged
+
+
 def _rebuild_replacement(text: str, echoed: str, replacement: str, fold: _Fold) -> str:
     """The model's replacement with the typography of the book where it kept the text as is.
 
@@ -189,16 +218,15 @@ def _rebuild_replacement(text: str, echoed: str, replacement: str, fold: _Fold) 
     cannot be undone cleanly, the model's replacement is returned unchanged.
     """
     folded, se, ee = _normalize(echoed)
-    k_of: dict[int, int] = {}  # echoed index -> folded index of its (first) folded character
-    for k in range(len(folded) - 1, -1, -1):
+    # echoed index -> every folded index it produced ("…" folds to three dots)
+    ks_of: dict[int, list[int]] = {}
+    for k in range(len(folded)):
         for i in range(se[k], ee[k]):
-            k_of[i] = k
+            ks_of.setdefault(i, []).append(k)
     out: list[str] = []
-    for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(
-        None, echoed, replacement, autojunk=False
-    ).get_opcodes():
+    for tag, i1, i2, j1, j2 in _anchored_opcodes(echoed, replacement):
         if tag == "equal":
-            ks = sorted({k_of[i] for i in range(i1, i2)})
+            ks = sorted({k for i in range(i1, i2) for k in ks_of[i]})
             # every folded character must lie wholly inside the region ...
             if any(se[k] < i1 or ee[k] > i2 for k in ks) or ks != list(range(ks[0], ks[-1] + 1)):
                 return replacement

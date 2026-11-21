@@ -244,6 +244,26 @@ def test_tolerant_replacement_falls_back_when_a_fold_is_split():
     assert c[0].replacement == "wait… no"
 
 
+def test_tolerant_match_keeps_the_books_three_dots_when_the_model_echoes_an_ellipsis():
+    # the book has three plain dots; the model folded them into one "…"
+    text = "so teh... now"
+    c, _ = one(text, original="teh…", replacement="the…")
+    assert c[0].original == "teh..."
+    assert c[0].replacement == "the..."
+    c, _ = one(text, original="teh… now", replacement="the… now")
+    assert c[0].replacement == "the... now"
+    c, _ = one(text, original="so teh…", replacement="so the…")
+    assert c[0].replacement == "so the..."
+
+
+def test_tolerant_replacement_keeps_book_typography_in_place_with_repeated_text():
+    # a plain diff aligns the echoed "'teh" with the second "'teh" and moves the ’
+    text = "’teh'teh end"
+    c, _ = one(text, original="'teh'teh", replacement="'the'teh")
+    assert c[0].original == "’teh'teh"
+    assert c[0].replacement == "’the'teh"
+
+
 def test_tolerant_match_that_changes_nothing_is_dropped():
     text = "He said “hi”."
     c, dropped = one(text, original='said "hi"', replacement='said "hi"')
