@@ -136,3 +136,53 @@ def block(session, tmp_storage):
         variant="en-US",
     )
     return session.query(Block).filter_by(book_id=book.id).one()
+
+
+@pytest.fixture
+def docx_book_with_decisions(session, tmp_storage):
+    from jerome.core.books import import_book
+    from jerome.core.suggestions import decide
+    from jerome.orm import Block
+    from tests.fixtures.docx_builders import make_docx
+    from tests.fixtures.suggestions import add_one
+
+    book = import_book(
+        session,
+        tmp_storage,
+        filename="draft.docx",
+        data=make_docx(["teh cat sat", "an open suggestion stays teh"]),
+        variant="en-US",
+    )
+    first, second = session.query(Block).filter_by(book_id=book.id).order_by(Block.id).all()
+    decide(session, add_one(session, first, 0, 3, "teh", "the").id, "accept", actor="a")
+    s = add_one(session, first, 8, 11, "sat", "sits")
+    decide(session, s.id, "edit", actor="a", replacement="sat down")
+    add_one(session, second, 25, 28, "teh", "the")
+    return book
+
+
+@pytest.fixture
+def epub_book_with_decisions(session, tmp_storage):
+    from jerome.core.books import import_book
+    from jerome.core.suggestions import decide
+    from jerome.orm import Block
+    from tests.fixtures.epub_builders import make_epub
+    from tests.fixtures.suggestions import add_one
+
+    book = import_book(
+        session,
+        tmp_storage,
+        filename="novel.epub",
+        data=make_epub([("Chapter One", ["teh cat sat", "an open suggestion stays teh"])]),
+        variant="en-US",
+    )
+    blocks = session.query(Block).filter_by(book_id=book.id).order_by(Block.id).all()
+    para, other = blocks[1], blocks[2]
+    decide(session, add_one(session, para, 0, 3, "teh", "the").id, "accept", actor="a")
+    add_one(session, other, 25, 28, "teh", "the")
+    return book
+
+
+@pytest.fixture
+def epub_book_id(epub_book_with_decisions):
+    return epub_book_with_decisions.id
