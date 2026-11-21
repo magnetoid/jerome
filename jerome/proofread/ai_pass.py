@@ -224,5 +224,10 @@ def run_ai_pass(
     result = provider.complete(
         model=model, system=system, user=user, schema=SUGGESTIONS_SCHEMA, effort=effort
     )
-    candidates, dropped = parse_suggestions(result.data, chunk)
+    try:
+        candidates, dropped = parse_suggestions(result.data, chunk)
+    except ModelOutputError as exc:  # the call was billed even though its output is unusable
+        raise ModelOutputError(
+            str(exc), usage=result.usage, model=result.model, provider=result.provider
+        ) from exc
     return AiPassResult(candidates, dropped, result)

@@ -205,8 +205,10 @@ def test_claude_refusal_without_details_raises():
 
 def test_claude_max_tokens_raises_output_error():
     provider, _ = claude(claude_json_reply({}, stop_reason="max_tokens", raw='{"a":'))
-    with pytest.raises(ModelOutputError):
+    with pytest.raises(ModelOutputError) as err:
         call(provider)
+    assert err.value.usage is not None and err.value.usage.input_tokens > 0
+    assert err.value.provider == "anthropic" and err.value.model
 
 
 def test_claude_invalid_json_raises_output_error():

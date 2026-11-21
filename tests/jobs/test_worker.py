@@ -7,12 +7,13 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
-from sqlalchemy import func, select, update
+from sqlalchemy import event, func, select, update
 
+from jerome.errors import Conflict
 from jerome.jobs.service import cancel_job, resume_job
 from jerome.jobs.webhooks import send_webhook
 from jerome.jobs.worker import WorkerDeps, claim_task, run_task, work_forever
-from jerome.models import FakeProvider, ModelRefusal, Registry
+from jerome.models import FakeProvider, ModelOutputError, ModelRefusal, Registry, Usage
 from jerome.models.base import CompletionResult
 from jerome.orm import Block, Book, Chapter, Job, JobTask, ModelUsage, StyleSheetRow, Suggestion
 from jerome.proofread.languagetool import LanguageToolClient
@@ -499,3 +500,117 @@ def test_work_forever_runs_claimed_task_then_stops(
     stop.set()
     assert not t.is_alive()
     assert job(session_factory, job_two_chunks.job_id).status == "completed"
+
+
+class BilledErrorProvider(FakeProvider):
+    """Raises a billed refusal / output error, as the adapters do."""
+
+    def __init__(self, error):
+        super().__init__([])
+        self.error = error
+
+    def complete(self, **kwargs):
+        self.calls.append(kwargs)
+        raise self.error
+
+
+def billed(cls):
+    return cls("x", usage=Usage(1000, 150), model="claude-opus-5-5", provider="fake")
+
+
+def test_parse_failure_after_billed_call_records_usage(session_factory, test_settings, lt_route):
+    ids = build(session_factory, [[BIG]])
+    deps = make_deps(test_settings, FakeProvider([{"not": "suggestions"}]))
+    run_task(session_factory, ids.task_id, deps)
+    t = task(session_factory, ids.task_id)
+    assert (t.chunks_done, t.attempts, t.status) == (0, 1, "queued")
+    assert count(session_factory, ModelUsage) == 1
+    assert job(session_factory, ids.job_id).cost_actual == Decimal("0.0070")
+
+
+def test_adapter_output_error_records_usage(session_factory, test_settings, lt_route):
+    ids = build(session_factory, [[BIG]])
+    deps = make_deps(test_settings, BilledErrorProvider(billed(ModelOutputError)))
+    run_task(session_factory, ids.task_id, deps)
+    assert task(session_factory, ids.task_id).attempts == 1
+    assert job(session_factory, ids.job_id).cost_actual == Decimal("0.0070")
+
+
+def test_billed_refusal_records_usage_and_cost(session_factory, test_settings, lt_route):
+    ids = build(session_factory, [[BIG]])
+    deps = make_deps(test_settings, BilledErrorProvider(billed(ModelRefusal)))
+    run_task(session_factory, ids.task_id, deps)
+    t = task(session_factory, ids.task_id)
+    assert t.status == "done" and t.attempts == 0 and t.chunks_done == 1
+    j = job(session_factory, ids.job_id)
+    assert j.cost_actual == Decimal("0.0070") and j.stats["refusals"] == 1
+    assert count(session_factory, ModelUsage) == 1
+
+
+class Interleave:
+    """Runs `action` once, just before the first statement matching `match` executes."""
+
+    def __init__(self, engine, match, action):
+        self.engine, self.match, self.action, self.fired = engine, match, action, False
+
+    def __enter__(self):
+        event.listen(self.engine, "before_cursor_execute", self._hook)
+
+    def __exit__(self, *exc):
+        event.remove(self.engine, "before_cursor_execute", self._hook)
+
+    def _hook(self, conn, cursor, statement, *rest):
+        if not self.fired and self.match in statement:
+            self.fired = True
+            self.action()
+
+
+def test_claim_does_not_resurrect_cancelled_job(session_factory, engine, job_two_chapters):
+    def cancel():
+        with session_factory() as s:
+            cancel_job(s, job_two_chapters.job_id)
+            s.commit()
+
+    hook = Interleave(engine, "UPDATE jobs SET status", cancel)
+    with hook, session_factory() as s:
+        assert claim_task(s) == job_two_chapters.task_ids[0]
+    assert hook.fired
+    assert job(session_factory, job_two_chapters.job_id).status == "cancelled"
+
+
+def test_start_on_cancelled_job_requeues_task(session_factory, test_settings, job_two_chunks):
+    with session_factory() as s:
+        cancel_job(s, job_two_chunks.job_id)
+        s.execute(update(JobTask).values(status="running"))  # claimed just before the cancel
+        s.commit()
+    deps = make_deps(test_settings, FakeProvider([]))
+    run_task(session_factory, job_two_chunks.task_id, deps)
+    t = task(session_factory, job_two_chunks.task_id)
+    assert t.status == "queued" and t.not_before is None
+    assert job(session_factory, job_two_chunks.job_id).status == "cancelled"
+
+
+def test_start_does_not_reset_task_finished_by_another_worker(
+    session_factory, engine, test_settings, job_two_chunks
+):
+    def other_worker_finishes():
+        with session_factory() as s:
+            s.execute(update(JobTask).values(status="done", chunks_done=2))
+            s.commit()
+
+    provider = FakeProvider([])
+    with Interleave(engine, "FROM jobs", other_worker_finishes):
+        run_task(session_factory, job_two_chunks.task_id, make_deps(test_settings, provider))
+    t = task(session_factory, job_two_chunks.task_id)
+    assert t.status == "done" and provider.calls == []
+
+
+def test_cancel_job_waits_for_a_locked_job(session_factory, job_two_chunks):
+    # cancel_job re-reads the row under lock: a status committed meanwhile is respected
+    with session_factory() as s:
+        s.get(Job, job_two_chunks.job_id)  # cached as queued
+        with session_factory() as other:
+            other.execute(update(Job).values(status="completed"))
+            other.commit()
+        with pytest.raises(Conflict):
+            cancel_job(s, job_two_chunks.job_id)

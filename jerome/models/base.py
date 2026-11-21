@@ -26,11 +26,28 @@ class CompletionResult:
     model: str
 
 
-class ModelRefusal(JeromeError):
+class BilledError(JeromeError):
+    """A failure after a response arrived. Carries what the call cost, when known."""
+
+    def __init__(
+        self,
+        message: str = "",
+        *,
+        usage: Usage | None = None,
+        model: str | None = None,
+        provider: str | None = None,
+    ):
+        super().__init__(message)
+        self.usage = usage
+        self.model = model
+        self.provider = provider
+
+
+class ModelRefusal(BilledError):
     """The model declined to answer."""
 
 
-class ModelOutputError(JeromeError):
+class ModelOutputError(BilledError):
     """The model's output was truncated or not valid JSON."""
 
 

@@ -21,6 +21,15 @@ def get_job(session: Session, job_id: int) -> Job:
     return job
 
 
+def _lock_job(session: Session, job_id: int) -> Job:
+    """The job row, locked and refreshed, so status changes serialize with the worker."""
+    stmt = select(Job).where(Job.id == job_id).with_for_update()
+    job = session.scalars(stmt.execution_options(populate_existing=True)).one_or_none()
+    if job is None:
+        raise NotFound(f"job {job_id}")
+    return job
+
+
 def _active_job_id(session: Session, book_id: int, *, exclude: int | None = None) -> int | None:
     stmt = select(Job.id).where(Job.book_id == book_id, Job.status.in_(ACTIVE_JOB_STATUSES))
     if exclude is not None:
@@ -71,7 +80,7 @@ def create_job(
 
 
 def cancel_job(session: Session, job_id: int) -> Job:
-    job = get_job(session, job_id)
+    job = _lock_job(session, job_id)
     if job.status not in ACTIVE_JOB_STATUSES:
         raise Conflict(f"job {job_id} is {job.status} and cannot be cancelled")
     job.status = "cancelled"
@@ -81,12 +90,18 @@ def cancel_job(session: Session, job_id: int) -> Job:
 
 
 def resume_job(session: Session, job_id: int, *, max_cost: Decimal | None = None) -> Job:
-    job = get_job(session, job_id)
+    job = _lock_job(session, job_id)
     if job.status not in RESUMABLE:
         raise Conflict(f"job {job_id} is {job.status} and cannot be resumed")
     if _active_job_id(session, job.book_id, exclude=job.id) is not None:
         raise _already_active(job.book_id)
-    for task in job.tasks:
+    tasks = session.scalars(
+        select(JobTask)
+        .where(JobTask.job_id == job.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    for task in tasks:
         if task.status != "done":  # queued, failed, or left running by a dead worker
             task.status = "queued"
             task.attempts = 0

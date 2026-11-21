@@ -45,15 +45,17 @@ class OpenAICompatProvider:
         resp.raise_for_status()
         payload = resp.json()
         choice = payload["choices"][0]
+        u = payload.get("usage") or {}
+        usage = Usage(u.get("prompt_tokens", 0), u.get("completion_tokens", 0))
+        model_name = payload.get("model", model)
+        billed = {"usage": usage, "model": model_name, "provider": self.name}
         if choice.get("finish_reason") == "length":
-            raise ModelOutputError("Model output was truncated (max tokens reached)")
+            raise ModelOutputError("Model output was truncated (max tokens reached)", **billed)
         try:
             data = json.loads(choice["message"]["content"])
         except (TypeError, ValueError) as exc:
-            raise ModelOutputError("Model output was not valid JSON") from exc
-        u = payload.get("usage") or {}
-        usage = Usage(u.get("prompt_tokens", 0), u.get("completion_tokens", 0))
-        return CompletionResult(data, usage, self.name, payload.get("model", model))
+            raise ModelOutputError("Model output was not valid JSON", **billed) from exc
+        return CompletionResult(data, usage, self.name, model_name)
 
     def count_tokens(self, *, model: str, system: list[SystemPart], user: str) -> int | None:
         return None

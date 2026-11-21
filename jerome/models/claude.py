@@ -60,19 +60,6 @@ class ClaudeProvider:
                 **({"effort": effort} if effort else {}),
             },
         )
-        if response.stop_reason == "refusal":
-            details = getattr(response, "stop_details", None)
-            category = getattr(details, "category", None)
-            raise ModelRefusal(
-                "Model refused the request" + (f" (category: {category})" if category else "")
-            )
-        if response.stop_reason == "max_tokens":
-            raise ModelOutputError("Model output was truncated (max_tokens reached)")
-        text = "".join(b.text for b in response.content if b.type == "text")
-        try:
-            data = json.loads(text)
-        except ValueError as exc:
-            raise ModelOutputError("Model output was not valid JSON") from exc
         u = response.usage
         usage = Usage(
             u.input_tokens,
@@ -80,6 +67,21 @@ class ClaudeProvider:
             u.cache_read_input_tokens or 0,
             u.cache_creation_input_tokens or 0,
         )
+        billed = {"usage": usage, "model": response.model, "provider": self.name}
+        if response.stop_reason == "refusal":
+            details = getattr(response, "stop_details", None)
+            category = getattr(details, "category", None)
+            raise ModelRefusal(
+                "Model refused the request" + (f" (category: {category})" if category else ""),
+                **billed,
+            )
+        if response.stop_reason == "max_tokens":
+            raise ModelOutputError("Model output was truncated (max_tokens reached)", **billed)
+        text = "".join(b.text for b in response.content if b.type == "text")
+        try:
+            data = json.loads(text)
+        except ValueError as exc:
+            raise ModelOutputError("Model output was not valid JSON", **billed) from exc
         return CompletionResult(data, usage, self.name, response.model)
 
     def count_tokens(self, *, model: str, system: list[SystemPart], user: str) -> int | None:

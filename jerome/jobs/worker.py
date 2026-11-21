@@ -26,7 +26,8 @@ from jerome.core.suggestions import add_candidates
 from jerome.errors import JeromeError
 from jerome.jobs.estimate import included_chapter_ids
 from jerome.jobs.webhooks import send_webhook
-from jerome.models import ModelRefusal, Registry, cost
+from jerome.models import ModelRefusal, Registry, Usage, cost
+from jerome.models.base import BilledError
 from jerome.models.pricing import Price
 from jerome.orm import Book, Job, JobTask, ModelUsage
 from jerome.proofread.ai_pass import AiPassResult, Chunk, chunk_blocks, run_ai_pass
@@ -106,17 +107,29 @@ def claim_task(session: Session, *, now: datetime | None = None) -> int | None:
         return None
     task.status = "running"
     task.started_at = now
-    session.execute(update(Job).where(Job.id == task.job_id).values(status="running"))
-    task_id = task.id
+    task_id, job_id = task.id, task.job_id
+    session.commit()  # release the task lock first: every other path locks job, then task
+    # Guarded: a cancel, pause or failure committed since the select must not be overwritten.
+    session.execute(
+        update(Job).where(Job.id == job_id, Job.status == "queued").values(status="running")
+    )
     session.commit()
     return task_id
 
 
 @dataclass
+class _Billed:
+    usage: Usage
+    model: str
+    provider: str
+
+
+@dataclass
 class _Paid:
-    """A model call that returned but whose chunk is not yet committed."""
+    """A model call that was billed but whose chunk is not yet committed."""
 
     result: AiPassResult | None = None
+    billed: _Billed | None = None
 
 
 @dataclass
@@ -132,9 +145,16 @@ class _Plan:
     chunks: list[Chunk] = field(default_factory=list)
 
 
+def _lock_job(session: Session, job_id: int) -> Job:
+    stmt = select(Job).where(Job.id == job_id).with_for_update()
+    return session.scalars(stmt.execution_options(populate_existing=True)).one()
+
+
 def _lock_job_task(session: Session, job_id: int, task_id: int) -> tuple[Job, JobTask]:
-    job = session.scalars(select(Job).where(Job.id == job_id).with_for_update()).one()
-    task = session.scalars(select(JobTask).where(JobTask.id == task_id).with_for_update()).one()
+    """Lock job, then task, always in that order. Both are refreshed from the locked rows."""
+    job = _lock_job(session, job_id)
+    stmt = select(JobTask).where(JobTask.id == task_id).with_for_update()
+    task = session.scalars(stmt.execution_options(populate_existing=True)).one()
     return job, task
 
 
@@ -155,12 +175,16 @@ def run_task(session_factory: SessionFactory, task_id: int, deps: WorkerDeps) ->
 
 def _start(sf: SessionFactory, task_id: int, deps: WorkerDeps) -> _Plan | None:
     with sf() as s:
-        task = s.get(JobTask, task_id)
-        if task is None or task.status == "done":
+        job_id = s.scalar(select(JobTask.job_id).where(JobTask.id == task_id))
+        if job_id is None:
             return None
-        job = s.scalars(select(Job).where(Job.id == task.job_id).with_for_update()).one()
-        task = s.scalars(select(JobTask).where(JobTask.id == task_id).with_for_update()).one()
-        if task.status == "done" or job.status not in ACTIVE:
+        job, task = _lock_job_task(s, job_id, task_id)
+        if task.status == "done":
+            return None
+        if job.status not in ACTIVE:  # stop case: put the task back on the queue
+            task.status = "queued"
+            task.not_before = None
+            s.commit()
             return None
         task.status = "running"
         task.started_at = task.started_at or deps.now()
@@ -186,7 +210,7 @@ def _precheck(sf: SessionFactory, task_id: int, plan: _Plan, deps: WorkerDeps) -
     """True if the next chunk may start. Otherwise the task goes back to the queue."""
     note = None
     with sf() as s:
-        job = s.scalars(select(Job).where(Job.id == plan.job_id).with_for_update()).one()
+        job = _lock_job(s, plan.job_id)
         go = job.status in ACTIVE
         if go and job.cost_actual >= job.max_cost:
             job.status = "paused_cost_cap"
@@ -213,10 +237,10 @@ def _run_chapter(
     while index < len(plan.chunks):
         if not _precheck(sf, task_id, plan, deps):
             return
-        paid.result = None
+        paid.result = paid.billed = None
         if not _run_chunk(sf, task_id, plan, plan.chunks[index], index, deps, paid):
             return
-        paid.result = None
+        paid.result = paid.billed = None
         index += 1
 
 
@@ -233,25 +257,31 @@ def _price(registry: Registry, model: str, configured: str) -> Price | None:
 
 
 def _usage_row(
-    session: Session, job: Job, result: AiPassResult, registry: Registry, configured: str
+    session: Session, job: Job, billed: _Billed, registry: Registry, configured: str
 ) -> None:
-    res = result.result
-    price = _price(registry, res.model, configured)
-    amount = cost(price, res.usage) if price is not None else Decimal(0)
+    usage = billed.usage
+    price = _price(registry, billed.model, configured)
+    amount = cost(price, usage) if price is not None else Decimal(0)
     session.add(
         ModelUsage(
             job_id=job.id,
             pass_name="ai",
-            provider=res.provider,
-            model=res.model,
-            input_tokens=res.usage.input_tokens,
-            output_tokens=res.usage.output_tokens,
-            cache_read_tokens=res.usage.cache_read_tokens,
-            cache_write_tokens=res.usage.cache_write_tokens,
+            provider=billed.provider,
+            model=billed.model,
+            input_tokens=usage.input_tokens,
+            output_tokens=usage.output_tokens,
+            cache_read_tokens=usage.cache_read_tokens,
+            cache_write_tokens=usage.cache_write_tokens,
             cost=amount,
         )
     )
     job.cost_actual = job.cost_actual + amount
+
+
+def _billed_from(exc: Exception) -> _Billed | None:
+    if isinstance(exc, BilledError) and exc.usage is not None:
+        return _Billed(exc.usage, exc.model or "", exc.provider or "")
+    return None
 
 
 def _bump(stats: dict[str, Any], **deltas: int) -> dict[str, Any]:
@@ -287,9 +317,12 @@ def _run_chunk(
             configured = cfg.model
             try:
                 paid.result = run_ai_pass(chunk, plan.style, provider, cfg.model, cfg.effort)
-            except ModelRefusal:
+            except ModelRefusal as exc:
                 refusals = 1
+                paid.billed = _billed_from(exc)  # a refusal can still be billed
             else:
+                res = paid.result.result
+                paid.billed = _Billed(res.usage, res.model, res.provider)
                 candidates += paid.result.candidates
                 dropped += paid.result.dropped
     merged = merge_candidates(candidates)
@@ -297,8 +330,8 @@ def _run_chunk(
     note = None
     with sf() as s:
         job, task = _lock_job_task(s, plan.job_id, task_id)
-        if paid.result is not None:
-            _usage_row(s, job, paid.result, deps.registry, configured)
+        if paid.billed is not None:
+            _usage_row(s, job, paid.billed, deps.registry, configured)
         if task.chunks_done != index:
             s.commit()  # another worker committed this chunk; keep only the spend
             return False
@@ -376,11 +409,12 @@ def _record_failure(
 ) -> None:
     note = None
     with sf() as s:
-        task = s.get(JobTask, task_id)
-        job, task = _lock_job_task(s, task.job_id, task_id)
-        if paid.result is not None:  # the model call returned: keep its spend on the books
+        job_id = s.scalar(select(JobTask.job_id).where(JobTask.id == task_id))
+        job, task = _lock_job_task(s, job_id, task_id)
+        billed = paid.billed or _billed_from(exc)
+        if billed is not None:  # the model call was billed: keep its spend on the books
             configured = deps.registry.settings.models.get("ai", {}).get("model", "")
-            _usage_row(s, job, paid.result, deps.registry, configured)
+            _usage_row(s, job, billed, deps.registry, configured)
         task.attempts += 1
         task.error = repr(exc)[:2000]
         if task.attempts >= MAX_ATTEMPTS:
