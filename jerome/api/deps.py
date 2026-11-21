@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from jerome.config import Settings
 from jerome.core.keys import verify_api_key
 from jerome.db import session_scope
+from jerome.jobs.worker import WorkerDeps
 from jerome.models import Registry
 from jerome.storage import Storage
 
@@ -17,6 +18,11 @@ def get_settings_dep(request: Request) -> Settings:
 
 def get_registry(request: Request) -> Registry:
     return request.app.state.registry
+
+
+def get_worker_deps(request: Request) -> WorkerDeps:
+    state = request.app.state
+    return WorkerDeps(state.registry, state.lt_client, state.settings.webhook_secret)
 
 
 def get_session(request: Request) -> Iterator[Session]:

@@ -118,7 +118,7 @@ def claim_task(session: Session, *, now: datetime | None = None) -> int | None:
 
 
 @dataclass
-class _Billed:
+class Billed:
     usage: Usage
     model: str
     provider: str
@@ -129,7 +129,7 @@ class _Paid:
     """A model call that was billed but whose chunk is not yet committed."""
 
     result: AiPassResult | None = None
-    billed: _Billed | None = None
+    billed: Billed | None = None
 
 
 @dataclass
@@ -244,7 +244,7 @@ def _run_chapter(
         index += 1
 
 
-def _price(registry: Registry, model: str, configured: str) -> Price | None:
+def price_for(registry: Registry, model: str, configured: str) -> Price | None:
     try:
         return registry.price(model)
     except JeromeError:
@@ -256,15 +256,23 @@ def _price(registry: Registry, model: str, configured: str) -> Price | None:
         return None
 
 
-def _usage_row(
-    session: Session, job: Job, billed: _Billed, registry: Registry, configured: str
-) -> None:
+def usage_row(
+    session: Session,
+    billed: Billed,
+    registry: Registry,
+    configured: str,
+    *,
+    job_id: int | None = None,
+    api_key_name: str | None = None,
+) -> Decimal:
+    """Add the ModelUsage row for a billed AI call and return its cost."""
     usage = billed.usage
-    price = _price(registry, billed.model, configured)
+    price = price_for(registry, billed.model, configured)
     amount = cost(price, usage) if price is not None else Decimal(0)
     session.add(
         ModelUsage(
-            job_id=job.id,
+            job_id=job_id,
+            api_key_name=api_key_name,
             pass_name="ai",
             provider=billed.provider,
             model=billed.model,
@@ -275,12 +283,20 @@ def _usage_row(
             cost=amount,
         )
     )
-    job.cost_actual = job.cost_actual + amount
+    return amount
 
 
-def _billed_from(exc: Exception) -> _Billed | None:
+def _usage_row(
+    session: Session, job: Job, billed: Billed, registry: Registry, configured: str
+) -> None:
+    job.cost_actual = job.cost_actual + usage_row(
+        session, billed, registry, configured, job_id=job.id
+    )
+
+
+def billed_from(exc: Exception) -> Billed | None:
     if isinstance(exc, BilledError) and exc.usage is not None:
-        return _Billed(exc.usage, exc.model or "", exc.provider or "")
+        return Billed(exc.usage, exc.model or "", exc.provider or "")
     return None
 
 
@@ -319,10 +335,10 @@ def _run_chunk(
                 paid.result = run_ai_pass(chunk, plan.style, provider, cfg.model, cfg.effort)
             except ModelRefusal as exc:
                 refusals = 1
-                paid.billed = _billed_from(exc)  # a refusal can still be billed
+                paid.billed = billed_from(exc)  # a refusal can still be billed
             else:
                 res = paid.result.result
-                paid.billed = _Billed(res.usage, res.model, res.provider)
+                paid.billed = Billed(res.usage, res.model, res.provider)
                 candidates += paid.result.candidates
                 dropped += paid.result.dropped
     merged = merge_candidates(candidates)
@@ -411,7 +427,7 @@ def _record_failure(
     with sf() as s:
         job_id = s.scalar(select(JobTask.job_id).where(JobTask.id == task_id))
         job, task = _lock_job_task(s, job_id, task_id)
-        billed = paid.billed or _billed_from(exc)
+        billed = paid.billed or billed_from(exc)
         if billed is not None:  # the model call was billed: keep its spend on the books
             configured = deps.registry.settings.models.get("ai", {}).get("model", "")
             _usage_row(s, job, billed, deps.registry, configured)
