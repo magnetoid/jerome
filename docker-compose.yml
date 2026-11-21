@@ -1,3 +1,16 @@
+x-app: &app
+  build: .
+  env_file:
+    - path: .env
+      required: false
+  environment:
+    JEROME_DATABASE_URL: postgresql+psycopg://jerome:jerome@db:5432/jerome
+    JEROME_LANGUAGETOOL_URL: http://languagetool:8010
+    # ANTHROPIC_API_KEY comes from .env or your shell, never from this file.
+    ANTHROPIC_API_KEY:
+  volumes:
+    - jerome-data:/data
+
 services:
   db:
     image: postgres:16
@@ -10,6 +23,45 @@ services:
     volumes:
       - jerome-db:/var/lib/postgresql/data
       - ./docker/postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jerome -d jerome"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  languagetool:
+    image: erikvl87/languagetool:6.8
+    ports:
+      - "127.0.0.1:8010:8010"
+
+  api:
+    <<: *app
+    command: ["sh", "-c", "jerome db-upgrade && jerome serve --host 0.0.0.0"]
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      languagetool:
+        condition: service_started
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8000/openapi.json')"
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  worker:
+    <<: *app
+    command: ["jerome", "worker"]
+    depends_on:
+      api:
+        condition: service_healthy
 
 volumes:
   jerome-db:
+  jerome-data:

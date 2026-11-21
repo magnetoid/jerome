@@ -1,9 +1,15 @@
+from decimal import Decimal, InvalidOperation
+from pathlib import Path
+from typing import Annotated
+
 import typer
 import uvicorn
 
+import jerome
 from jerome.config import get_settings
 from jerome.core.keys import create_api_key
 from jerome.db import make_engine, session_scope
+from jerome.errors import JeromeError, UnsupportedDocumentError
 
 app = typer.Typer(help="Jerome: book proofreading engine", no_args_is_help=True)
 keys_app = typer.Typer(help="Manage API keys", no_args_is_help=True)
@@ -50,3 +56,132 @@ def worker(poll_interval: float = 1.0) -> None:
         typer.echo("worker stopped")
     finally:
         engine.dispose()
+
+
+def _registry():
+    """The model registry for CLI commands. A seam: tests replace it with a fake."""
+    from jerome.models.registry import build_registry
+
+    return build_registry(get_settings())
+
+
+@app.command("db-upgrade")
+def db_upgrade() -> None:
+    """Apply database migrations (alembic upgrade head)."""
+    from alembic import command
+    from alembic.config import Config
+
+    root = Path(jerome.__file__).resolve().parent.parent
+    cfg = Config()
+    cfg.set_main_option("script_location", str(root / "migrations"))
+    cfg.set_main_option("sqlalchemy.url", get_settings().database_url.replace("%", "%%"))
+    command.upgrade(cfg, "head")
+
+
+@app.command("import")
+def import_cmd(
+    path: Path,
+    variant: Annotated[str, typer.Option(help="en-US, en-GB, de-DE, de-AT or de-CH")],
+    local_only: Annotated[
+        bool, typer.Option(help="Never send this book to a remote model")
+    ] = False,
+) -> None:
+    """Import a DOCX or EPUB and print the new book id."""
+    from jerome.core.books import import_book
+    from jerome.storage import Storage
+
+    settings = get_settings()
+    engine = make_engine(settings.database_url)
+    try:
+        with session_scope(engine) as session:
+            book = import_book(
+                session,
+                Storage(settings.data_dir),
+                filename=path.name,
+                data=path.read_bytes(),
+                variant=variant,  # type: ignore[arg-type]
+                local_only=local_only,
+            )
+            book_id = book.id
+    except UnsupportedDocumentError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(2) from exc
+    finally:
+        engine.dispose()
+    typer.echo(book_id)
+
+
+@app.command()
+def proofread(
+    book_id: int,
+    max_cost: Annotated[str, typer.Option(help="Cost cap in USD")],
+    passes: Annotated[
+        list[str] | None, typer.Option("--passes", help="languagetool, ai, consistency")
+    ] = None,
+) -> None:
+    """Show the cost estimate, ask for confirmation, then queue a proofreading job."""
+    from jerome.jobs.estimate import ALL_PASSES, estimate_job
+    from jerome.jobs.service import create_job
+
+    try:
+        cap = Decimal(max_cost)
+    except InvalidOperation as exc:
+        raise typer.BadParameter(f"{max_cost!r} is not a number", param_hint="--max-cost") from exc
+    chosen = tuple(passes) if passes else tuple(ALL_PASSES)
+    engine = make_engine(get_settings().database_url)
+    try:
+        with session_scope(engine) as session:
+            registry = _registry()
+            est = estimate_job(session, registry, book_id, passes=chosen)  # type: ignore[arg-type]
+            typer.echo(f"Estimated cost: ${est.total.low} to ${est.total.high}")
+            for name, rng in est.per_pass.items():
+                typer.echo(f"  {name}: ${rng.low} to ${rng.high}")
+            if not typer.confirm("Create the job?", default=False):
+                typer.echo("Cancelled.")
+                raise typer.Exit(1)
+            job = create_job(
+                session,
+                registry,
+                book_id,
+                passes=chosen,  # type: ignore[arg-type]
+                max_cost=cap,
+                callback_url=None,
+                actor="cli",
+            )
+            job_id = job.id
+    except JeromeError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(2) from exc
+    finally:
+        engine.dispose()
+    typer.echo(job_id)
+
+
+@app.command()
+def export(
+    book_id: int,
+    format: Annotated[str, typer.Option(help="epub-clean, docx-clean, docx-tracked, docx-review")],
+    output: Annotated[Path, typer.Option("-o", "--output")],
+) -> None:
+    """Export a book to a file."""
+    from jerome.core.exports import export_book
+    from jerome.storage import Storage
+
+    settings = get_settings()
+    engine = make_engine(settings.database_url)
+    try:
+        with session_scope(engine) as session:
+            result = export_book(
+                session,
+                Storage(settings.data_dir),
+                book_id,
+                format,  # type: ignore[arg-type]
+                actor="cli",
+            )
+    except JeromeError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(2) from exc
+    finally:
+        engine.dispose()
+    output.write_bytes(result.data)
+    typer.echo(str(output))
