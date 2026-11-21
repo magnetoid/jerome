@@ -351,3 +351,88 @@ def test_neighbouring_accepted_suggestions_write_clean_text(session, tmp_storage
     assert r.counts["accepted"] == 4 and r.counts["edited"] == 0 and r.notes == []
     clean = export_book(session, tmp_storage, book.id, "docx-clean").data
     assert [b.text for b in all_blocks(clean)] == ["the the fox.", "the, cat sat."]
+
+
+def _touching_book(session, tmp_storage, lines, spans, *, accept_before_export=()):
+    book = import_book(
+        session, tmp_storage, filename="p.docx", data=make_docx(lines), variant="en-US"
+    )
+    block = _blocks(session, book)[0]
+    made = [add_one(session, block, a, b, o, r) for a, b, o, r in spans]
+    for s in made:
+        if s.replacement in accept_before_export:
+            decide(session, s.id, "accept", actor="a")
+    return book, made
+
+
+def _clean(session, tmp_storage, book):
+    from tests.fixtures.docx_builders import all_blocks
+
+    clean = export_book(session, tmp_storage, book.id, "docx-clean").data
+    return [b.text for b in all_blocks(clean)]
+
+
+def test_untouched_copy_with_touching_open_pair_changes_nothing(session, tmp_storage):
+    book, made = _touching_book(
+        session, tmp_storage, ["teh cat sat."], [(0, 3, "teh", "the"), (3, 4, " ", ", ")]
+    )
+    r = import_review(session, book.id, _copy(session, tmp_storage, book), actor="ed")
+    assert r.counts["unchanged"] == 2 and r.notes == [] and session.query(Decision).count() == 0
+    assert {s.status for s in made} == {"open"}
+
+
+def test_untouched_copy_with_zero_width_neighbour_changes_nothing(session, tmp_storage):
+    book, made = _touching_book(
+        session, tmp_storage, ["quick adn we go."], [(6, 9, "adn", "and"), (9, 9, "", ",")]
+    )
+    r = import_review(session, book.id, _copy(session, tmp_storage, book), actor="ed")
+    assert r.counts["unchanged"] == 2 and r.notes == [] and session.query(Decision).count() == 0
+
+
+def test_touching_pair_left_pending_with_an_unrelated_accept(session, tmp_storage):
+    book, made = _touching_book(
+        session,
+        tmp_storage,
+        ["teh cat sat on teh mat."],
+        [(0, 3, "teh", "the"), (3, 4, " ", ", "), (15, 18, "teh", "thee")],
+    )
+    copy = _copy(session, tmp_storage, book)
+    r = import_review(session, book.id, simulate_word_review(copy, accept=["thee"]), actor="ed")
+    assert r.counts["accepted"] == 1 and r.counts["unchanged"] == 2 and r.notes == []
+    assert [s.status for s in made] == ["open", "open", "accepted"]
+    assert _clean(session, tmp_storage, book) == ["teh cat sat on thee mat."]
+
+
+def test_exported_accepted_pair_untouched_stays_accepted(session, tmp_storage):
+    book, made = _touching_book(
+        session,
+        tmp_storage,
+        ["teh cat sat."],
+        [(0, 3, "teh", "the"), (3, 4, " ", ", ")],
+        accept_before_export=("the", ", "),
+    )
+    before = session.query(Decision).count()
+    r = import_review(session, book.id, _copy(session, tmp_storage, book), actor="ed")
+    assert r.counts["unchanged"] == 2 and session.query(Decision).count() == before
+    assert {s.status for s in made} == {"accepted"}
+    assert _clean(session, tmp_storage, book) == ["the, cat sat."]
+
+
+def test_exported_accepted_left_pending_with_untracked_edit_is_never_rejected(session, tmp_storage):
+    book, made = _touching_book(
+        session,
+        tmp_storage,
+        ["we the fox banks its it"],
+        [(2, 3, " ", ", "), (17, 20, "its", "it's")],
+        accept_before_export=(", ",),
+    )
+    copy = _copy(session, tmp_storage, book)
+    r = import_review(
+        session,
+        book.id,
+        simulate_word_review(copy, untracked_edits={"banks": "bankss"}),
+        actor="ed",
+    )
+    for s in made:
+        session.refresh(s)
+    assert made[0].status == "accepted" and r.counts["rejected"] == 0

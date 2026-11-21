@@ -5,6 +5,7 @@ All offsets are code points.
 """
 
 import difflib
+import itertools
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 from typing import Literal
@@ -125,8 +126,8 @@ def _pending_hits(pending: Sequence[PendingRevision], ms: int, me: int, sv: Sugg
     zero = sv.start == sv.end
     for r in pending:
         if zero:
-            # a zero-width suggestion owns only an insertion of its own text at its point
-            if r.start == r.end and ms <= r.start <= me and r.text == sv.replacement:
+            # a zero-width suggestion owns only an insertion that carries its own text
+            if r.start == r.end and ms <= r.start <= me and sv.replacement in r.text:
                 return True
         elif r.start == r.end:
             if ms < r.start < me:
@@ -310,15 +311,41 @@ def _bound_end(pl: _Plan, b: int, inc: set[int]) -> int:
     return _linear(pl.ops, b)
 
 
-def _reconstructs(
+def _union(spans: Sequence[tuple[int, int]]) -> list[tuple[int, int]]:
+    merged: list[list[int]] = []
+    for a, b in sorted(spans):
+        if a == b:
+            continue
+        if merged and a <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], b)
+        else:
+            merged.append([a, b])
+    return [(a, b) for a, b in merged]
+
+
+def _jerome_model(
+    revisions: Sequence[PendingRevision],
+) -> tuple[list[tuple[int, int]], dict[int, str]]:
+    """Jerome's pending deletions (as a union of spans) and insertion text per offset."""
+    dels = _union([(r.start, r.end) for r in revisions if r.kind == "del" and r.author == JEROME])
+    ins: dict[int, str] = {}
+    for r in revisions:
+        if r.kind == "ins" and r.author == JEROME:
+            ins[r.start] = ins.get(r.start, "") + r.text
+    return dels, ins
+
+
+def _held(
     original: str,
-    text: str,
     suggestions: Sequence[SuggestionView],
     results: dict[int, tuple[Result, str | None]],
     changes: Sequence[EditorChange],
-) -> bool:
-    """Whether what Jerome will hold (unchanged = original) plus the editor changes is ``text``."""
-    segs = [(c.start, c.end, c.replacement) for c in changes if not c.pending]
+) -> tuple[str, dict[int, int]] | None:
+    """What Jerome will hold (unchanged = original) plus the editor changes, and where each
+    suggestion starts in that text; None if they overlap."""
+    segs: list[tuple[int, int, str, int | None]] = [
+        (c.start, c.end, c.replacement, None) for c in changes if not c.pending
+    ]
     for sv in suggestions:
         result, final = results[sv.id]
         written = {
@@ -327,16 +354,69 @@ def _reconstructs(
             "rejected": sv.original,
             "edited": final or "",
         }[result]
-        segs.append((sv.start, sv.end, written))
+        segs.append((sv.start, sv.end, written, sv.id))
     out: list[str] = []
-    pos = 0
-    for a, b, t in sorted(segs, key=lambda x: (x[0], x[1])):
+    starts: dict[int, int] = {}
+    pos = n = 0
+    for a, b, t, sid in sorted(segs, key=lambda x: (x[0], x[1])):
         if a < pos:
-            return False
-        out += [original[pos:a], t]
+            return None
+        gap = original[pos:a]
+        out += [gap, t]
+        n += len(gap)
+        if sid is not None:
+            starts[sid] = n
+        n += len(t)
         pos = b
     out.append(original[pos:])
-    return "".join(out) == text
+    return "".join(out), starts
+
+
+def _pending_explained(
+    suggestions: Sequence[SuggestionView],
+    results: dict[int, tuple[Result, str | None]],
+    starts: dict[int, int],
+    revisions: Sequence[PendingRevision],
+) -> bool:
+    """Jerome's pending revisions are exactly those of the suggestions left unchanged."""
+    dels, ins = _jerome_model(revisions)
+    spans: list[tuple[int, int]] = []
+    used: dict[int, int] = {}
+    for sv in suggestions:
+        if results[sv.id][0] != "unchanged":
+            continue
+        t = starts[sv.id]
+        spans.append((t, t + len(sv.original)))
+        if sv.replacement:
+            q = t + len(sv.original)
+            at = used.get(q, 0)
+            if not ins.get(q, "").startswith(sv.replacement, at):
+                return False
+            used[q] = at + len(sv.replacement)
+    return _union(spans) == dels and all(used.get(q, 0) == len(x) for q, x in ins.items())
+
+
+def _trimmed_opcodes(a: str, b: str) -> list[Opcode]:
+    """Opcodes of a diff that skips the common prefix and suffix (the cost of big blocks)."""
+    p = 0
+    limit = min(len(a), len(b))
+    while p < limit and a[p] == b[p]:
+        p += 1
+    q = 0
+    while q < limit - p and a[len(a) - 1 - q] == b[len(b) - 1 - q]:
+        q += 1
+    inner = difflib.SequenceMatcher(None, a[p : len(a) - q], b[p : len(b) - q], autojunk=False)
+    ops: list[Opcode] = [("equal", 0, p, 0, p)] if p else []
+    ops += [(tag, i1 + p, i2 + p, j1 + p, j2 + p) for tag, i1, i2, j1, j2 in inner.get_opcodes()]
+    if q:
+        ops.append(("equal", len(a) - q, len(a), len(b) - q, len(b)))
+    merged: list[Opcode] = []
+    for op in ops:
+        if merged and op[0] == "equal" and merged[-1][0] == "equal":
+            last = merged.pop()
+            op = ("equal", last[1], op[2], last[3], op[4])
+        merged.append(op)
+    return merged
 
 
 def _candidate(
@@ -361,24 +441,31 @@ def _candidate(
 
 
 def _exact_assignments(
-    original: str, text: str, svs: Sequence[SuggestionView], pending: Sequence[PendingRevision]
+    original: str, text: str, svs: Sequence[SuggestionView], revisions: Sequence[PendingRevision]
 ) -> list[tuple[set[int], set[int]]]:
-    """(accepted, still-pending) id sets that reproduce ``text`` exactly; stops after two.
+    """(accepted, pending) id sets that reproduce ``text`` and Jerome's revisions exactly.
 
-    A suggestion is pending only where a pending revision sits exactly on its span (a deletion
-    over its text, or an insertion of its text for a zero-width one), in base-view offsets.
+    A suggestion is pending only as a whole: its original lies under Jerome's pending
+    deletions and its replacement is consumed, in document order, from the Jerome insertion
+    text at its anchor (revisions the reader merged are fine). Stops after two solutions.
     """
-    dels = {(r.start, r.end) for r in pending if r.kind == "del"}
-    inss = {(r.start, r.text) for r in pending if r.kind == "ins"}
+    dels, ins = _jerome_model(revisions)
     found: list[tuple[set[int], set[int]]] = []
     budget = [20000]
 
-    def walk(i: int, o: int, t: int, acc: tuple[int, ...], pend: tuple[int, ...]) -> None:
+    def covered(a: int, b: int) -> bool:
+        return a == b or any(x <= a and b <= y for x, y in dels)
+
+    def walk(i, o, t, acc, pend, spans, used) -> None:  # noqa: ANN001
         if len(found) > 1 or budget[0] <= 0:
             return
         budget[0] -= 1
         if i == len(svs):
-            if text[t:] == original[o:]:
+            if (
+                text[t:] == original[o:]
+                and _union(spans) == dels
+                and all(used.get(q, 0) == len(x) for q, x in ins.items())
+            ):
                 found.append((set(acc), set(pend)))
             return
         sv = svs[i]
@@ -390,20 +477,20 @@ def _exact_assignments(
             return
         t += len(gap)
         end = t + len(sv.original)
-        if sv.start == sv.end:
-            is_pending = (t, sv.replacement) in inss
-        else:
-            is_pending = (t, end) in dels
-        if is_pending:
-            if text.startswith(sv.original, t):
-                walk(i + 1, sv.end, end, acc, (*pend, sv.id))
-            return
         if text.startswith(sv.replacement, t):
-            walk(i + 1, sv.end, t + len(sv.replacement), (*acc, sv.id), pend)
+            walk(i + 1, sv.end, t + len(sv.replacement), (*acc, sv.id), pend, spans, used)
         if text.startswith(sv.original, t):
-            walk(i + 1, sv.end, end, acc, pend)
+            walk(i + 1, sv.end, end, acc, pend, spans, used)
+            if (sv.original or sv.replacement) and covered(t, end):
+                q, nxt = end, used
+                if sv.replacement:
+                    at = used.get(q, 0)
+                    if not ins.get(q, "").startswith(sv.replacement, at):
+                        return
+                    nxt = {**used, q: at + len(sv.replacement)}
+                walk(i + 1, sv.end, end, acc, (*pend, sv.id), [*spans, (t, end)], nxt)
 
-    walk(0, 0, 0, (), ())
+    walk(0, 0, 0, (), (), [], {})
     return found if budget[0] > 0 else []
 
 
@@ -413,6 +500,7 @@ def _assign(
     svs: Sequence[SuggestionView],
     pending: set[int],
     revisions: Sequence[PendingRevision],
+    pl: _Plan,
 ) -> tuple[dict[int, tuple[Result, str | None]], list[EditorChange]] | None:
     """Accepted/rejected assignment of the decided suggestions; None if it is not clear."""
 
@@ -428,18 +516,41 @@ def _assign(
     if len(exact) == 1:
         return results(*exact[0]), []
     free = [sv for sv in svs if sv.id not in pending]
-    if exact or not free or len(free) > 8:
+    if exact or not free:
+        return None
+    # A suggestion with room around it is read from the aligned text alone; only those close
+    # to a neighbour (where alignment is unreliable) are tried both ways.
+    options: list[list[bool]] = []
+    for sv in free:
+        k = svs.index(sv)
+        near = (k > 0 and sv.start - svs[k - 1].end <= 2) or (
+            k + 1 < len(svs) and svs[k + 1].start - sv.end <= 2
+        )
+        if near:
+            options.append([False, True])
+            continue
+        _, ms, me, _, _ = _bounds(pl, sv)
+        core = text[ms:me]
+        options.append(
+            [a for a, piece in ((True, sv.replacement), (False, sv.original)) if core == piece]
+        )
+        if not options[-1]:
+            return None
+    total = 1
+    for o in options:
+        total *= len(o)
+    if total > 256:
         return None
     cands = []
-    for mask in range(1 << len(free)):
-        accepted = {free[i].id for i in range(len(free)) if mask >> i & 1}
+    for combo in itertools.product(*options):
+        accepted = {sv.id for sv, on in zip(free, combo, strict=True) if on}
         built = _candidate(original, svs, accepted)
         if built is None:
             return None
         cands.append((accepted, *built))
     kept = []
     for accepted, cand, spans in cands:
-        full = difflib.SequenceMatcher(None, cand, text, autojunk=False).get_opcodes()
+        full = _trimmed_opcodes(cand, text)
         rops = [op for op in full if op[0] != "equal"]
         if all(i2 < cs or i1 > ce for _, i1, i2, _, _ in rops for cs, ce, _, _ in spans):
             size = sum(max(i2 - i1, j2 - j1) for _, i1, i2, j1, j2 in rops)
@@ -481,7 +592,7 @@ def classify_block(
     ops = difflib.SequenceMatcher(None, original, text, autojunk=False).get_opcodes()
     pl = _Plan(original, text, ops, _ins_at(ops))
     pending = {sv.id for sv in svs if _pending_hits(reviewed.pending, *_bounds(pl, sv)[1:3], sv)}
-    found = _assign(original, text, svs, pending, reviewed.pending)
+    found = _assign(original, text, svs, pending, reviewed.pending, pl)
     if found is not None:
         results, changes = found
     else:
@@ -496,7 +607,12 @@ def classify_block(
             )
         results = pl.results
         changes = sorted(_expand_regions(pl) + pl.extra, key=lambda c: (c.start, c.end))
-    if not _reconstructs(original, text, svs, results, changes):
+    held = _held(original, svs, results, changes)
+    if (
+        held is None
+        or held[0] != text
+        or not _pending_explained(svs, results, held[1], reviewed.pending)
+    ):
         return _fallback(
             suggestions, f"{label}: could not align the editor's changes reliably; left as it was"
         )
@@ -653,30 +769,22 @@ def import_review(session: Session, book_id: int, data: bytes, actor: str) -> Re
             "(added, split or merged in Word); not imported."
         )
 
-    locked = lock_blocks(session, list(matched))
     exported = {int(k): v for k, v in rx.suggestion_statuses.items()}
-    rows = session.scalars(
-        select(Suggestion)
-        .where(Suggestion.id.in_(exported), Suggestion.block_id.in_(list(matched)))
-        .order_by(Suggestion.id)
-        .execution_options(populate_existing=True)
-    ).all()
-    existing_ids = set(session.scalars(select(Suggestion.id).where(Suggestion.id.in_(exported))))
-    notes += [f"suggestion {i} no longer exists" for i in sorted(exported.keys() - existing_ids)]
 
-    by_block: dict[int, list[Suggestion]] = {}
-    for s in rows:
-        by_block.setdefault(s.block_id, []).append(s)
-    counts = dict.fromkeys(
-        ("accepted", "rejected", "edited", "unchanged", "editor_changes", "conflicts"), 0
-    )
-    conflicts: list[int] = []
-    later, import_exports = _later_decisions(session, rx, [s.id for s in rows])
-    todo: list[tuple[Suggestion, Result, str | None]] = []
-    outcomes: dict[int, BlockOutcome] = {}
-    for bid in sorted(matched):
-        group = by_block.get(bid, [])
-        views = [
+    def load() -> dict[int, list[Suggestion]]:
+        rows = session.scalars(
+            select(Suggestion)
+            .where(Suggestion.id.in_(exported), Suggestion.block_id.in_(list(matched)))
+            .order_by(Suggestion.id)
+            .execution_options(populate_existing=True)
+        ).all()
+        grouped: dict[int, list[Suggestion]] = {}
+        for s in rows:
+            grouped.setdefault(s.block_id, []).append(s)
+        return grouped
+
+    def views_of(group: list[Suggestion]) -> list[SuggestionView]:
+        return [
             SuggestionView(
                 s.id,
                 s.start,
@@ -688,7 +796,34 @@ def import_review(session: Session, book_id: int, data: bytes, actor: str) -> Re
             )
             for s in group
         ]
-        out = outcomes[bid] = classify_block(locked[bid].text, matched[bid], views, bid)
+
+    # classification is pure and can be slow: do it before taking the block locks
+    by_block = load()
+    classified = {
+        bid: (
+            v := views_of(by_block.get(bid, [])),
+            classify_block(blocks[bid].text, matched[bid], v, bid),
+        )
+        for bid in sorted(matched)
+    }
+    lock_blocks(session, list(matched))
+    by_block = load()  # statuses and decisions as they are now
+    rows = [s for g in by_block.values() for s in g]
+    existing_ids = set(session.scalars(select(Suggestion.id).where(Suggestion.id.in_(exported))))
+    notes += [f"suggestion {i} no longer exists" for i in sorted(exported.keys() - existing_ids)]
+    counts = dict.fromkeys(
+        ("accepted", "rejected", "edited", "unchanged", "editor_changes", "conflicts"), 0
+    )
+    conflicts: list[int] = []
+    later, import_exports = _later_decisions(session, rx, [s.id for s in rows])
+    todo: list[tuple[Suggestion, Result, str | None]] = []
+    outcomes: dict[int, BlockOutcome] = {}
+    for bid in sorted(matched):
+        group = by_block.get(bid, [])
+        views = views_of(group)
+        out = outcomes[bid] = classified[bid][1]
+        if views != classified[bid][0]:  # changed while we were classifying
+            out = outcomes[bid] = classify_block(blocks[bid].text, matched[bid], views, bid)
         notes += out.notes
         for s, v in zip(group, views, strict=True):
             result, final = out.results[s.id]
