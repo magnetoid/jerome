@@ -45,8 +45,8 @@ def qn(name: str) -> str:
 # --- package --------------------------------------------------------------------------
 
 
-def read_package(data: bytes) -> dict[str, bytes]:
-    """Unzip a DOCX into {part name: bytes}, in zip order.
+def read_package(data: bytes, kind: str = "DOCX") -> dict[str, bytes]:
+    """Unzip a DOCX (``kind`` names another zip format) into {part name: bytes}, in zip order.
 
     Refuses archives whose declared uncompressed size exceeds MAX_UNCOMPRESSED_BYTES.
     That bound holds while reading, because zipfile stops each entry at its declared size
@@ -61,7 +61,9 @@ def read_package(data: bytes) -> dict[str, bytes]:
                 )
             return {info.filename: zf.read(info) for info in infos}
     except (zipfile.BadZipFile, zlib.error, EOFError, NotImplementedError, RuntimeError) as exc:
-        raise UnsupportedDocumentError("Not a DOCX file: it is not a readable zip archive") from exc
+        raise UnsupportedDocumentError(
+            f"Not a {kind} file: it is not a readable zip archive"
+        ) from exc
 
 
 def write_package(package: dict[str, bytes], original: bytes) -> bytes:
