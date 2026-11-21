@@ -248,3 +248,27 @@ def test_large_book_import_and_export_under_20s(session, tmp_storage):
     print(f"large book: {elapsed:.2f}s")
     assert elapsed < 20
     assert len(block_texts(session, book.id)) == 3000
+
+
+@pytest.mark.slow
+def test_multi_batch_import_maps_blocks_and_segments_correctly(session, tmp_storage):
+    lines = [
+        f"# Chapter {i}" if i % 100 == 0 else f"Para {i} one. Para {i} two." for i in range(2500)
+    ]
+    data = make_docx(lines)
+    parsed = read_docx(data)
+    book = import_book(session, tmp_storage, filename="big.docx", data=data, variant="en-US")
+    chapters = list_chapters(session, book.id)
+    assert len(chapters) == len(parsed.chapters) == 25
+    for chapter, pc in zip(chapters, parsed.chapters, strict=True):
+        assert chapter.title == pc.title
+        assert [b.text for b in chapter.blocks] == [b.text for b in pc.blocks]
+        for block in chapter.blocks:
+            assert block.segments
+            for seg in block.segments:
+                assert 0 <= seg.start < seg.end <= len(block.text)
+            if block.kind != "heading":
+                n = block.text.split()[1]
+                assert all(
+                    block.text[s.start : s.end].startswith(f"Para {n}") for s in block.segments
+                )

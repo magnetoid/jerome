@@ -83,7 +83,9 @@ def _insert_chapters(session: Session, book_id: int, parsed: ParsedBook) -> list
         }
         for i, c in enumerate(parsed.chapters)
     ]
-    return list(session.scalars(insert(Chapter).returning(Chapter.id), rows))
+    return list(
+        session.scalars(insert(Chapter).returning(Chapter.id, sort_by_parameter_order=True), rows)
+    )
 
 
 def _insert_blocks(
@@ -113,7 +115,9 @@ def _insert_blocks(
             )
     if not rows:
         return
-    block_ids = list(session.scalars(insert(Block).returning(Block.id), rows))
+    block_ids = list(
+        session.scalars(insert(Block).returning(Block.id, sort_by_parameter_order=True), rows)
+    )
     segments = []
     for block_id, row in zip(block_ids, rows, strict=True):
         text = row["text"]
