@@ -1,0 +1,128 @@
+from dataclasses import replace
+
+from jerome.proofread.consistency import consistency_candidates
+from jerome.types import DEFAULT_QUOTES, BlockText, Category, Severity, Source, StyleSheet
+
+STYLE_EN = StyleSheet("en-US", DEFAULT_QUOTES["en-US"], {}, [])
+STYLE_DE = StyleSheet("de-DE", DEFAULT_QUOTES["de-DE"], {}, [])
+
+
+def test_hyphen_variant_minority_flagged():
+    blocks = [BlockText(i, "Send an e-mail.") for i in range(3)] + [BlockText(9, "Send an email.")]
+    c = consistency_candidates(blocks, STYLE_EN)
+    assert [(x.block_id, x.original, x.replacement, x.severity) for x in c] == [
+        (9, "email", "e-mail", Severity.MEDIUM)
+    ]
+    assert c[0].source == Source.CONSISTENCY
+    assert c[0].category == Category.CONSISTENCY
+    assert "3" in c[0].explanation and "1" in c[0].explanation
+
+
+def test_sentence_initial_capital_is_not_a_case_variant():
+    assert consistency_candidates([BlockText(1, "Spring came. It was spring.")] * 3, STYLE_EN) == []
+
+
+def test_sentence_initial_minority_gets_capitalised_replacement():
+    blocks = [BlockText(1, "We like e-mail. E-mail is fine. Email is bad. Use e-mail.")]
+    c = consistency_candidates(blocks, STYLE_EN)
+    assert [(x.original, x.replacement) for x in c] == [("Email", "E-mail")]
+
+
+def test_tie_flags_nothing():
+    blocks = [BlockText(1, "An e-mail."), BlockText(2, "An email.")]
+    assert consistency_candidates(blocks, STYLE_EN) == []
+
+
+def test_two_word_variant_when_joined_form_exists():
+    blocks = [BlockText(1, "An email. Another email. Send an e mail now.")]
+    c = consistency_candidates(blocks, STYLE_EN)
+    assert [(x.original, x.replacement) for x in c] == [("e mail", "email")]
+    text = blocks[0].text
+    assert text[c[0].start : c[0].end] == "e mail"
+
+
+def test_two_word_sequence_ignored_without_joined_token():
+    assert consistency_candidates([BlockText(1, "Take a note. Take a no te.")], STYLE_EN) == []
+    assert consistency_candidates([BlockText(1, "Sit in the sun room. Sun room.")], STYLE_EN) == []
+
+
+def test_house_spelling_flagged():
+    style = replace(STYLE_EN, house_spellings={"OK": ["okay", "O.K."]})
+    assert consistency_candidates([BlockText(1, "It was okay.")], style)[0].replacement == "OK"
+
+
+def test_house_spelling_with_dots_and_whole_word_only():
+    style = replace(STYLE_EN, house_spellings={"OK": ["okay", "O.K."]})
+    c = consistency_candidates([BlockText(1, "Say O.K. or okays, not okay.")], style)
+    assert [(x.original, x.replacement) for x in c] == [("O.K.", "OK"), ("okay", "OK")]
+    assert all(x.severity == Severity.MEDIUM and x.category == Category.CONSISTENCY for x in c)
+
+
+def test_wrong_quotes_for_de_DE():
+    c = consistency_candidates([BlockText(1, 'Er sagte "Hallo".')], STYLE_DE)
+    assert {(x.original, x.replacement) for x in c} == {('"', "„"), ('"', "“")}
+    assert all(x.category == Category.PUNCTUATION and x.severity == Severity.MEDIUM for x in c)
+
+
+def test_en_gb_straight_quotes_use_double_pair():
+    style = StyleSheet("en-GB", DEFAULT_QUOTES["en-GB"], {}, [])
+    c = consistency_candidates([BlockText(1, 'He said "hi".')], style)
+    assert [(x.original, x.replacement) for x in c] == [('"', "“"), ('"', "”")]
+
+
+def test_de_ch_uses_guillemets():
+    style = StyleSheet("de-CH", DEFAULT_QUOTES["de-CH"], {}, [])
+    c = consistency_candidates([BlockText(1, 'Er sagte "Hallo".')], style)
+    assert [(x.original, x.replacement) for x in c] == [('"', "«"), ('"', "»")]
+
+
+def test_opening_quote_after_bracket_and_at_start():
+    c = consistency_candidates([BlockText(1, '"A" ("b")')], STYLE_EN)
+    assert [x.replacement for x in c] == ["“", "”", "“", "”"]
+
+
+def test_correct_quotes_single_quotes_and_apostrophes_not_flagged():
+    text = "“Fine,” he said. It’s John's ‘book’ and 'that'."
+    assert consistency_candidates([BlockText(1, text)], STYLE_EN) == []
+    assert consistency_candidates([BlockText(1, "Das ist Toms ’Buch’ und 'so'.")], STYLE_DE) == []
+
+
+def test_near_duplicate_names():
+    blocks = [BlockText(i, "Then Katharina laughed.") for i in range(5)] + [
+        BlockText(9, "Then Katarina laughed.")
+    ]
+    (x,) = consistency_candidates(blocks, STYLE_EN)
+    assert (x.original, x.replacement, x.severity) == ("Katarina", "Katharina", Severity.LOW)
+    assert "5" in x.explanation and "1" in x.explanation
+
+
+def test_names_seen_fewer_than_3_times_ignored():
+    blocks = [BlockText(1, "Then Katharina laughed."), BlockText(2, "Then Katarina laughed.")]
+    assert consistency_candidates(blocks, STYLE_EN) == []
+
+
+def test_ignore_words_exempt_names():
+    blocks = [BlockText(i, "Then Katharina laughed.") for i in range(5)] + [
+        BlockText(9, "Then Katarina laughed.")
+    ]
+    assert consistency_candidates(blocks, replace(STYLE_EN, ignore_words=["Katarina"])) == []
+
+
+def test_ignore_words_exempt_spelling_variants():
+    blocks = [BlockText(i, "Send an e-mail.") for i in range(3)] + [BlockText(9, "Send an email.")]
+    assert consistency_candidates(blocks, replace(STYLE_EN, ignore_words=["email"])) == []
+
+
+def test_names_ignore_sentence_initial_capitals():
+    blocks = [BlockText(i, "Then Katharina laughed.") for i in range(5)] + [
+        BlockText(9, "Katarina laughed.")
+    ]
+    assert consistency_candidates(blocks, STYLE_EN) == []
+
+
+def test_output_sorted_by_block_and_start():
+    style = replace(STYLE_EN, house_spellings={"OK": ["okay"]})
+    blocks = [BlockText(2, 'okay "x"'), BlockText(1, 'a "y" okay')]
+    c = consistency_candidates(blocks, style)
+    keys = [(x.block_id, x.start) for x in c]
+    assert keys == sorted(keys)
