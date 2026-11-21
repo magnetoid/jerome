@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from jerome.documents.changes import Change, apply_changes
+from jerome.documents.model import PLACEHOLDER
 from jerome.errors import Conflict, InvalidChangeError, NotFound
 from jerome.orm import Block, Chapter, Decision, Suggestion
 from jerome.types import Candidate, Severity
@@ -38,6 +39,25 @@ def spans_overlap(s1: int, e1: int, s2: int, e2: int) -> bool:
     if s1 == e1 and s2 == e2:
         return s1 == s2
     return s1 < e2 and s2 < e1
+
+
+def _check_original(block: Block, start: int, end: int, original: str) -> None:
+    if not 0 <= start <= end <= len(block.text) or block.text[start:end] != original:
+        raise InvalidChangeError(
+            f"original text does not match block {block.id} at ({start}, {end})"
+        )
+    if PLACEHOLDER in original:
+        raise InvalidChangeError(f"change ({start}, {end}) covers a placeholder")
+
+
+def _decided_overlap(siblings: Sequence[Suggestion], s: Suggestion | tuple[int, int]) -> bool:
+    start, end = (s.start, s.end) if isinstance(s, Suggestion) else s
+    return any(
+        d.status in DECIDED
+        and (isinstance(s, tuple) or d.id != s.id)
+        and spans_overlap(start, end, d.start, d.end)
+        for d in siblings
+    )
 
 
 def _lock_blocks(session: Session, block_ids: Sequence[int]) -> dict[int, Block]:
@@ -98,13 +118,7 @@ def add_candidates(
         block = blocks.get(c.block_id)
         if block is None or block.book_id != book_id:
             raise InvalidChangeError(f"block {c.block_id} does not belong to book {book_id}")
-        if (
-            not 0 <= c.start <= c.end <= len(block.text)
-            or block.text[c.start : c.end] != c.original
-        ):
-            raise InvalidChangeError(
-                f"original text does not match block {c.block_id} at ({c.start}, {c.end})"
-            )
+        _check_original(block, c.start, c.end, c.original)
 
     existing: dict[int, list[Suggestion]] = {}
     result = AddResult(0, 0, 0, 0)
@@ -172,6 +186,7 @@ def _reopen_superseded(session: Session, s: Suggestion, *, actor: str) -> None:
             None,
         )
         if blocker is not None:
+            # status unchanged (still superseded), so no decision row is written
             other.superseded_by = blocker.id
             continue
         other.status = "open"
@@ -203,6 +218,10 @@ def decide(
         raise Conflict(f"cannot {action} a {previous} suggestion")
     if action == "edit" and replacement is None:
         raise InvalidChangeError("edit requires a replacement")
+    if action in ("accept", "edit") and _decided_overlap(
+        _block_suggestions(session, s.block_id), s
+    ):
+        raise Conflict("suggestion overlaps an accepted or edited suggestion")
 
     final_text: str | None = None
     if action == "accept":
@@ -250,11 +269,11 @@ def record_editor_change(
     block = _lock_blocks(session, [block_id]).get(block_id)
     if block is None:
         raise NotFound(f"block {block_id} not found")
-    if not 0 <= start <= end <= len(block.text) or block.text[start:end] != original:
-        raise InvalidChangeError(
-            f"original text does not match block {block_id} at ({start}, {end})"
-        )
-    for s in _block_suggestions(session, block_id):
+    _check_original(block, start, end, original)
+    siblings = _block_suggestions(session, block_id)
+    if _decided_overlap(siblings, (start, end)):
+        raise Conflict("change overlaps an accepted or edited suggestion")
+    for s in siblings:
         if (s.source, s.start, s.end, s.replacement) == ("editor", start, end, replacement):
             return None
     row = Suggestion(
@@ -348,9 +367,14 @@ def bulk_decide(
     decided = 0
     for s in targets:
         session.refresh(s)  # an earlier accept in this bulk may have superseded it
-        if s.status == "open":
-            decide(session, s.id, action, actor=actor)
-            decided += 1
+        if s.status != "open":
+            continue
+        try:
+            with session.begin_nested():
+                decide(session, s.id, action, actor=actor)
+        except Conflict:
+            continue
+        decided += 1
     return decided
 
 

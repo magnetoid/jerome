@@ -342,3 +342,67 @@ def test_record_editor_change_pending_accepted_and_duplicate(session, block):
         record_editor_change(
             session, block.id, 0, 3, "xyz", "the", pending=True, actor="ed", review_import_id=None
         )
+
+
+def test_accept_after_undo_of_reject_conflicts_with_decided_overlap(session, block):
+    a = add_one(session, block, 0, 3, "teh", "the")
+    decide(session, a.id, "reject", actor="a")
+    r = add_candidates(session, block.book_id, None, [cand(block, 0, 7, "teh cat", "The dog")])
+    assert r.created == 1
+    wide = session.query(Suggestion).filter_by(start=0, end=7).one()
+    decide(session, wide.id, "accept", actor="a")
+    decide(session, a.id, "undo", actor="a")
+    assert session.get(Suggestion, a.id).status == "open"
+    for action in ("accept", "edit"):
+        with pytest.raises(Conflict):
+            decide(session, a.id, action, actor="a", replacement="x")
+    assert session.get(Suggestion, a.id).status == "open"
+    assert current_text(session, block.id) == "The dog sat"
+
+
+def test_bulk_accept_skips_conflicting_targets(session, block):
+    a = add_one(session, block, 0, 3, "teh", "the")
+    decide(session, a.id, "reject", actor="a")
+    add_candidates(session, block.book_id, None, [cand(block, 0, 7, "teh cat", "The dog")])
+    wide = session.query(Suggestion).filter_by(start=0, end=7).one()
+    decide(session, wide.id, "accept", actor="a")
+    decide(session, a.id, "undo", actor="a")
+    c = add_one(session, block, 8, 11, "sat", "sits")
+    n = bulk_decide(session, block.book_id, ids=[a.id, c.id], f=None, action="accept", actor="x")
+    assert n == 1
+    assert session.get(Suggestion, a.id).status == "open"
+    assert session.get(Suggestion, c.id).status == "accepted"
+    assert current_text(session, block.id) == "The dog sits"
+
+
+@pytest.mark.parametrize("pending", [True, False])
+def test_record_editor_change_conflicts_with_decided_overlap(session, block, pending):
+    a = add_one(session, block, 0, 3, "teh", "the")
+    decide(session, a.id, "accept", actor="a")
+    with pytest.raises(Conflict):
+        record_editor_change(
+            session,
+            block.id,
+            0,
+            7,
+            "teh cat",
+            "x",
+            pending=pending,
+            actor="e",
+            review_import_id=None,
+        )
+    assert session.query(Suggestion).filter_by(block_id=block.id).count() == 1
+
+
+def test_placeholder_spans_are_rejected(session, block):
+    block.text = "a ￼ b"
+    session.flush()
+    with pytest.raises(InvalidChangeError):
+        add_candidates(session, block.book_id, None, [cand(block, 0, 3, "a ￼", "x")])
+    with pytest.raises(InvalidChangeError):
+        record_editor_change(
+            session, block.id, 2, 3, "￼", "x", pending=True, actor="e", review_import_id=None
+        )
+    assert session.query(Suggestion).filter_by(block_id=block.id).count() == 0
+    # an insertion next to a placeholder is fine
+    assert add_candidates(session, block.book_id, None, [cand(block, 3, 3, "", "!")]).created == 1
