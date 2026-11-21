@@ -1,5 +1,6 @@
 import secrets
 from datetime import UTC, datetime
+from functools import cache
 
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError
@@ -7,6 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from jerome.core.sessions import revoke_user_sessions
 from jerome.errors import Conflict, InvalidChangeError, NotFound
 from jerome.orm import User
 
@@ -59,16 +61,31 @@ def create_user(
     return user, (password if temporary else None)
 
 
-def _verify(user: User, password: str) -> bool:
+def _verify_hash(password_hash: str, password: str) -> bool:
     try:
-        return _hasher.verify(user.password_hash, password)
+        return _hasher.verify(password_hash, password)
     except (VerificationError, InvalidHashError):
         return False
 
 
+def _verify(user: User, password: str) -> bool:
+    return _verify_hash(user.password_hash, password)
+
+
+@cache
+def _dummy_hash() -> str:
+    """A hash made with the same parameters as real ones, so verifying against it costs the same."""
+    return _hasher.hash(secrets.token_urlsafe(16))
+
+
 def authenticate(session: Session, email: str, password: str) -> User | None:
     user = session.scalar(select(User).where(User.email == normalize_email(email)))
-    if user is None or not user.active or not _verify(user, password):
+    if user is None or not user.active:
+        # Spend the same argon2 verify as a wrong password, so response time does not
+        # reveal which emails belong to (active) members.
+        _verify_hash(_dummy_hash(), password)
+        return None
+    if not _verify(user, password):
         return None
     user.last_login_at = datetime.now(UTC)
     session.flush()
@@ -111,5 +128,7 @@ def update_user(
             if not others:
                 raise Conflict("cannot deactivate the last active member")
         user.active = active
+        if not active:
+            revoke_user_sessions(session, user.id)  # their open browsers are logged out now
     session.flush()
     return user

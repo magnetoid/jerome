@@ -75,3 +75,26 @@ def test_cannot_deactivate_last_active_member(session):
     with pytest.raises(Conflict, match="last active member"):
         update_user(session, b.id, active=False)
     assert update_user(session, b.id, name="Bee").name == "Bee"
+
+
+def test_unknown_or_inactive_email_still_runs_a_password_verify(session, monkeypatch):
+    """No early return: a wrong email costs the same argon2 verify as a wrong password."""
+    from argon2 import PasswordHasher
+
+    calls = []
+    real_verify = PasswordHasher.verify
+
+    def spy(self, hash, password):
+        calls.append(password)
+        return real_verify(self, hash, password)
+
+    user, pw = create_user(session, "ana@x.org", "Ana")
+    create_user(session, "bo@x.org", "Bo")
+    monkeypatch.setattr(PasswordHasher, "verify", spy)
+
+    assert authenticate(session, "nobody@x.org", "a-guess-123") is None
+    assert calls == ["a-guess-123"]
+
+    update_user(session, user.id, active=False)
+    assert authenticate(session, "ana@x.org", pw) is None
+    assert calls == ["a-guess-123", pw]

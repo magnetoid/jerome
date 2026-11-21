@@ -52,3 +52,14 @@ def test_anthropic_api_key_is_read_from_env_and_dotenv(monkeypatch, tmp_path):
     env = tmp_path / ".env"
     env.write_text("ANTHROPIC_API_KEY=from-dotenv\n")
     assert Settings(_env_file=env).anthropic_api_key.get_secret_value() == "from-dotenv"
+
+
+def test_login_settings(monkeypatch):
+    for k in ("TRUSTED_PROXIES", "SESSION_DAYS", "COOKIE_SECURE", "WEB_DIR"):
+        monkeypatch.delenv(f"JEROME_{k}", raising=False)
+    s = Settings(_env_file=None)
+    assert (s.trusted_proxies, s.session_days, s.cookie_secure, s.web_dir) == ([], 30, True, None)
+    monkeypatch.setenv("JEROME_TRUSTED_PROXIES", '["172.17.0.1"]')
+    monkeypatch.setenv("JEROME_COOKIE_SECURE", "false")
+    s = Settings(_env_file=None)
+    assert s.trusted_proxies == ["172.17.0.1"] and s.cookie_secure is False

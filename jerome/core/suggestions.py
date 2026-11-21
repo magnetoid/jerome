@@ -12,6 +12,9 @@ from jerome.orm import Block, Chapter, Decision, Suggestion
 from jerome.types import Candidate, Severity
 
 DECIDED = ("accepted", "edited")
+# Who made a decision: an API client, a Word review import, a person in the browser, or AI
+# auto-apply. ("system" is internal: supersede/reopen bookkeeping.)
+Channel = Literal["api", "word", "web", "auto"]
 EDITOR_EXPLANATION = "Change made by the editor in Word"
 
 
@@ -206,7 +209,7 @@ def decide(
     action: Literal["accept", "reject", "edit", "undo"],
     *,
     actor: str,
-    channel: Literal["api", "word"] = "api",
+    channel: Channel = "api",
     replacement: str | None = None,
     review_import_id: int | None = None,
 ) -> Suggestion:
@@ -354,6 +357,7 @@ def bulk_decide(
     f: SuggestionFilter | None,
     action: Literal["accept", "reject"],
     actor: str,
+    channel: Channel = "api",
 ) -> int:
     if (ids is None) == (f is None):
         raise InvalidChangeError("give exactly one of ids or filter")
@@ -380,7 +384,7 @@ def bulk_decide(
             continue
         try:
             with session.begin_nested():
-                decide(session, s.id, action, actor=actor)
+                decide(session, s.id, action, actor=actor, channel=channel)
         except Conflict:
             continue
         decided += 1

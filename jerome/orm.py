@@ -28,7 +28,7 @@ from jerome.types import Category, Severity, Source, Status
 JOB_STATUSES = ("queued", "running", "paused_cost_cap", "cancelled", "failed", "completed")
 ACTIVE_JOB_STATUSES = ("queued", "running", "paused_cost_cap")
 TASK_STATUSES = ("queued", "running", "done", "failed")
-CHANNELS = ("api", "word", "system")
+CHANNELS = ("api", "word", "system", "web", "auto")
 
 
 def _values(vocab: Iterable[str]) -> tuple[str, ...]:

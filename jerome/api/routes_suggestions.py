@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from jerome.api.deps import current_actor, get_session
+from jerome.api.deps import Principal, current_principal, get_session
 from jerome.api.schemas import (
     BlockOut,
     BulkBody,
@@ -21,7 +21,7 @@ from jerome.types import Category, Severity, Source, Status
 router = APIRouter()
 
 SessionDep = Annotated[Session, Depends(get_session)]
-ActorDep = Annotated[str, Depends(current_actor)]
+PrincipalDep = Annotated[Principal, Depends(current_principal)]
 
 
 def _to_filter(f: SuggestionFilterIn) -> SuggestionFilter:
@@ -76,22 +76,28 @@ def get_block(book_id: int, block_id: int, session: SessionDep):
 
 
 @router.post("/suggestions/bulk", response_model=BulkOut)
-def bulk(body: BulkBody, session: SessionDep, actor: ActorDep):
+def bulk(body: BulkBody, session: SessionDep, principal: PrincipalDep):
     n = suggestions.bulk_decide(
         session,
         body.book_id,
         ids=body.ids,
         f=_to_filter(body.filter) if body.filter else None,
         action=body.action,
-        actor=actor,
+        actor=principal.actor,
+        channel=principal.channel,
     )
     return {"decided": n}
 
 
 @router.post("/suggestions/{suggestion_id}/edit", response_model=SuggestionOut)
-def edit(suggestion_id: int, body: EditBody, session: SessionDep, actor: ActorDep):
+def edit(suggestion_id: int, body: EditBody, session: SessionDep, principal: PrincipalDep):
     return suggestions.decide(
-        session, suggestion_id, "edit", actor=actor, replacement=body.replacement
+        session,
+        suggestion_id,
+        "edit",
+        actor=principal.actor,
+        channel=principal.channel,
+        replacement=body.replacement,
     )
 
 
@@ -100,6 +106,8 @@ def decide(
     suggestion_id: int,
     action: Literal["accept", "reject", "undo"],
     session: SessionDep,
-    actor: ActorDep,
+    principal: PrincipalDep,
 ):
-    return suggestions.decide(session, suggestion_id, action, actor=actor)
+    return suggestions.decide(
+        session, suggestion_id, action, actor=principal.actor, channel=principal.channel
+    )

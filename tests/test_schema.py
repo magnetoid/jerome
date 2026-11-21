@@ -275,3 +275,34 @@ def test_books_without_auto_apply_get_it_off(session):
         "min_severity": "high",
         "house_rules": True,
     }
+
+
+def test_decision_channel_allows_web_and_auto(session, book_factory):
+    b = book_factory()
+    _, blk = _block(session, b)
+    s = Suggestion(
+        book_id=b.id,
+        block_id=blk.id,
+        start=0,
+        end=1,
+        original="H",
+        replacement="h",
+        category="typo",
+        severity="low",
+        source="model",
+        explanation="x",
+    )
+    session.add(s)
+    session.flush()
+    for channel in ("web", "auto"):
+        session.add(
+            Decision(
+                suggestion_id=s.id,
+                action="accept",
+                previous_status="open",
+                new_status="accepted",
+                actor="a",
+                channel=channel,
+            )
+        )
+        session.flush()
