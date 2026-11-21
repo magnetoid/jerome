@@ -1,5 +1,5 @@
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 from sqlalchemy import select
@@ -25,6 +25,7 @@ class AddResult:
     dropped_rejected_repeat: int
     dropped_open_overlap: int
     dropped_invalid: int = 0  # replacement the documents cannot carry (placeholder, control)
+    rows: list[Suggestion] = field(default_factory=list)  # created by this call, in order
 
 
 @dataclass
@@ -159,9 +160,14 @@ def add_candidates(
                 explanation=c.explanation,
                 status="open",
                 model=model,
+                agreed=c.agreed,
+                disputed=c.disputed,
+                alternative=c.alternative,
+                rule=c.rule,
             )
             session.add(row)
             known.append(row)
+            result.rows.append(row)
             result.created += 1
     session.flush()
     return result

@@ -426,3 +426,32 @@ def test_unwritable_replacements_are_refused_or_dropped(session, block, bad):
     )
     assert (r.created, r.dropped_invalid) == (1, 1)
     decide(session, s.id, "edit", actor="a", replacement="a\tb")  # tab is fine
+
+
+def test_add_candidates_stores_flags_and_returns_rows(session, block):
+    flagged = cand(
+        block, 0, 3, "teh", "the", agreed=True, disputed=True, alternative="ten", rule="variant"
+    )
+    plain = cand(block, 4, 7, "cat", "cats")
+    add_one(session, block, 8, 11, "sat", "sits")  # existing row, not "created"
+    r = add_candidates(
+        session,
+        block.book_id,
+        None,
+        [flagged, plain, cand(block, 8, 11, "sat", "sat down")],
+    )
+    assert r.created == 2 and r.dropped_open_overlap == 1
+    first, second = r.rows
+    assert (first.replacement, second.replacement) == ("the", "cats")
+    assert (first.agreed, first.disputed, first.alternative, first.rule) == (
+        True,
+        True,
+        "ten",
+        "variant",
+    )
+    assert (second.agreed, second.disputed, second.alternative, second.rule) == (
+        False,
+        False,
+        None,
+        None,
+    )

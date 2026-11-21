@@ -117,6 +117,7 @@ def _quote_candidates(block: BlockText, style: StyleSheet) -> list[Candidate]:
                 Severity.MEDIUM,
                 Source.CONSISTENCY,
                 f"Use {repl} as {'opening' if opening else 'closing'} quote for {style.variant}.",
+                rule="quote_style",
             )
         )
     return out
@@ -138,6 +139,7 @@ def _house_candidates(block: BlockText, style: StyleSheet) -> list[Candidate]:
                         Severity.MEDIUM,
                         Source.CONSISTENCY,
                         f"House style spells this “{canonical}”.",
+                        rule="house_spelling",
                     )
                 )
     return out
@@ -223,6 +225,7 @@ def _variant_candidates(
                     Severity.MEDIUM,
                     Source.CONSISTENCY,
                     f"“{o.original}” appears {seen}× but “{dominant}” {dom_n}× in this book.",
+                    rule="variant",
                 )
             )
     return out
@@ -274,6 +277,7 @@ def _name_candidates(
                     Severity.LOW,
                     Source.CONSISTENCY,
                     f"“{m.group()}” appears {counts[m.group()]}× but “{major}” {k}×: same name?",
+                    rule="name",
                 )
             )
     return out
