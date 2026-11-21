@@ -4,6 +4,7 @@
 All offsets are code points.
 """
 
+import bisect
 import difflib
 import itertools
 from collections.abc import Sequence
@@ -441,22 +442,36 @@ def _candidate(
 
 
 def _exact_assignments(
-    original: str, text: str, svs: Sequence[SuggestionView], revisions: Sequence[PendingRevision]
+    original: str,
+    text: str,
+    svs: Sequence[SuggestionView],
+    revisions: Sequence[PendingRevision],
+    stats: dict[str, int] | None = None,
 ) -> list[tuple[set[int], set[int]]]:
     """(accepted, pending) id sets that reproduce ``text`` and Jerome's revisions exactly.
 
     A suggestion is pending only as a whole: its original lies under Jerome's pending
     deletions and its replacement is consumed, in document order, from the Jerome insertion
-    text at its anchor (revisions the reader merged are fine). Stops after two solutions.
+    text at its anchor (revisions the reader merged are fine). A branch stops as soon as it
+    contradicts that model: text it shows as plain (a gap, an accepted replacement, a
+    rejected original) must lie outside the deletions, a pending original wholly inside
+    them, and an anchor the search has moved past must be fully consumed. Stops after two
+    solutions; ``stats["nodes"]`` is the budget used.
     """
     dels, ins = _jerome_model(revisions)
+    ends = [y for _, y in dels]
+    anchors = sorted(ins)
     found: list[tuple[set[int], set[int]]] = []
     budget = [20000]
 
-    def covered(a: int, b: int) -> bool:
-        return a == b or any(x <= a and b <= y for x, y in dels)
+    def cover(a: int, b: int) -> str:
+        """How much of base view [a, b) Jerome's pending deletions cover: none, all or part."""
+        k = bisect.bisect_right(ends, a)  # the first deletion ending after a
+        if a >= b or k == len(dels) or dels[k][0] >= b:
+            return "none"
+        return "all" if dels[k][0] <= a and b <= dels[k][1] else "part"
 
-    def walk(i, o, t, acc, pend, spans, used) -> None:  # noqa: ANN001
+    def walk(i, o, t, acc, pend, spans, used, k) -> None:  # noqa: ANN001
         if len(found) > 1 or budget[0] <= 0:
             return
         budget[0] -= 1
@@ -473,24 +488,33 @@ def _exact_assignments(
             budget[0] = 0  # overlapping spans: no clear answer
             return
         gap = original[o : sv.start]
-        if not text.startswith(gap, t):
+        if not text.startswith(gap, t) or cover(t, t + len(gap)) != "none":
             return
         t += len(gap)
+        while k < len(anchors) and anchors[k] < t:  # no later suggestion anchors before t
+            if used.get(anchors[k], 0) != len(ins[anchors[k]]):
+                return
+            k += 1
         end = t + len(sv.original)
-        if text.startswith(sv.replacement, t):
-            walk(i + 1, sv.end, t + len(sv.replacement), (*acc, sv.id), pend, spans, used)
-        if text.startswith(sv.original, t):
-            walk(i + 1, sv.end, end, acc, pend, spans, used)
-            if (sv.original or sv.replacement) and covered(t, end):
-                q, nxt = end, used
-                if sv.replacement:
-                    at = used.get(q, 0)
-                    if not ins.get(q, "").startswith(sv.replacement, at):
-                        return
-                    nxt = {**used, q: at + len(sv.replacement)}
-                walk(i + 1, sv.end, end, acc, (*pend, sv.id), [*spans, (t, end)], nxt)
+        if text.startswith(sv.replacement, t) and cover(t, t + len(sv.replacement)) == "none":
+            walk(i + 1, sv.end, t + len(sv.replacement), (*acc, sv.id), pend, spans, used, k)
+        if not text.startswith(sv.original, t):
+            return
+        shown = cover(t, end)
+        if shown == "none":  # rejected
+            walk(i + 1, sv.end, end, acc, pend, spans, used, k)
+        if (shown == "all") if sv.original else bool(sv.replacement):  # pending
+            q, nxt = end, used
+            if sv.replacement:
+                at = used.get(q, 0)
+                if not ins.get(q, "").startswith(sv.replacement, at):
+                    return
+                nxt = {**used, q: at + len(sv.replacement)}
+            walk(i + 1, sv.end, end, acc, (*pend, sv.id), [*spans, (t, end)], nxt, k)
 
-    walk(0, 0, 0, (), (), [], {})
+    walk(0, 0, 0, (), (), [], {}, 0)
+    if stats is not None:
+        stats["nodes"] = 20000 - budget[0]
     return found if budget[0] > 0 else []
 
 

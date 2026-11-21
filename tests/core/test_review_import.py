@@ -4,6 +4,7 @@ from jerome.core.books import import_book
 from jerome.core.exports import export_book
 from jerome.core.review_imports import import_review
 from jerome.core.suggestions import decide
+from jerome.documents.docx_review import read_reviewed_docx
 from jerome.errors import NotFound, UnsupportedDocumentError
 from jerome.orm import Block, Decision, ReviewImport, Suggestion
 from tests.fixtures.docx_builders import make_docx
@@ -416,6 +417,71 @@ def test_exported_accepted_pair_untouched_stays_accepted(session, tmp_storage):
     assert r.counts["unchanged"] == 2 and session.query(Decision).count() == before
     assert {s.status for s in made} == {"accepted"}
     assert _clean(session, tmp_storage, book) == ["the, cat sat."]
+
+
+MANY_LINE = (
+    "roruv getaw recoho hij sonag vij bop [gepaha kiha](http://e.com/1) lugax bapi fajut "
+    "**wuliv suh** [bajih qacoge hiv](http://e.com/2) [futipa](http://e.com/3) "
+    "[piha qive](http://e.com/4) [toposo](http://e.com/5) nim **cagoqu wikonu** si**cef** **wica**"
+)
+MANY_SPECS = [
+    (0, 5, "xowuke"),
+    (6, 11, "wiface"),
+    (12, 18, "duturie"),
+    (22, 22, "%"),
+    (23, 28, "rekike"),
+    (33, 36, "hofe"),
+    (36, 36, "?"),
+    (36, 37, ": "),
+    (43, 43, "."),
+    (43, 48, ""),
+    (54, 59, ""),
+    (60, 65, "resuke"),
+    (65, 66, " + "),
+    (71, 72, " / "),
+    (75, 76, ", "),
+    (76, 81, "sowide"),
+    (82, 88, "limehee"),
+    (88, 88, ","),
+    (93, 99, "naxuvae"),
+    (104, 104, "'"),
+    (116, 116, "!"),
+    (128, 134, "porunue"),
+]
+MANY_WORD = "pppaarapppppppppaaappa"  # Word: a accepted, r rejected, p left pending
+
+
+def test_many_pending_suggestions_in_one_block_record_what_word_shows(session, tmp_storage):
+    # 22 suggestions, 14 left pending, no untracked edit (once beyond the exact search budget)
+    book = import_book(
+        session, tmp_storage, filename="p.docx", data=make_docx([MANY_LINE]), variant="en-US"
+    )
+    block = _blocks(session, book)[0]
+    made = [add_one(session, block, a, b, block.text[a:b], r) for a, b, r in MANY_SPECS]
+    copy = _copy(session, tmp_storage, book)
+    keys = [s.replacement or s.original for s in made]
+    reviewed = simulate_word_review(
+        copy,
+        accept=[k for k, d in zip(keys, MANY_WORD, strict=True) if d == "a"],
+        reject=[k for k, d in zip(keys, MANY_WORD, strict=True) if d == "r"],
+    )
+    r = import_review(session, book.id, reviewed, actor="ed")
+    assert r.notes == [] and r.counts == {
+        "accepted": 7,
+        "rejected": 1,
+        "edited": 0,
+        "unchanged": 14,
+        "editor_changes": 0,
+        "conflicts": 0,
+    }
+    for s in made:
+        session.refresh(s)
+    want = {"a": "accepted", "r": "rejected", "p": "open"}
+    assert [s.status for s in made] == [want[d] for d in MANY_WORD]
+    assert session.query(Suggestion).filter_by(source="editor").count() == 0
+    assert _clean(session, tmp_storage, book) == [
+        b.text for b in read_reviewed_docx(reviewed).blocks
+    ]
 
 
 def test_exported_accepted_left_pending_with_untracked_edit_is_never_rejected(session, tmp_storage):
