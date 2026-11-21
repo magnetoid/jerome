@@ -5,12 +5,15 @@ from collections import Counter, defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from jerome.documents.model import PLACEHOLDER
 from jerome.documents.segments import split_sentences
 from jerome.types import BlockText, Candidate, Category, Severity, Source, StyleSheet
 
 _TOKEN = re.compile(r"[^\W\d_]+(?:-[^\W\d_]+)*")
 _DOUBLE_QUOTES = frozenset('"“”„‟«»')
 _OPENERS = frozenset("([{")
+_URL = re.compile(r"(?:https?://|www\.)\S+|\S+@\S+\.\S+", re.I)
+_LINE_BREAKS = frozenset("\n\r\u2028" + PLACEHOLDER)
 # a minority spelling is flagged only when the dominant one is common and clearly dominant
 MIN_DOMINANT_COUNT = 3
 DOMINANCE_RATIO = 4  # count(dominant) >= DOMINANCE_RATIO * count(minority)
@@ -71,7 +74,19 @@ def _tokens(block: BlockText, language: str) -> list[tuple[re.Match[str], bool]]
         m = _TOKEN.search(block.text, s, e)
         if m:
             starts.add(m.start())
-    return [(m, m.start() in starts) for m in _TOKEN.finditer(block.text)]
+    # a line break (a placeholder or newline) starts a line of verse: its capital is positional
+    for m in _TOKEN.finditer(block.text):
+        i = m.start()
+        while i > 0 and block.text[i - 1].isspace() and block.text[i - 1] not in _LINE_BREAKS:
+            i -= 1
+        if i > 0 and block.text[i - 1] in _LINE_BREAKS:
+            starts.add(m.start())
+    urls = [m.span() for m in _URL.finditer(block.text)]  # addresses are not prose
+    return [
+        (m, m.start() in starts)
+        for m in _TOKEN.finditer(block.text)
+        if not any(a <= m.start() < b for a, b in urls)
+    ]
 
 
 def _quote_candidates(block: BlockText, style: StyleSheet) -> list[Candidate]:
@@ -193,8 +208,10 @@ def _variant_candidates(
                 continue
             if _only_space(o.original, repl if not o.initial else dominant):
                 continue
-            if style.language == "de" and _only_case(o.original, repl):
-                continue
+            if _only_case(o.original, repl) and (
+                style.language == "de" or o.original[:1].isupper()
+            ):
+                continue  # German capitals are grammar; elsewhere a capital minority is positional
             out.append(
                 Candidate(
                     o.block_id,
@@ -233,6 +250,8 @@ def _name_candidates(
             and n + k >= 3
             and abs(len(major) - len(minor)) <= 1
             and _levenshtein(major, minor) == 1
+            and major != minor + "s"  # a plural is not a misspelling
+            and minor != major + "s"
         ]
         if not best:
             continue

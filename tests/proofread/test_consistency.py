@@ -201,3 +201,31 @@ def test_minority_needs_a_dominant_form_that_is_common_and_four_times_larger():
     assert len(consistency_candidates(four_to_one, STYLE_EN)) == 1
     five_to_two = _many("Send an e-mail.", 5) + _many("Send an email.", 2)
     assert consistency_candidates(five_to_two, STYLE_EN) == []
+
+
+def test_capital_minority_is_positional_but_lowercase_minority_is_flagged():
+    blocks = _many("We saw the church today.", 5) + [BlockText(99, "We saw the Church today.")]
+    assert consistency_candidates(blocks, STYLE_EN) == []
+    blocks = _many("We saw the Church today.", 5) + [BlockText(99, "We saw the church today.")]
+    assert [(x.original, x.replacement) for x in consistency_candidates(blocks, STYLE_EN)] == [
+        ("church", "Church")
+    ]
+
+
+def test_line_starts_of_verse_are_sentence_initial():
+    verse = "and the sea￼     And the sky￼  And so on"
+    blocks = _many("and then we went and ran.", 5) + [BlockText(99, verse)]
+    assert consistency_candidates(blocks, STYLE_EN) == []
+
+
+def test_web_addresses_and_emails_are_not_prose():
+    blocks = _many("Gutenberg wrote a book.", 5) + [
+        BlockText(98, "See www.gutenberg.org/ebooks now."),
+        BlockText(99, "Write to me@gutenberg.org today."),
+    ]
+    assert consistency_candidates(blocks, STYLE_EN) == []
+
+
+def test_plural_is_not_a_near_duplicate_name():
+    blocks = _many("We met the Ushers and Usher again. Then Usher left.", 3)
+    assert [x for x in consistency_candidates(blocks, STYLE_EN) if x.original == "Ushers"] == []
