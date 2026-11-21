@@ -8,6 +8,7 @@ from jerome.api import (
     routes_jobs,
     routes_suggestions,
     routes_text,
+    routes_users,
 )
 from jerome.api.auth import LoginThrottle
 from jerome.api.deps import current_principal
@@ -64,4 +65,5 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(routes_exports.router, prefix="/v1", dependencies=auth)
     app.include_router(routes_jobs.router, prefix="/v1", dependencies=auth)
     app.include_router(routes_text.router, prefix="/v1", dependencies=auth)
+    app.include_router(routes_users.router, prefix="/v1", dependencies=auth)
     return app
