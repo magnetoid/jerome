@@ -22,7 +22,7 @@ MaxCost = Annotated[Decimal, Field(gt=0, max_digits=12, decimal_places=4)]
 
 class EstimateIn(BaseModel):
     passes: Passes = list(ALL_PASSES)
-    chapters: list[int] | None = None
+    chapters: Annotated[list[int], Field(min_length=1)] | None = None
 
 
 class JobIn(EstimateIn):

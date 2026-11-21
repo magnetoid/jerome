@@ -197,3 +197,27 @@ def test_resume_of_a_running_job_is_refused_with_advice(session, registry, book)
     )
     cancelled = cancel_job(session, job.id)
     assert resume_job(session, cancelled.id).status == "queued"
+
+
+def test_create_job_with_no_chapters_to_proofread_conflicts(session, registry, book):
+    # an empty job has no task to claim, so it would sit queued and hold the book's slot
+    for passes in (["ai"], ["languagetool"], list(ALL_PASSES)):
+        with pytest.raises(Conflict, match="no chapters to proofread"):
+            make(session, registry, book, passes=passes, chapter_ids=[])
+    for chapter in session.query(Chapter).filter_by(book_id=book.id):
+        chapter.proofread = False
+    session.flush()
+    with pytest.raises(Conflict, match="no chapters to proofread"):
+        make(session, registry, book)
+
+
+def test_resume_with_every_task_done_completes(session, registry, book_3_chapters):
+    # cancelled while its last chunk was in flight: the worker still finished every task
+    job = make(session, registry, book_3_chapters)
+    cancel_job(session, job.id)
+    for task in job.tasks:
+        task.status = "done"
+    session.flush()
+    resumed = resume_job(session, job.id)
+    assert resumed.status == "completed" and resumed.finished_at is not None
+    assert make(session, registry, book_3_chapters).status == "queued"  # slot is free

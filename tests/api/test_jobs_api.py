@@ -113,3 +113,12 @@ def test_unknown_model_price_is_422_naming_the_model(client, auth, book_3_chapte
     client.app.dependency_overrides[get_registry] = lambda: unpriced
     r = client.post(f"/v1/books/{book_3_chapters.id}/estimate", json={}, headers=auth)
     assert r.status_code == 422 and "mystery-model" in r.json()["detail"]
+
+
+def test_create_job_with_empty_chapter_list_422(client, auth, book):
+    r = client.post(
+        f"/v1/books/{book.id}/jobs",
+        json={"type": "proofread", "max_cost": 1, "chapters": []},
+        headers=auth,
+    )
+    assert r.status_code == 422

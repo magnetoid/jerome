@@ -54,6 +54,9 @@ def create_job(
 ) -> Job:
     if _active_job_id(session, book_id) is not None:
         raise _already_active(book_id)
+    included = included_chapter_ids(session, book_id, chapter_ids)
+    if not included:  # no task to claim: the job would sit queued and hold the book's slot
+        raise Conflict(f"book {book_id} has no chapters to proofread in this job")
     estimate = estimate_job(session, registry, book_id, passes=passes, chapter_ids=chapter_ids)
     job = Job(
         book_id=book_id,
@@ -66,7 +69,7 @@ def create_job(
         callback_url=callback_url,
         created_by=actor,
     )
-    for chapter_id in included_chapter_ids(session, book_id, chapter_ids):
+    for chapter_id in included:
         job.tasks.append(JobTask(kind="chapter", chapter_id=chapter_id))
     if "consistency" in passes:
         job.tasks.append(JobTask(kind="consistency"))
@@ -106,16 +109,22 @@ def resume_job(session: Session, job_id: int, *, max_cost: Decimal | None = None
         .with_for_update()
         .execution_options(populate_existing=True)
     )
+    pending = 0
     for task in tasks:
         if task.status != "done":  # queued, failed, or left running by a cancelled job's worker
             task.status = "queued"
             task.attempts = 0
             task.not_before = None
             task.error = None
+            pending += 1
     if max_cost is not None:
         job.max_cost = max_cost
-    job.status = "queued"
-    job.finished_at = None
+    if pending:
+        job.status = "queued"
+        job.finished_at = None
+    else:  # e.g. cancelled while its last chunk was in flight: nothing is left to claim
+        job.status = "completed"
+        job.finished_at = datetime.now(UTC)
     try:
         with session.begin_nested():
             session.flush()
