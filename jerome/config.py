@@ -18,7 +18,9 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://jerome:jerome@localhost:5433/jerome"
     data_dir: Path = Path("~/.local/share/jerome")
     languagetool_url: str = "http://localhost:8010"
-    models: dict[str, Any] = {}
+    models: dict[str, Any] = {
+        "ai": {"provider": "anthropic", "model": "claude-opus-5-5", "effort": "high"}
+    }
     prices: dict[str, Any] = {}
     webhook_secret: str | None = None
     text_daily_cost_cap: Decimal = Decimal(5)

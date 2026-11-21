@@ -11,7 +11,10 @@ def test_defaults(monkeypatch):
     assert s.database_url == "postgresql+psycopg://jerome:jerome@localhost:5433/jerome"
     assert s.data_dir == Path.home() / ".local/share/jerome"
     assert s.languagetool_url == "http://localhost:8010"
-    assert s.models == {} and s.prices == {}
+    assert s.models == {
+        "ai": {"provider": "anthropic", "model": "claude-opus-5-5", "effort": "high"}
+    }
+    assert s.prices == {}
     assert s.webhook_secret is None
     assert s.text_daily_cost_cap == Decimal("5")
     assert s.text_rpm == 30

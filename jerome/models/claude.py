@@ -1,0 +1,91 @@
+import json
+
+import anthropic
+
+from jerome.models.base import (
+    CompletionResult,
+    ModelOutputError,
+    ModelRefusal,
+    SystemPart,
+    Usage,
+)
+
+FALLBACK_BETA = "server-side-fallback-2026-07-01"
+
+
+def _system_blocks(system: list[SystemPart]) -> list[dict]:
+    return [
+        {
+            "type": "text",
+            "text": p.text,
+            **({"cache_control": {"type": "ephemeral"}} if p.cache else {}),
+        }
+        for p in system
+    ]
+
+
+class ClaudeProvider:
+    name = "anthropic"
+    local = False
+
+    def __init__(self, client: anthropic.Anthropic | None = None):
+        self._client = client
+
+    @property
+    def client(self) -> anthropic.Anthropic:
+        if self._client is None:
+            self._client = anthropic.Anthropic()
+        return self._client
+
+    def complete(
+        self,
+        *,
+        model: str,
+        system: list[SystemPart],
+        user: str,
+        schema: dict,
+        max_tokens: int = 16000,
+        effort: str | None = None,
+    ) -> CompletionResult:
+        response = self.client.beta.messages.create(
+            betas=[FALLBACK_BETA],
+            fallbacks="default",
+            model=model,
+            max_tokens=max_tokens,
+            system=_system_blocks(system),
+            messages=[{"role": "user", "content": user}],
+            thinking={"type": "adaptive"},
+            output_config={
+                "format": {"type": "json_schema", "schema": schema},
+                **({"effort": effort} if effort else {}),
+            },
+        )
+        if response.stop_reason == "refusal":
+            details = getattr(response, "stop_details", None)
+            category = getattr(details, "category", None)
+            raise ModelRefusal(
+                "Model refused the request" + (f" (category: {category})" if category else "")
+            )
+        if response.stop_reason == "max_tokens":
+            raise ModelOutputError("Model output was truncated (max_tokens reached)")
+        text = "".join(b.text for b in response.content if b.type == "text")
+        try:
+            data = json.loads(text)
+        except ValueError as exc:
+            raise ModelOutputError("Model output was not valid JSON") from exc
+        u = response.usage
+        usage = Usage(
+            u.input_tokens,
+            u.output_tokens,
+            u.cache_read_input_tokens or 0,
+            u.cache_creation_input_tokens or 0,
+        )
+        return CompletionResult(data, usage, self.name, response.model)
+
+    def count_tokens(self, *, model: str, system: list[SystemPart], user: str) -> int | None:
+        result = self.client.messages.count_tokens(
+            model=model,
+            system=_system_blocks(system),
+            messages=[{"role": "user", "content": user}],
+        )
+        return result.input_tokens
