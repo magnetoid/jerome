@@ -80,3 +80,43 @@ def imported_docx_book(session, tmp_storage):
         data=make_docx(["# One", "Teh first paragraph.", "Second one here."]),
         variant="en-GB",
     )
+
+
+@pytest.fixture
+def test_settings(tmp_path):
+    from jerome.config import Settings
+
+    return Settings(database_url=TEST_DB_URL, data_dir=tmp_path / "data")
+
+
+@pytest.fixture
+def client(session, tmp_storage, test_settings):
+    from fastapi.testclient import TestClient
+
+    from jerome.api.app import create_app
+    from jerome.api.deps import get_session, get_storage
+
+    app = create_app(test_settings)
+    app.dependency_overrides[get_session] = lambda: session
+    app.dependency_overrides[get_storage] = lambda: tmp_storage
+    with TestClient(app) as c:
+        yield c
+
+
+@pytest.fixture
+def auth(session):
+    from jerome.core.keys import create_api_key
+
+    return {"Authorization": f"Bearer {create_api_key(session, 'tester')}"}
+
+
+@pytest.fixture
+def book_id(imported_docx_book):
+    return imported_docx_book.id
+
+
+@pytest.fixture
+def cli_runner():
+    from typer.testing import CliRunner
+
+    return CliRunner()

@@ -18,6 +18,9 @@ dependencies = [
     "typer",
 ]
 
+[project.scripts]
+jerome = "jerome.cli:app"
+
 [dependency-groups]
 dev = ["pytest", "respx", "ruff", "python-docx"]
 
