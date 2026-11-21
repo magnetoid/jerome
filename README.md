@@ -85,6 +85,27 @@ This repository is public. Never commit manuscripts, book files, exports, `.env`
 `.gitignore` excludes `*.docx`, `*.epub`, `.env`, `eval/data` and `eval/results`. The only
 book files allowed are the public-domain fixtures under `tests/fixtures/public/`.
 
+## Evaluation
+
+A seeded-error harness measures the passes on public-domain text. It injects known typo,
+punctuation, grammar and consistency errors into Project Gutenberg books (listed in
+`eval/sources.toml`) and scores precision and recall per source and category.
+
+```bash
+uv run python -m eval.fetch_texts                    # free; writes eval/data/ (gitignored)
+docker compose up -d languagetool
+uv run python -m eval.run --language en --max-cost 3 --seed 1
+uv run python -m eval.run --language de --max-cost 3 --seed 1
+```
+
+`eval.run` prints the cost estimate and asks `Run? [y/N]` before any paid call, refuses to
+start if the estimate is above `--max-cost`, and stops sending chunks once the actual cost
+reaches it. It uses the configured AI model. Results are written to `eval/results/`
+(gitignored) as JSON and Markdown.
+
+**No baseline numbers have been recorded yet.** The paid baseline has not been run; run it
+with your own API key and record the overall precision and recall here.
+
 ## Tests
 
 `uv run pytest -q` needs only Postgres (`JEROME_TEST_DATABASE_URL`); DB-backed tests are

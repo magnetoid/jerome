@@ -13,6 +13,7 @@ from jerome.errors import Conflict, NotFound
 from jerome.models import Registry, Usage, cost
 from jerome.models.base import SystemPart
 from jerome.proofread.ai_pass import Chunk, build_request, chunk_blocks
+from jerome.types import StyleSheet
 
 PassName = Literal["languagetool", "ai", "consistency"]
 ALL_PASSES: tuple[PassName, ...] = ("languagetool", "ai", "consistency")
@@ -74,13 +75,21 @@ def _count(provider, model: str, system: list[SystemPart], user: str) -> int:
 
 
 def _ai_range(session: Session, registry: Registry, book, chunks: list[Chunk]) -> CostRange:
+    return ai_cost_range(
+        registry, get_style_sheet(session, book.id), chunks, local_only=book.local_only
+    )
+
+
+def ai_cost_range(
+    registry: Registry, style: StyleSheet, chunks: list[Chunk], local_only: bool = False
+) -> CostRange:
+    """Low/high cost of running the AI pass over ``chunks``; needs no database."""
     zero = Decimal(0)
-    resolved = registry.for_pass("ai", local_only=book.local_only)
+    resolved = registry.for_pass("ai", local_only=local_only)
     if resolved is None or not chunks:
         return CostRange(zero, zero)
     provider, config = resolved
     price = registry.price(config.model)
-    style = get_style_sheet(session, book.id)
     low = high = zero
     sys_tokens: int | None = None
     for i, chunk in enumerate(chunks):

@@ -1,0 +1,16 @@
+# Public-domain Project Gutenberg texts used for the seeded-error evaluation.
+[[en]]
+id = 1342
+variant = "en-GB"
+
+[[en]]
+id = 932
+variant = "en-US"
+
+[[de]]
+id = 22367
+variant = "de-DE"
+
+[[de]]
+id = 2229
+variant = "de-DE"
