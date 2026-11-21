@@ -11,6 +11,9 @@ from jerome.types import BlockText, Candidate, Category, Severity, Source, Style
 _TOKEN = re.compile(r"[^\W\d_]+(?:-[^\W\d_]+)*")
 _DOUBLE_QUOTES = frozenset('"“”„‟«»')
 _OPENERS = frozenset("([{")
+# a minority spelling is flagged only when the dominant one is common and clearly dominant
+MIN_DOMINANT_COUNT = 3
+DOMINANCE_RATIO = 4  # count(dominant) >= DOMINANCE_RATIO * count(minority)
 
 
 @dataclass(frozen=True)
@@ -43,6 +46,23 @@ def _lower_first(word: str) -> str:
 
 def _upper_first(word: str) -> str:
     return word[:1].upper() + word[1:]
+
+
+def _is_shout(word: str) -> bool:
+    """All capitals with two or more letters (a heading, an acronym): no spelling to vote on."""
+    letters = [c for c in word if c.isalpha()]
+    return len(letters) >= 2 and all(c.isupper() for c in letters)
+
+
+def _only_case(a: str, b: str) -> bool:
+    return a != b and a.lower() == b.lower()
+
+
+def _only_space(a: str, b: str) -> bool:
+    """Differ by a space alone ("along"/"a long"); a hyphen on either side is a real variant."""
+    if "-" in a or "-" in b:
+        return False
+    return a.count(" ") != b.count(" ") and a.replace(" ", "").lower() == b.replace(" ", "").lower()
 
 
 def _tokens(block: BlockText, language: str) -> list[tuple[re.Match[str], bool]]:
@@ -116,10 +136,16 @@ def _variant_candidates(
     for block, toks in per_block:
         for idx, (m, initial) in enumerate(toks):
             word = m.group()
+            if _is_shout(word):
+                continue
             singles.append(_Occ(block.id, m.start(), m.end(), word, word, initial))
             if idx + 1 < len(toks):
                 n, _ = toks[idx + 1]
-                if n.start() == m.end() + 1 and block.text[m.end()] == " ":
+                if (
+                    n.start() == m.end() + 1
+                    and block.text[m.end()] == " "
+                    and not _is_shout(n.group())
+                ):
                     joined = f"{word} {n.group()}"
                     pairs.append(
                         _Occ(
@@ -150,17 +176,25 @@ def _variant_candidates(
         if len(ranked) > 1 and ranked[0][1] == ranked[1][1]:
             continue
         dominant, dom_n = ranked[0]
+        if dom_n < MIN_DOMINANT_COUNT:
+            continue
         for o in occs:
             if o.original in ignore:
                 continue
             if o.initial:
                 if _lower_first(o.original) == _lower_first(dominant):
                     continue
-                repl, seen = _upper_first(dominant), 1
+                repl, seen = _upper_first(dominant), max(1, counts[_lower_first(o.original)])
             else:
                 if o.form == dominant:
                     continue
                 repl, seen = dominant, counts[o.form]
+            if dom_n < DOMINANCE_RATIO * seen:
+                continue
+            if _only_space(o.original, repl if not o.initial else dominant):
+                continue
+            if style.language == "de" and _only_case(o.original, repl):
+                continue
             out.append(
                 Candidate(
                     o.block_id,
@@ -184,7 +218,7 @@ def _name_candidates(
     for block, toks in per_block:
         for m, initial in toks:
             w = m.group()
-            if not initial and len(w) >= 3 and w[0].isupper():
+            if not initial and len(w) >= 3 and w[0].isupper() and not _is_shout(w):
                 occs.append((block.id, m))
     counts = Counter(m.group() for _, m in occs)
     ignore = set(style.ignore_words)

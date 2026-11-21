@@ -1,5 +1,7 @@
 import io
 import zipfile
+from collections import Counter
+from collections.abc import Iterable
 from pathlib import Path
 
 from sqlalchemy import insert, select
@@ -38,6 +40,42 @@ def _detect_format(filename: str, data: bytes) -> str:
     return detected
 
 
+_QUOTE_PAIRS = {"“": "“”", "„": "„“", "»": "»«", "«": "«»"}  # opener -> double pair
+_SINGLES = {"»«": "›‹", "«»": "‹›", "„“": "‚‘"}
+_BEFORE_OPENER = frozenset("([{—–‘‚›‹")
+_MIN_QUOTES, _MIN_SHARE = 10, 0.8
+
+
+def detect_quote_style(texts: Iterable[str], variant: Variant) -> str:
+    """The quote style of the book: its dominant double-quote pair, else the variant default.
+
+    Opening characters of the known pairs are counted where they open (at the start, after
+    a space or an opening bracket or dash); the pair needs at least 10 openers and 80% of
+    them. Straight quotes are not a pair and never set the style.
+    """
+    default = DEFAULT_QUOTES[variant]
+    openers: Counter[str] = Counter()
+    for text in texts:
+        for i, ch in enumerate(text):
+            if ch in _QUOTE_PAIRS and (
+                i == 0 or text[i - 1].isspace() or text[i - 1] in _BEFORE_OPENER
+            ):
+                openers[ch] += 1
+    total = sum(openers.values())
+    if total < _MIN_QUOTES:
+        return default
+    opener, n = openers.most_common(1)[0]
+    if n < _MIN_SHARE * total:
+        return default
+    double = _QUOTE_PAIRS[opener]
+    if double in (default[0:2], default[2:4]):
+        return default
+    if double in _SINGLES:
+        return double + _SINGLES[double]
+    pairs = (default[0:2], default[2:4])  # “” in a variant that does not use it
+    return double + next(p for p in pairs if not set(p) & set("“”„«»"))
+
+
 def import_book(
     session: Session,
     storage: Storage,
@@ -56,9 +94,10 @@ def import_book(
         local_only=local_only,
         original_filename=filename,
     )
-    style = StyleSheet(variant, DEFAULT_QUOTES[variant], {}, [])
+    quotes = detect_quote_style((b.text for c in parsed.chapters for b in c.blocks), variant)
+    style = StyleSheet(variant, quotes, {}, [])
     book.style_sheet = StyleSheetRow(
-        variant=variant, quote_style=style.quote_style, house_spellings={}, ignore_words=[]
+        variant=variant, quote_style=quotes, house_spellings={}, ignore_words=[]
     )
     session.add(book)
     session.flush()

@@ -8,6 +8,7 @@ import pytest
 from jerome.core.books import (
     block_texts,
     delete_book,
+    detect_quote_style,
     get_book,
     import_book,
     list_books,
@@ -20,6 +21,7 @@ from jerome.documents.docx_writer import DocxWriteOptions, write_docx
 from jerome.documents.epub_reader import read_epub
 from jerome.errors import NotFound, UnsupportedDocumentError
 from jerome.orm import Block, Book, Chapter, Segment
+from jerome.proofread.consistency import consistency_candidates
 from tests.fixtures.docx_builders import make_docx
 from tests.fixtures.epub_builders import make_epub
 
@@ -272,3 +274,37 @@ def test_multi_batch_import_maps_blocks_and_segments_correctly(session, tmp_stor
                 assert all(
                     block.text[s.start : s.end].startswith(f"Para {n}") for s in block.segments
                 )
+
+
+def test_german_book_with_guillemets_keeps_them_and_gets_no_quote_suggestions(session, tmp_storage):
+    lines = [f"Er sagte: »Das ist Satz {i}.« Dann ging er." for i in range(12)]
+    book = import_book(
+        session, tmp_storage, filename="q.docx", data=make_docx(lines), variant="de-DE"
+    )
+    style = get_style_sheet(session, book.id)
+    assert style.quote_style == "»«›‹"
+    assert consistency_candidates(block_texts(session, book.id), style) == []
+
+
+def test_book_with_too_few_or_mixed_quotes_keeps_the_default(session, tmp_storage):
+    few = [f"Er sagte: »Satz {i}.«" for i in range(9)]
+    book = import_book(
+        session, tmp_storage, filename="f.docx", data=make_docx(few), variant="de-DE"
+    )
+    assert get_style_sheet(session, book.id).quote_style == "„“‚‘"
+    mixed = [f"Er sagte: »Satz {i}.«" for i in range(6)] + [f"Sie: „Satz {i}.“" for i in range(6)]
+    assert detect_quote_style(mixed, "de-DE") == "„“‚‘"
+
+
+def test_detect_quote_style_pairs_and_straight_quotes():
+    texts = lambda opener, closer: [f"He said {opener}hello{closer} to me." for _ in range(10)]  # noqa: E731
+    assert detect_quote_style(texts("«", "»"), "de-DE") == "«»‹›"
+    assert detect_quote_style(texts("»", "«"), "en-US") == "»«›‹"
+    assert detect_quote_style(texts("„", "“"), "en-US") == "„“‚‘"
+    assert detect_quote_style(texts("“", "”"), "de-DE") == "“”‚‘"
+    assert detect_quote_style(texts("“", "”"), "en-US") == "“”‘’"
+    assert detect_quote_style(texts("“", "”"), "en-GB") == "‘’“”"
+    assert detect_quote_style(texts('"', '"'), "de-DE") == "„“‚‘"  # straight is not a pair
+    # a German closing “ is not an opener
+    german = [f"Er sagte „hallo{n}“ und ging." for n in range(10)]
+    assert detect_quote_style(german, "en-US") == "„“‚‘"

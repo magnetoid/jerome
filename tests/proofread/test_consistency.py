@@ -8,14 +8,14 @@ STYLE_DE = StyleSheet("de-DE", DEFAULT_QUOTES["de-DE"], {}, [])
 
 
 def test_hyphen_variant_minority_flagged():
-    blocks = [BlockText(i, "Send an e-mail.") for i in range(3)] + [BlockText(9, "Send an email.")]
+    blocks = [BlockText(i, "Send an e-mail.") for i in range(4)] + [BlockText(9, "Send an email.")]
     c = consistency_candidates(blocks, STYLE_EN)
     assert [(x.block_id, x.original, x.replacement, x.severity) for x in c] == [
         (9, "email", "e-mail", Severity.MEDIUM)
     ]
     assert c[0].source == Source.CONSISTENCY
     assert c[0].category == Category.CONSISTENCY
-    assert "3" in c[0].explanation and "1" in c[0].explanation
+    assert "4" in c[0].explanation and "1" in c[0].explanation
 
 
 def test_sentence_initial_capital_is_not_a_case_variant():
@@ -23,7 +23,10 @@ def test_sentence_initial_capital_is_not_a_case_variant():
 
 
 def test_sentence_initial_minority_gets_capitalised_replacement():
-    blocks = [BlockText(1, "We like e-mail. E-mail is fine. Email is bad. Use e-mail.")]
+    blocks = [
+        BlockText(1, "We like e-mail. E-mail is fine. Email is bad. Use e-mail."),
+        BlockText(2, "Send e-mail. Or e-mail."),
+    ]
     c = consistency_candidates(blocks, STYLE_EN)
     assert [(x.original, x.replacement) for x in c] == [("Email", "E-mail")]
 
@@ -34,9 +37,11 @@ def test_tie_flags_nothing():
 
 
 def test_two_word_variant_when_joined_form_exists():
-    blocks = [BlockText(1, "An email. Another email. Send an e mail now.")]
+    blocks = [
+        BlockText(1, "An e-mail. Another e-mail. More e-mail, and e-mail. Send an e mail now.")
+    ]
     c = consistency_candidates(blocks, STYLE_EN)
-    assert [(x.original, x.replacement) for x in c] == [("e mail", "email")]
+    assert [(x.original, x.replacement) for x in c] == [("e mail", "e-mail")]
     text = blocks[0].text
     assert text[c[0].start : c[0].end] == "e mail"
 
@@ -141,6 +146,7 @@ def test_english_proper_name_initial_and_midsentence_not_flagged():
 
 def test_sentence_initial_minority_hyphen_variant_flagged_with_capital():
     blocks = [BlockText(1, "Send an email. Use email. E-mail is old.")]
+    blocks += [BlockText(2, "Use email."), BlockText(3, "Use email.")]
     c = consistency_candidates(blocks, STYLE_EN)
     assert [(x.original, x.replacement) for x in c] == [("E-mail", "Email")]
 
@@ -150,3 +156,48 @@ def test_name_check_is_english_only():
         BlockText(9, "Dann kam Hans heran.")
     ]
     assert consistency_candidates(blocks, STYLE_DE) == []
+
+
+def _many(text, n):
+    return [BlockText(i, text) for i in range(n)]
+
+
+def test_all_caps_tokens_are_not_variants():
+    blocks = _many("Of the house.", 5) + [BlockText(9, "THE FALL OF THE HOUSE OF USHER")]
+    assert consistency_candidates(blocks, STYLE_EN) == []
+
+
+def test_german_case_only_variants_are_dropped():
+    blocks = _many("Dann sah ich Sie dort stehen.", 9) + [BlockText(99, "Dann sah ich sie dort.")]
+    assert consistency_candidates(blocks, STYLE_DE) == []
+    # English still flags a case variant that is clearly in the minority
+    en = _many("Visit the Internet cafe.", 4) + [BlockText(99, "Visit the internet cafe.")]
+    assert [(x.original, x.replacement) for x in consistency_candidates(en, STYLE_EN)] == [
+        ("internet", "Internet")
+    ]
+
+
+def test_space_only_variants_are_dropped_but_hyphen_variants_kept():
+    split = _many("He came along nicely.", 6) + [BlockText(99, "He came a long nicely.")]
+    assert consistency_candidates(split, STYLE_EN) == []
+    german = _many("Das war nachdem es regnete.", 6) + [
+        BlockText(99, "Das war nach dem es regnete.")
+    ]
+    assert consistency_candidates(german, STYLE_DE) == []
+    hyphen = _many("See you to-morrow.", 4) + [
+        BlockText(98, "See you tomorrow."),
+        BlockText(99, "See you to morrow."),
+    ]
+    got = {(x.original, x.replacement) for x in consistency_candidates(hyphen, STYLE_EN)}
+    assert got == {("tomorrow", "to-morrow"), ("to morrow", "to-morrow")}
+
+
+def test_minority_needs_a_dominant_form_that_is_common_and_four_times_larger():
+    three_to_one = _many("Send an e-mail.", 3) + [BlockText(9, "Send an email.")]
+    assert consistency_candidates(three_to_one, STYLE_EN) == []
+    two_to_zero = _many("Send an e-mail.", 2) + [BlockText(9, "Send an email.")]
+    assert consistency_candidates(two_to_zero, STYLE_EN) == []
+    four_to_one = _many("Send an e-mail.", 4) + [BlockText(9, "Send an email.")]
+    assert len(consistency_candidates(four_to_one, STYLE_EN)) == 1
+    five_to_two = _many("Send an e-mail.", 5) + _many("Send an email.", 2)
+    assert consistency_candidates(five_to_two, STYLE_EN) == []
