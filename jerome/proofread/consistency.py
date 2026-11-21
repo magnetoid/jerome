@@ -116,8 +116,7 @@ def _variant_candidates(
     for block, toks in per_block:
         for idx, (m, initial) in enumerate(toks):
             word = m.group()
-            form = _lower_first(word) if initial else word
-            singles.append(_Occ(block.id, m.start(), m.end(), word, form, initial))
+            singles.append(_Occ(block.id, m.start(), m.end(), word, word, initial))
             if idx + 1 < len(toks):
                 n, _ = toks[idx + 1]
                 if n.start() == m.end() + 1 and block.text[m.end()] == " ":
@@ -128,7 +127,7 @@ def _variant_candidates(
                             m.start(),
                             n.end(),
                             joined,
-                            _lower_first(joined) if initial else joined,
+                            joined,
                             initial,
                         )
                     )
@@ -143,17 +142,25 @@ def _variant_candidates(
     ignore = set(style.ignore_words)
     out = []
     for occs in groups.values():
-        counts = Counter(o.form for o in occs)
-        if len(counts) < 2:
+        # sentence-initial tokens do not vote: their capital is positional
+        counts = Counter(o.form for o in occs if not o.initial)
+        if not counts:
             continue
         ranked = counts.most_common()
-        if ranked[0][1] == ranked[1][1]:
+        if len(ranked) > 1 and ranked[0][1] == ranked[1][1]:
             continue
         dominant, dom_n = ranked[0]
         for o in occs:
-            if o.form == dominant or o.original in ignore or o.form in ignore:
+            if o.original in ignore:
                 continue
-            repl = _upper_first(dominant) if o.initial else dominant
+            if o.initial:
+                if _lower_first(o.original) == _lower_first(dominant):
+                    continue
+                repl, seen = _upper_first(dominant), 1
+            else:
+                if o.form == dominant:
+                    continue
+                repl, seen = dominant, counts[o.form]
             out.append(
                 Candidate(
                     o.block_id,
@@ -164,7 +171,7 @@ def _variant_candidates(
                     Category.CONSISTENCY,
                     Severity.MEDIUM,
                     Source.CONSISTENCY,
-                    f"“{o.form}” appears {counts[o.form]}× but “{dominant}” {dom_n}× in this book.",
+                    f"“{o.original}” appears {seen}× but “{dominant}” {dom_n}× in this book.",
                 )
             )
     return out
@@ -221,7 +228,9 @@ def _name_candidates(
 
 def consistency_candidates(blocks: Sequence[BlockText], style: StyleSheet) -> list[Candidate]:
     per_block = [(b, _tokens(b, style.language)) for b in blocks]
-    out = _variant_candidates(per_block, style) + _name_candidates(per_block, style)
+    out = _variant_candidates(per_block, style)
+    if style.language == "en":  # German capitalises every noun: Hand/Hans are ordinary words
+        out += _name_candidates(per_block, style)
     for b in blocks:
         out += _quote_candidates(b, style) + _house_candidates(b, style)
     return sorted(out, key=lambda c: (c.block_id, c.start))

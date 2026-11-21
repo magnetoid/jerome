@@ -126,3 +126,27 @@ def test_output_sorted_by_block_and_start():
     c = consistency_candidates(blocks, style)
     keys = [(x.block_id, x.start) for x in c]
     assert keys == sorted(keys)
+
+
+def test_german_capitalised_noun_initial_and_midsentence_not_flagged():
+    blocks = [BlockText(i, "Haus und Hof. Das ist ein Haus.") for i in range(3)]
+    blocks += [BlockText(9, "Haus. Wir sahen das Haus.")]
+    assert consistency_candidates(blocks, STYLE_DE) == []
+
+
+def test_english_proper_name_initial_and_midsentence_not_flagged():
+    blocks = [BlockText(1, "Paris is big. We saw Paris. Paris again. Then Paris fell.")]
+    assert consistency_candidates(blocks, STYLE_EN) == []
+
+
+def test_sentence_initial_minority_hyphen_variant_flagged_with_capital():
+    blocks = [BlockText(1, "Send an email. Use email. E-mail is old.")]
+    c = consistency_candidates(blocks, STYLE_EN)
+    assert [(x.original, x.replacement) for x in c] == [("E-mail", "Email")]
+
+
+def test_name_check_is_english_only():
+    blocks = [BlockText(i, "Dann kam Hand heran.") for i in range(5)] + [
+        BlockText(9, "Dann kam Hans heran.")
+    ]
+    assert consistency_candidates(blocks, STYLE_DE) == []
