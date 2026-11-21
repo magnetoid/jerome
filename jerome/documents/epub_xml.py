@@ -28,6 +28,7 @@ from jerome.documents.model import PLACEHOLDER, BlockKind, Mark, MarkKind
 from jerome.errors import UnsupportedDocumentError
 
 __all__ = [
+    "CONTENT_TYPES",
     "MAX_UNCOMPRESSED_BYTES",
     "ContentDocument",
     "EpubPackage",
@@ -36,6 +37,7 @@ __all__ = [
     "NavPoint",
     "SpineItem",
     "block_kind",
+    "content_documents",
     "element_text",
     "is_block_text",
     "iter_epub_blocks",
@@ -169,6 +171,20 @@ def read_container(data: bytes) -> EpubPackage:
     )
     package.nav_points = _read_toc(package, spine_el.get("toc") if spine_el is not None else None)
     return package
+
+
+CONTENT_TYPES = frozenset({"application/xhtml+xml", "text/html"})
+
+
+def content_documents(package: EpubPackage) -> list[SpineItem]:
+    """The spine items that are XHTML documents present in the package, in spine order:
+    the documents whose blocks are read, and so the only ones block keys can name."""
+    media_types = {m.path: m.media_type for m in package.manifest.values()}
+    return [
+        item
+        for item in package.spine
+        if media_types.get(item.path) in CONTENT_TYPES and item.path in package.files
+    ]
 
 
 def _read_toc(package: EpubPackage, ncx_id: str | None) -> list[NavPoint]:
@@ -354,6 +370,11 @@ class EpubPiece:
       moves along with the replacement).
     - ``where == "self"``: a placeholder; ``element`` is the object (``img``, ``br``,
       ``svg``, a ``noteref`` link, ...) and ``spans`` is empty. Its tail is a separate piece.
+    - ``collapsed``: when a text piece ends in a space whose whitespace run goes on into
+      later nodes (``big\\n</b>  world``), those later characters, as ``(element, where,
+      raw_start, raw_end)`` slices of their nodes, in document order. They are in no span:
+      they collapsed into this space. A writer that removes this space, or puts text right
+      after it, must remove them too, or they would show as a space of their own.
     """
 
     start: int
@@ -361,6 +382,7 @@ class EpubPiece:
     element: etree._Element
     where: Literal["text", "tail", "entity", "self"]
     spans: tuple[tuple[int, int], ...] = ()
+    collapsed: tuple[tuple[etree._Element, Literal["text", "tail"], int, int], ...] = ()
 
     @property
     def is_text(self) -> bool:
@@ -518,6 +540,22 @@ def element_text(el: etree._Element) -> ParagraphText:
             last.spans += (span,)
         else:
             pieces.append(EpubPiece(pos, pos + 1, atom.element, atom.where, (span,)))
+
+    for piece in pieces:
+        if piece.is_text and piece.end < len(text) and text[piece.end - 1] == " ":
+            # Atoms between this space and the next character are dropped whitespace; the
+            # ones in this space's own node are in its span already.
+            space = atoms[out_atom[piece.end - 1]]
+            dropped: list = []
+            for atom in atoms[out_atom[piece.end - 1] + 1 : out_atom[piece.end]]:
+                if atom.element is space.element and atom.where == space.where:
+                    continue
+                last = dropped[-1] if dropped else None
+                if last and last[0] is atom.element and last[1] == atom.where:
+                    dropped[-1] = (*last[:3], atom.raw_index + 1)
+                else:
+                    dropped.append((atom.element, atom.where, atom.raw_index, atom.raw_index + 1))
+            piece.collapsed = tuple(dropped)
     return ParagraphText(text, marks, pieces)  # type: ignore[arg-type]
 
 

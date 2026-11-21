@@ -145,6 +145,18 @@ def test_whitespace_collapses_and_pieces_map_to_raw_nodes():
     assert pt.marks == [Mark(6, 9, MarkKind.BOLD)]
 
 
+def test_whitespace_collapsed_from_later_nodes_is_recorded_on_its_space():
+    pt = _text("<p>\n  Hello   <b>big\n</b>  world \n</p>")
+    hello, big, world = pt.pieces
+    assert hello.collapsed == () and world.collapsed == ()  # the run "   " is all in its span
+    assert big.collapsed == ((big.element, "tail", 0, 2),)  # "  " before "world"
+    pt = _text("<p>Lead <span> </span> split</p>")
+    lead, _ = pt.pieces
+    span = lead.element[0]
+    assert pt.text == "Lead split"
+    assert lead.collapsed == ((span, "text", 0, 1), (span, "tail", 0, 1))
+
+
 def test_nbsp_is_not_collapsed():
     pt = _text("<p>a  b</p>")
     assert pt.text == "a  b"

@@ -208,8 +208,8 @@ def block(data: bytes, chapter: int, block: int) -> ParsedBlock:
     return read_epub(data).chapters[chapter].blocks[block]
 
 
-def block_key(data: bytes, chapter: int, index: int) -> str:
-    return read_epub(data).chapters[chapter].blocks[index].key
+def block_key(data: bytes, chapter: int, block: int) -> str:
+    return read_epub(data).chapters[chapter].blocks[block].key
 
 
 def zip_names(data: bytes) -> list[str]:

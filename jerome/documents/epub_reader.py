@@ -14,6 +14,7 @@ from lxml import etree
 from jerome.documents.epub_xml import (
     EpubPackage,
     block_kind,
+    content_documents,
     element_text,
     epub_type,
     is_block_text,
@@ -25,7 +26,6 @@ from jerome.documents.epub_xml import (
 from jerome.documents.model import BlockKind, ParsedBlock, ParsedBook, ParsedChapter
 from jerome.errors import UnsupportedDocumentError
 
-_XHTML_TYPES = {"application/xhtml+xml", "text/html"}
 _NON_PROOFREAD_TYPES = {"cover", "titlepage", "copyright-page", "toc", "frontmatter", "backmatter"}
 
 
@@ -56,13 +56,7 @@ def read_epub(data: bytes) -> ParsedBook:
 
 def _read_docs(package: EpubPackage) -> list[_Doc]:
     docs = []
-    by_path = {m.path: m for m in package.manifest.values()}
-    for item in package.spine:
-        manifest = by_path.get(item.path)
-        if manifest is None or manifest.media_type not in _XHTML_TYPES:
-            continue
-        if item.path not in package.files:
-            continue
+    for item in content_documents(package):
         root = parse_content_document(package.files[item.path], item.path).root
         blocks = []
         for n, el in iter_epub_blocks(root):
