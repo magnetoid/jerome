@@ -152,3 +152,54 @@ def test_request_error_rolls_back(engine, test_settings):
     with engine.connect() as conn:
         n = conn.execute(select(ApiKey.id).where(ApiKey.name == "rollback-probe")).first()
     assert n is None
+
+
+def _forbid_import(monkeypatch):
+    from jerome.api import routes_books
+
+    def fail(*a, **k):
+        raise AssertionError("handler reached")
+
+    monkeypatch.setattr(routes_books.books, "import_book", fail)
+
+
+def test_oversized_content_length_413_without_auth_before_handler(
+    client, test_settings, monkeypatch
+):
+    _forbid_import(monkeypatch)
+    test_settings.max_upload_mb = 0
+    r = client.post(
+        "/v1/books",
+        files={"file": ("m.docx", b"x" * (2 * 1024 * 1024))},
+        data={"variant": "en-US"},
+    )
+    assert r.status_code == 413 and "detail" in r.json()
+
+
+def test_oversized_chunked_body_413_without_content_length(client, test_settings, monkeypatch):
+    _forbid_import(monkeypatch)
+    test_settings.max_upload_mb = 0
+
+    def chunks():
+        yield b'--b\r\nContent-Disposition: form-data; name="file"; filename="m.docx"\r\n\r\n'
+        for _ in range(4):
+            yield b"x" * (512 * 1024)
+
+    r = client.post(
+        "/v1/books", content=chunks(), headers={"content-type": "multipart/form-data; boundary=b"}
+    )
+    assert r.status_code == 413 and "detail" in r.json()
+
+
+def test_unexpected_value_error_is_500(engine, test_settings):
+    from fastapi.testclient import TestClient
+
+    app = create_app(test_settings)
+
+    @app.get("/bug")
+    def bug():
+        raise ValueError("internal detail")
+
+    with TestClient(app, raise_server_exceptions=False) as c:
+        r = c.get("/bug")
+    assert r.status_code == 500 and "internal detail" not in r.text

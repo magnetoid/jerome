@@ -3,6 +3,7 @@ from fastapi.responses import JSONResponse
 
 from jerome.api import routes_books
 from jerome.api.deps import current_actor
+from jerome.api.limits import BodyLimitMiddleware
 from jerome.config import Settings, get_settings
 from jerome.db import make_engine
 from jerome.errors import Conflict, InvalidChangeError, NotFound, UnsupportedDocumentError
@@ -12,7 +13,6 @@ _ERROR_STATUS: dict[type[Exception], int] = {
     Conflict: 409,
     UnsupportedDocumentError: 422,
     InvalidChangeError: 422,
-    ValueError: 422,
 }
 
 
@@ -28,6 +28,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(title="Jerome")
     app.state.settings = settings
     app.state.engine = make_engine(settings.database_url)
+    app.add_middleware(BodyLimitMiddleware)
     for exc_type, status in _ERROR_STATUS.items():
         app.add_exception_handler(exc_type, _handler(status))
 
