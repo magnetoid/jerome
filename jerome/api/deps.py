@@ -7,11 +7,16 @@ from sqlalchemy.orm import Session
 from jerome.config import Settings
 from jerome.core.keys import verify_api_key
 from jerome.db import session_scope
+from jerome.models import Registry
 from jerome.storage import Storage
 
 
 def get_settings_dep(request: Request) -> Settings:
     return request.app.state.settings
+
+
+def get_registry(request: Request) -> Registry:
+    return request.app.state.registry
 
 
 def get_session(request: Request) -> Iterator[Session]:

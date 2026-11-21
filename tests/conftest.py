@@ -186,3 +186,96 @@ def epub_book_with_decisions(session, tmp_storage):
 @pytest.fixture
 def epub_book_id(epub_book_with_decisions):
     return epub_book_with_decisions.id
+
+
+def _make_registry(test_settings, provider):
+    from jerome.models import Registry
+
+    settings = test_settings.model_copy(
+        update={"models": {"ai": {"provider": "fake", "model": "claude-opus-5-5"}}}
+    )
+    return Registry(settings, {"fake": provider})
+
+
+@pytest.fixture
+def registry(test_settings):
+    from jerome.models import FakeProvider
+
+    return _make_registry(test_settings, FakeProvider([], token_count=1000))
+
+
+@pytest.fixture
+def registry_fake_counts_1000(registry):
+    return registry
+
+
+@pytest.fixture
+def registry_no_count(test_settings):
+    from jerome.models import FakeProvider
+
+    return _make_registry(test_settings, FakeProvider([], token_count=None))
+
+
+@pytest.fixture
+def registry_local_only_unavailable(test_settings):
+    """The only AI provider is not local, so a local_only book has no AI pass."""
+    from jerome.models import FakeProvider
+
+    return _make_registry(test_settings, FakeProvider([], local=False, token_count=1000))
+
+
+@pytest.fixture
+def add_chapter(session):
+    from jerome.orm import Block, Chapter
+
+    def make(book, ordinal, texts, *, proofread=True, title=None):
+        chapter = Chapter(
+            book_id=book.id, ordinal=ordinal, title=title or f"Ch {ordinal}", proofread=proofread
+        )
+        session.add(chapter)
+        session.flush()
+        for i, body in enumerate(texts):
+            session.add(
+                Block(
+                    chapter_id=chapter.id,
+                    book_id=book.id,
+                    ordinal=i,
+                    kind="paragraph",
+                    text=body,
+                    hash=f"h{chapter.id}-{i}",
+                )
+            )
+        session.flush()
+        return chapter
+
+    return make
+
+
+@pytest.fixture
+def book(book_factory, add_chapter):
+    b = book_factory()
+    add_chapter(b, 0, ["Some short text here."])
+    return b
+
+
+@pytest.fixture
+def book_6000_words(book_factory, add_chapter):
+    b = book_factory()
+    add_chapter(b, 0, [" ".join(["word"] * 1000)] * 6)
+    return b
+
+
+@pytest.fixture
+def book_3_chapters(book_factory, add_chapter):
+    b = book_factory()
+    for i in range(3):
+        add_chapter(b, i, [f"Chapter {i} text."])
+    return b
+
+
+@pytest.fixture
+def book_with_front_matter(book_factory, add_chapter):
+    b = book_factory()
+    add_chapter(b, 0, [" ".join(["front"] * 100)], proofread=False, title="Front matter")
+    add_chapter(b, 1, ["Body text."])
+    return b

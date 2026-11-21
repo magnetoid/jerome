@@ -4,6 +4,8 @@ from decimal import Decimal
 from jerome.config import Settings
 from jerome.errors import JeromeError
 from jerome.models.base import Provider
+from jerome.models.claude import ClaudeProvider
+from jerome.models.openai_compat import OpenAICompatProvider
 from jerome.models.pricing import DEFAULT_PRICES, Price
 
 
@@ -40,3 +42,14 @@ class Registry:
         if model in DEFAULT_PRICES:
             return DEFAULT_PRICES[model]
         raise JeromeError(f"No price known for model {model!r}; set it in the prices setting")
+
+
+def build_registry(settings: Settings) -> Registry:
+    """Providers for the app. Construction needs no network or API key."""
+    providers: dict[str, Provider] = {"anthropic": ClaudeProvider()}
+    for cfg in settings.models.values():
+        if cfg.get("provider") == "openai_compat":
+            providers["openai_compat"] = OpenAICompatProvider(
+                base_url=cfg["base_url"], api_key=cfg.get("api_key")
+            )
+    return Registry(settings, providers)
