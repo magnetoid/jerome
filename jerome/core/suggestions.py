@@ -1,0 +1,373 @@
+from collections.abc import Sequence
+from dataclasses import dataclass
+from typing import Literal
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from jerome.documents.changes import Change, apply_changes
+from jerome.errors import Conflict, InvalidChangeError, NotFound
+from jerome.orm import Block, Chapter, Decision, Suggestion
+from jerome.types import Candidate, Severity
+
+DECIDED = ("accepted", "edited")
+EDITOR_EXPLANATION = "Change made by the editor in Word"
+
+
+@dataclass
+class AddResult:
+    created: int
+    dropped_decided_overlap: int
+    dropped_rejected_repeat: int
+    dropped_open_overlap: int
+
+
+@dataclass
+class SuggestionFilter:
+    chapter_id: int | None = None
+    category: str | None = None
+    severity: str | None = None
+    min_severity: str | None = None
+    source: str | None = None
+    status: str | None = None
+
+
+def spans_overlap(s1: int, e1: int, s2: int, e2: int) -> bool:
+    """Same semantics as validate_changes: touching spans do not overlap, an insertion
+    overlaps a span only strictly inside it, and two insertions at one point overlap."""
+    if s1 == e1 and s2 == e2:
+        return s1 == s2
+    return s1 < e2 and s2 < e1
+
+
+def _lock_blocks(session: Session, block_ids: Sequence[int]) -> dict[int, Block]:
+    stmt = (
+        select(Block)
+        .where(Block.id.in_(set(block_ids)))
+        .order_by(Block.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    return {b.id: b for b in session.scalars(stmt)}
+
+
+def _log(
+    session: Session,
+    s: Suggestion,
+    action: str,
+    previous: str,
+    *,
+    actor: str,
+    channel: str,
+    review_import_id: int | None = None,
+    final_text: str | None = None,
+) -> None:
+    session.add(
+        Decision(
+            suggestion_id=s.id,
+            action=action,
+            previous_status=previous,
+            new_status=s.status,
+            final_text=final_text,
+            actor=actor,
+            channel=channel,
+            review_import_id=review_import_id,
+        )
+    )
+
+
+def _block_suggestions(session: Session, block_id: int) -> list[Suggestion]:
+    stmt = (
+        select(Suggestion)
+        .where(Suggestion.block_id == block_id)
+        .order_by(Suggestion.id)
+        .execution_options(populate_existing=True)
+    )
+    return list(session.scalars(stmt))
+
+
+def add_candidates(
+    session: Session,
+    book_id: int,
+    job_id: int | None,
+    candidates: Sequence[Candidate],
+    model: str | None = None,
+) -> AddResult:
+    blocks = _lock_blocks(session, [c.block_id for c in candidates])
+    for c in candidates:
+        block = blocks.get(c.block_id)
+        if block is None or block.book_id != book_id:
+            raise InvalidChangeError(f"block {c.block_id} does not belong to book {book_id}")
+        if (
+            not 0 <= c.start <= c.end <= len(block.text)
+            or block.text[c.start : c.end] != c.original
+        ):
+            raise InvalidChangeError(
+                f"original text does not match block {c.block_id} at ({c.start}, {c.end})"
+            )
+
+    existing: dict[int, list[Suggestion]] = {}
+    result = AddResult(0, 0, 0, 0)
+    for c in candidates:
+        known = existing.setdefault(c.block_id, _block_suggestions(session, c.block_id))
+        overlapping = [s for s in known if spans_overlap(c.start, c.end, s.start, s.end)]
+        if any(s.status in DECIDED for s in overlapping):
+            result.dropped_decided_overlap += 1
+        elif any(
+            s.status == "rejected"
+            and (s.start, s.end, s.replacement) == (c.start, c.end, c.replacement)
+            for s in known
+        ):
+            result.dropped_rejected_repeat += 1
+        elif any(s.status == "open" for s in overlapping):
+            result.dropped_open_overlap += 1
+        else:
+            row = Suggestion(
+                book_id=book_id,
+                block_id=c.block_id,
+                job_id=job_id,
+                start=c.start,
+                end=c.end,
+                original=c.original,
+                replacement=c.replacement,
+                category=str(c.category),
+                severity=str(c.severity),
+                source=str(c.source),
+                explanation=c.explanation,
+                status="open",
+                model=model,
+            )
+            session.add(row)
+            known.append(row)
+            result.created += 1
+    session.flush()
+    return result
+
+
+def _supersede_overlapping(session: Session, s: Suggestion, *, actor: str) -> None:
+    for other in _block_suggestions(session, s.block_id):
+        if (
+            other.id != s.id
+            and other.status == "open"
+            and spans_overlap(s.start, s.end, other.start, other.end)
+        ):
+            other.status = "superseded"
+            other.superseded_by = s.id
+            _log(session, other, "supersede", "open", actor=actor, channel="system")
+
+
+def _reopen_superseded(session: Session, s: Suggestion, *, actor: str) -> None:
+    siblings = _block_suggestions(session, s.block_id)
+    for other in siblings:
+        if other.superseded_by != s.id or other.status != "superseded":
+            continue
+        blocker = next(
+            (
+                d
+                for d in siblings
+                if d.id not in (s.id, other.id)
+                and d.status in DECIDED
+                and spans_overlap(other.start, other.end, d.start, d.end)
+            ),
+            None,
+        )
+        if blocker is not None:
+            other.superseded_by = blocker.id
+            continue
+        other.status = "open"
+        other.superseded_by = None
+        _log(session, other, "reopen", "superseded", actor=actor, channel="system")
+
+
+def decide(
+    session: Session,
+    suggestion_id: int,
+    action: Literal["accept", "reject", "edit", "undo"],
+    *,
+    actor: str,
+    channel: Literal["api", "word"] = "api",
+    replacement: str | None = None,
+    review_import_id: int | None = None,
+) -> Suggestion:
+    s = session.get(Suggestion, suggestion_id)
+    if s is None:
+        raise NotFound(f"suggestion {suggestion_id} not found")
+    _lock_blocks(session, [s.block_id])
+    session.refresh(s)
+
+    previous = s.status
+    if action == "undo":
+        if previous not in ("accepted", "rejected", "edited"):
+            raise Conflict(f"cannot undo a {previous} suggestion")
+    elif previous != "open":
+        raise Conflict(f"cannot {action} a {previous} suggestion")
+    if action == "edit" and replacement is None:
+        raise InvalidChangeError("edit requires a replacement")
+
+    final_text: str | None = None
+    if action == "accept":
+        s.status = "accepted"
+    elif action == "reject":
+        s.status = "rejected"
+    elif action == "edit":
+        s.status = "edited"
+        s.final_text = final_text = replacement
+    else:
+        s.status = "open"
+        s.final_text = None
+    session.flush()
+
+    _log(
+        session,
+        s,
+        action,
+        previous,
+        actor=actor,
+        channel=channel,
+        review_import_id=review_import_id,
+        final_text=final_text,
+    )
+    if action in ("accept", "edit"):
+        _supersede_overlapping(session, s, actor=actor)
+    elif action == "undo":
+        _reopen_superseded(session, s, actor=actor)
+    session.flush()
+    return s
+
+
+def record_editor_change(
+    session: Session,
+    block_id: int,
+    start: int,
+    end: int,
+    original: str,
+    replacement: str,
+    *,
+    pending: bool,
+    actor: str,
+    review_import_id: int | None,
+) -> Suggestion | None:
+    block = _lock_blocks(session, [block_id]).get(block_id)
+    if block is None:
+        raise NotFound(f"block {block_id} not found")
+    if not 0 <= start <= end <= len(block.text) or block.text[start:end] != original:
+        raise InvalidChangeError(
+            f"original text does not match block {block_id} at ({start}, {end})"
+        )
+    for s in _block_suggestions(session, block_id):
+        if (s.source, s.start, s.end, s.replacement) == ("editor", start, end, replacement):
+            return None
+    row = Suggestion(
+        book_id=block.book_id,
+        block_id=block_id,
+        start=start,
+        end=end,
+        original=original,
+        replacement=replacement,
+        category="style",
+        severity="low",
+        source="editor",
+        explanation=EDITOR_EXPLANATION,
+        status="open" if pending else "accepted",
+    )
+    session.add(row)
+    session.flush()
+    if not pending:
+        _log(
+            session,
+            row,
+            "accept",
+            "open",
+            actor=actor,
+            channel="word",
+            review_import_id=review_import_id,
+        )
+        _supersede_overlapping(session, row, actor=actor)
+        session.flush()
+    return row
+
+
+def list_suggestions(
+    session: Session, book_id: int, f: SuggestionFilter, limit: int = 100, offset: int = 0
+) -> list[Suggestion]:
+    stmt = (
+        select(Suggestion)
+        .join(Block, Block.id == Suggestion.block_id)
+        .join(Chapter, Chapter.id == Block.chapter_id)
+        .where(Suggestion.book_id == book_id)
+    )
+    if f.chapter_id is not None:
+        stmt = stmt.where(Block.chapter_id == f.chapter_id)
+    if f.category is not None:
+        stmt = stmt.where(Suggestion.category == f.category)
+    if f.severity is not None:
+        stmt = stmt.where(Suggestion.severity == f.severity)
+    if f.min_severity is not None:
+        floor = Severity(f.min_severity).rank
+        stmt = stmt.where(Suggestion.severity.in_([s.value for s in Severity if s.rank >= floor]))
+    if f.source is not None:
+        stmt = stmt.where(Suggestion.source == f.source)
+    if f.status is not None:
+        stmt = stmt.where(Suggestion.status == f.status)
+    stmt = (
+        stmt.order_by(Chapter.ordinal, Block.ordinal, Suggestion.start, Suggestion.id)
+        .limit(limit)
+        .offset(offset)
+        .execution_options(populate_existing=True)
+    )
+    return list(session.scalars(stmt))
+
+
+def bulk_decide(
+    session: Session,
+    book_id: int,
+    *,
+    ids: list[int] | None,
+    f: SuggestionFilter | None,
+    action: Literal["accept", "reject"],
+    actor: str,
+) -> int:
+    if (ids is None) == (f is None):
+        raise InvalidChangeError("give exactly one of ids or filter")
+    if ids is not None:
+        wanted = set(ids)
+        found = {
+            s.id: s
+            for s in list_suggestions(session, book_id, SuggestionFilter(), limit=2**31 - 1)
+            if s.id in wanted
+        }
+        if wanted - found.keys():
+            raise InvalidChangeError("every id must belong to the book")
+        targets = list(found.values())
+    else:
+        assert f is not None
+        if f.status not in (None, "open"):
+            return 0
+        scoped = SuggestionFilter(**{**f.__dict__, "status": "open"})
+        targets = list_suggestions(session, book_id, scoped, limit=2**31 - 1)
+    decided = 0
+    for s in targets:
+        session.refresh(s)  # an earlier accept in this bulk may have superseded it
+        if s.status == "open":
+            decide(session, s.id, action, actor=actor)
+            decided += 1
+    return decided
+
+
+def get_block(session: Session, book_id: int, block_id: int) -> Block:
+    block = session.get(Block, block_id)
+    if block is None or block.book_id != book_id:
+        raise NotFound(f"block {block_id} not found in book {book_id}")
+    return block
+
+
+def current_text(session: Session, block_id: int) -> str:
+    block = session.get(Block, block_id)
+    if block is None:
+        raise NotFound(f"block {block_id} not found")
+    stmt = select(Suggestion).where(Suggestion.block_id == block_id, Suggestion.status.in_(DECIDED))
+    changes = [
+        Change(s.start, s.end, s.final_text if s.status == "edited" else s.replacement)
+        for s in session.scalars(stmt)
+    ]
+    return apply_changes(block.text, changes)

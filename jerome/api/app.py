@@ -1,7 +1,7 @@
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from jerome.api import routes_books
+from jerome.api import routes_books, routes_suggestions
 from jerome.api.deps import current_actor
 from jerome.api.limits import BodyLimitMiddleware
 from jerome.config import Settings, get_settings
@@ -34,4 +34,5 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     auth = [Depends(current_actor)]
     app.include_router(routes_books.router, prefix="/v1", dependencies=auth)
+    app.include_router(routes_suggestions.router, prefix="/v1", dependencies=auth)
     return app

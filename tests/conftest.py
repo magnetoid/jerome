@@ -120,3 +120,19 @@ def cli_runner():
     from typer.testing import CliRunner
 
     return CliRunner()
+
+
+@pytest.fixture
+def block(session, tmp_storage):
+    from jerome.core.books import import_book
+    from jerome.orm import Block
+    from tests.fixtures.docx_builders import make_docx
+
+    book = import_book(
+        session,
+        tmp_storage,
+        filename="one.docx",
+        data=make_docx(["teh cat sat"]),
+        variant="en-US",
+    )
+    return session.query(Block).filter_by(book_id=book.id).one()
