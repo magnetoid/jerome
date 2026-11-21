@@ -55,9 +55,7 @@ Settings are read from `JEROME_*` environment variables and from `.env`.
 | `JEROME_TEXT_DAILY_COST_CAP` | `5` | Daily cost cap per API key for the short-text endpoint |
 | `JEROME_TEXT_RPM` | `30` | Requests per minute per key for the short-text endpoint |
 | `JEROME_MAX_UPLOAD_MB` | `50` | Maximum upload size |
-
-`ANTHROPIC_API_KEY` is read by the Anthropic SDK, not by Jerome's settings. Keep it in `.env`
-or your shell.
+| `ANTHROPIC_API_KEY` | unset | Anthropic API key (no `JEROME_` prefix). Read from the environment or `.env`, so local runs find it too; never logged |
 
 ## Data directory
 
@@ -70,6 +68,9 @@ The default AI model is `claude-opus-5-5`. Before a job starts, Jerome estimates
 (`POST /v1/books/{id}/estimate`, or the CLI prompt). Every job needs a `max_cost`; when the
 spend reaches it, the job pauses as `paused_cost_cap` and can be resumed with a higher cap.
 A book imported with `local_only` is never sent to a remote model.
+
+The estimate's output figure does not yet include adaptive-thinking tokens. It will be
+calibrated from the first evaluation run; the cost cap still bounds the actual spend.
 
 ## Stopping and crashes
 

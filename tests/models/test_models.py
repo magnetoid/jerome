@@ -344,3 +344,22 @@ def test_openai_compat_length_and_bad_json_raise(respx_mock):
     for _ in range(2):
         with pytest.raises(ModelOutputError):
             p.complete(model="m", system=[], user="u", schema=SCHEMA)
+
+
+def test_build_registry_hands_the_api_key_to_the_claude_provider(monkeypatch):
+    from jerome.models.registry import build_registry
+
+    seen = {}
+
+    class FakeAnthropic:
+        def __init__(self, **kw):
+            seen.update(kw)
+
+    monkeypatch.setattr(anthropic, "Anthropic", FakeAnthropic)
+    provider = build_registry(settings_with(anthropic_api_key="test-key")).providers["anthropic"]
+    assert provider.client is provider.client
+    assert seen == {"api_key": "test-key"}
+    seen.clear()
+    unset = build_registry(settings_with(anthropic_api_key="")).providers["anthropic"]
+    unset.client  # noqa: B018 - builds the client
+    assert seen == {"api_key": None}  # the SDK then reads ANTHROPIC_API_KEY itself

@@ -2,9 +2,9 @@ from typing import get_args
 
 from sqlalchemy.orm import Session
 
-from jerome.errors import NotFound
+from jerome.errors import InvalidChangeError, NotFound
 from jerome.orm import StyleSheetRow
-from jerome.types import StyleSheet, Variant
+from jerome.types import DEFAULT_QUOTES, StyleSheet, Variant
 
 
 def _to_dataclass(row: StyleSheetRow) -> StyleSheet:
@@ -38,8 +38,15 @@ def update_style_sheet(
 ) -> StyleSheet:
     if variant is not None and variant not in get_args(Variant):
         raise ValueError(f"unknown variant {variant!r}")
+    if quote_style is not None and len(quote_style) != 4:
+        raise InvalidChangeError(
+            "quote_style must be exactly 4 characters: opening and closing double quote, "
+            "then opening and closing single quote"
+        )
     row = _row(session, book_id)
     if variant is not None:
+        if variant != row.variant and quote_style is None:
+            row.quote_style = DEFAULT_QUOTES[variant]  # the old variant's quotes do not carry over
         row.variant = variant
     if quote_style is not None:
         row.quote_style = quote_style

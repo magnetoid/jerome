@@ -28,13 +28,15 @@ class ClaudeProvider:
     name = "anthropic"
     local = False
 
-    def __init__(self, client: anthropic.Anthropic | None = None):
+    def __init__(self, client: anthropic.Anthropic | None = None, api_key: str | None = None):
         self._client = client
+        self._api_key = api_key
 
     @property
     def client(self) -> anthropic.Anthropic:
         if self._client is None:
-            self._client = anthropic.Anthropic()
+            # without a key the SDK reads ANTHROPIC_API_KEY from the environment itself
+            self._client = anthropic.Anthropic(api_key=self._api_key)
         return self._client
 
     def complete(

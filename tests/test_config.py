@@ -39,3 +39,16 @@ def test_env_parsing(monkeypatch):
 
 def test_get_settings_is_cached():
     assert get_settings() is get_settings()
+
+
+def test_anthropic_api_key_is_read_from_env_and_dotenv(monkeypatch, tmp_path):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    assert Settings(_env_file=None).anthropic_api_key is None
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    key = Settings(_env_file=None).anthropic_api_key
+    assert key is not None and key.get_secret_value() == "test-key"
+    assert "test-key" not in repr(Settings(_env_file=None))
+    monkeypatch.delenv("ANTHROPIC_API_KEY")
+    env = tmp_path / ".env"
+    env.write_text("ANTHROPIC_API_KEY=from-dotenv\n")
+    assert Settings(_env_file=env).anthropic_api_key.get_secret_value() == "from-dotenv"

@@ -105,3 +105,22 @@ def test_cli_export_writes_file(cli_runner, cli_env, session_factory):
 def test_cli_db_upgrade_is_idempotent_at_head(cli_runner, cli_env, engine):
     out = cli_runner.invoke(app, ["db-upgrade"])
     assert out.exit_code == 0, out.output
+
+
+def test_cli_import_rejects_unknown_variant(cli_runner, cli_env, session_factory):
+    path = cli_env / "m.docx"
+    path.write_bytes(make_docx(["teh cat sat."]))
+    out = cli_runner.invoke(app, ["import", str(path), "--variant", "fr-FR"])
+    assert out.exit_code == 2
+    assert "unknown variant" in out.output and "Traceback" not in out.output
+    assert out.exception is None or isinstance(out.exception, SystemExit)
+
+
+def test_cli_proofread_rejects_unknown_pass(cli_runner, cli_env, session_factory, fake_registry):
+    book_id = _import(cli_runner, cli_env)
+    out = cli_runner.invoke(
+        app, ["proofread", str(book_id), "--max-cost", "1", "--passes", "magic"], input="y\n"
+    )
+    assert out.exit_code == 2
+    assert "unknown pass" in out.output and "languagetool" in out.output
+    assert _job_count(session_factory) == 0

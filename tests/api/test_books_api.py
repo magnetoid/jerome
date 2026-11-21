@@ -1,5 +1,6 @@
 from typing import Annotated
 
+import pytest
 from fastapi import Depends
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -203,3 +204,22 @@ def test_unexpected_value_error_is_500(engine, test_settings):
     with TestClient(app, raise_server_exceptions=False) as c:
         r = c.get("/bug")
     assert r.status_code == 500 and "internal detail" not in r.text
+
+
+def test_style_sheet_variant_change_resets_quotes_unless_given(client, auth, book_id):
+    url = f"/v1/books/{book_id}/style-sheet"
+    r = client.put(url, headers=auth, json={"variant": "de-DE"})
+    assert r.status_code == 200 and r.json()["quote_style"] == "„“‚‘"
+    r = client.put(url, headers=auth, json={"variant": "en-US", "quote_style": "«»‹›"})
+    assert r.json()["quote_style"] == "«»‹›"
+    r = client.put(url, headers=auth, json={"variant": "en-US"})  # same variant: kept
+    assert r.json()["quote_style"] == "«»‹›"
+
+
+@pytest.mark.parametrize("bad", ["", "“”", "“”‘’x"])
+def test_style_sheet_quote_style_must_be_four_characters(client, auth, book_id, bad):
+    url = f"/v1/books/{book_id}/style-sheet"
+    before = client.get(url, headers=auth).json()
+    r = client.put(url, headers=auth, json={"quote_style": bad, "variant": "de-DE"})
+    assert r.status_code == 422
+    assert client.get(url, headers=auth).json() == before

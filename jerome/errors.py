@@ -16,3 +16,7 @@ class UnsupportedDocumentError(JeromeError):
 
 class InvalidChangeError(JeromeError):
     pass
+
+
+class UnknownModelPrice(JeromeError):
+    """A model has no known price, so its cost cannot be estimated or capped."""

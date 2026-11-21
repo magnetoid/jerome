@@ -5,6 +5,7 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import create_engine, text
+from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session, sessionmaker
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -16,6 +17,13 @@ TEST_DB_URL = os.environ.get(
 
 @pytest.fixture(scope="session")
 def engine():
+    name = make_url(TEST_DB_URL).database or ""
+    if not name.endswith("_test"):  # the fixture drops the whole schema: never a real database
+        pytest.fail(
+            f"refusing to DROP SCHEMA on database {name!r}: the test database name must end "
+            "with '_test' (set JEROME_TEST_DATABASE_URL)",
+            pytrace=False,
+        )
     eng = create_engine(TEST_DB_URL)
     try:
         with eng.begin() as c:

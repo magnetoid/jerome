@@ -6,7 +6,13 @@ from jerome.api.deps import current_actor
 from jerome.api.limits import BodyLimitMiddleware
 from jerome.config import Settings, get_settings
 from jerome.db import make_engine
-from jerome.errors import Conflict, InvalidChangeError, NotFound, UnsupportedDocumentError
+from jerome.errors import (
+    Conflict,
+    InvalidChangeError,
+    NotFound,
+    UnknownModelPrice,
+    UnsupportedDocumentError,
+)
 from jerome.models.registry import build_registry
 from jerome.proofread.languagetool import LanguageToolClient
 from jerome.proofread.text import TextLimits
@@ -16,6 +22,7 @@ _ERROR_STATUS: dict[type[Exception], int] = {
     Conflict: 409,
     UnsupportedDocumentError: 422,
     InvalidChangeError: 422,
+    UnknownModelPrice: 422,
 }
 
 

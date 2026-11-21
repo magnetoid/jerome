@@ -17,6 +17,7 @@ from jerome.core.books import (
 )
 from jerome.core.style_sheets import get_style_sheet, update_style_sheet
 from jerome.documents.docx_reader import read_docx
+from jerome.documents.docx_review import read_reviewed_docx
 from jerome.documents.docx_writer import DocxWriteOptions, write_docx
 from jerome.documents.epub_reader import read_epub
 from jerome.errors import NotFound, UnsupportedDocumentError
@@ -87,10 +88,12 @@ def test_update_style_sheet_changes_only_given_fields(session, imported_docx_boo
     before = get_style_sheet(session, imported_docx_book.id)
     s = update_style_sheet(session, imported_docx_book.id, variant="de-DE")
     assert s.variant == "de-DE"
-    assert s.quote_style == before.quote_style  # not reset by a variant change
+    assert before.quote_style == "‘’“”" and s.quote_style == "„“‚‘"  # reset to the new variant's
     s = update_style_sheet(session, imported_docx_book.id, house_spellings={"colour": ["color"]})
     assert s.house_spellings == {"colour": ["color"]}
-    assert s.variant == "de-DE"
+    assert s.variant == "de-DE" and s.quote_style == "„“‚‘"
+    s = update_style_sheet(session, imported_docx_book.id, variant="de-CH", quote_style="»«›‹")
+    assert s.quote_style == "»«›‹"
 
 
 def test_update_style_sheet_rejects_unknown_variant(session, imported_docx_book):
@@ -250,6 +253,25 @@ def test_large_book_import_and_export_under_20s(session, tmp_storage):
     print(f"large book: {elapsed:.2f}s")
     assert elapsed < 20
     assert len(block_texts(session, book.id)) == 3000
+
+
+@pytest.mark.slow
+def test_large_book_review_copy_with_many_open_suggestions_under_20s(session, tmp_storage):
+    from jerome.core.exports import export_book
+    from jerome.core.suggestions import add_candidates
+    from tests.fixtures.suggestions import cand
+
+    data = make_docx([f"Sentence one teh {i}. Sentence two." for i in range(3000)])
+    book = import_book(session, tmp_storage, filename="big.docx", data=data, variant="en-US")
+    blocks = session.query(Block).filter_by(book_id=book.id).all()
+    added = add_candidates(session, book.id, None, [cand(b, 13, 16, "teh", "the") for b in blocks])
+    assert added.created == 3000
+    t = time.monotonic()
+    copy = export_book(session, tmp_storage, book.id, "docx-review", actor="a").data
+    elapsed = time.monotonic() - t
+    print(f"large review copy: {elapsed:.2f}s")
+    assert elapsed < 20
+    assert len(read_reviewed_docx(copy).blocks) >= 3000
 
 
 @pytest.mark.slow

@@ -5,8 +5,8 @@ tests
 docs
 eval/data
 eval/results
-*.docx
-*.epub
+**/*.docx
+**/*.epub
 .env
 __pycache__
 .pytest_cache

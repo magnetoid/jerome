@@ -99,8 +99,18 @@ def import_cmd(
     ] = False,
 ) -> None:
     """Import a DOCX or EPUB and print the new book id."""
+    from typing import get_args
+
     from jerome.core.books import import_book
     from jerome.storage import Storage
+    from jerome.types import Variant
+
+    if variant not in get_args(Variant):
+        typer.echo(
+            f"Error: unknown variant {variant!r}; use one of {', '.join(get_args(Variant))}",
+            err=True,
+        )
+        raise typer.Exit(2)
 
     settings = get_settings()
     engine = make_engine(settings.database_url)
@@ -140,6 +150,12 @@ def proofread(
     except InvalidOperation as exc:
         raise typer.BadParameter(f"{max_cost!r} is not a number", param_hint="--max-cost") from exc
     chosen = tuple(passes) if passes else tuple(ALL_PASSES)
+    if unknown := [p for p in chosen if p not in ALL_PASSES]:
+        typer.echo(
+            f"Error: unknown pass {', '.join(map(repr, unknown))}; use {', '.join(ALL_PASSES)}",
+            err=True,
+        )
+        raise typer.Exit(2)
     engine = make_engine(get_settings().database_url)
     try:
         with session_scope(engine) as session:

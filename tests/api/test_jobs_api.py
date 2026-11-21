@@ -87,3 +87,29 @@ def test_cancel_and_resume(client, auth, book):
 
 def test_jobs_require_auth(client, book):
     assert client.get("/v1/jobs/1").status_code == 401
+
+
+@pytest.mark.parametrize(
+    "url", ["ftp://hook.test/x", "javascript:alert(1)", "http://", "hook.test/cb", "file:///etc/x"]
+)
+def test_callback_url_must_be_http_with_a_host(client, auth, book, url):
+    body = {"type": "proofread", "max_cost": "1", "callback_url": url}
+    assert client.post(f"/v1/books/{book.id}/jobs", json=body, headers=auth).status_code == 422
+
+
+@pytest.mark.parametrize("url", ["http://localhost:9000/hook", "https://10.0.0.5/cb"])
+def test_callback_url_allows_private_hosts(client, auth, book, url):
+    body = {"type": "proofread", "max_cost": "1", "callback_url": url}
+    assert client.post(f"/v1/books/{book.id}/jobs", json=body, headers=auth).status_code == 201
+
+
+def test_unknown_model_price_is_422_naming_the_model(client, auth, book_3_chapters, test_settings):
+    from jerome.models import FakeProvider, Registry
+
+    settings = test_settings.model_copy(
+        update={"models": {"ai": {"provider": "fake", "model": "mystery-model"}}}
+    )
+    unpriced = Registry(settings, {"fake": FakeProvider([])})
+    client.app.dependency_overrides[get_registry] = lambda: unpriced
+    r = client.post(f"/v1/books/{book_3_chapters.id}/estimate", json={}, headers=auth)
+    assert r.status_code == 422 and "mystery-model" in r.json()["detail"]

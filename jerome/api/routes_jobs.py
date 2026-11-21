@@ -1,8 +1,9 @@
 from decimal import Decimal
 from typing import Annotated
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 
 from jerome.api.deps import current_actor, get_registry, get_session
@@ -28,6 +29,16 @@ class JobIn(EstimateIn):
     type: Annotated[str, Field(pattern="^proofread$")]
     max_cost: MaxCost
     callback_url: str | None = None
+
+    @field_validator("callback_url")
+    @classmethod
+    def _http_url(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        parts = urlsplit(v)
+        if parts.scheme not in ("http", "https") or not parts.hostname:
+            raise ValueError("callback_url must be an http or https URL with a host")
+        return v
 
 
 class ResumeIn(BaseModel):
