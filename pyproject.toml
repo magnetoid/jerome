@@ -30,6 +30,9 @@ packages = ["jerome"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "integration: needs an external program (e.g. LibreOffice); skipped when it is missing",
+]
 filterwarnings = [
     # pysbd ships invalid escape sequences in regex strings (third-party noise)
     "ignore::SyntaxWarning",

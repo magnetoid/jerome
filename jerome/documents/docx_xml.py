@@ -146,6 +146,11 @@ def _part_paragraphs(root: etree._Element) -> Iterator[etree._Element]:
                 yield p
 
 
+def is_block_text(text: str) -> bool:
+    """Whether a paragraph with this text is a block: it has more than placeholders and spaces."""
+    return bool(text.replace(PLACEHOLDER, "").strip())
+
+
 def iter_paragraph_runs(
     package: Mapping[str, bytes],
     read: Callable[..., "ParagraphText"] | None = None,

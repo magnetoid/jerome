@@ -8,6 +8,7 @@ from lxml import etree
 from jerome.documents.docx_xml import (
     DOCUMENT_PART,
     NS,
+    is_block_text,
     iter_paragraph_runs,
     parse_xml,
     qn,
@@ -48,7 +49,7 @@ def read_docx(data: bytes) -> ParsedBook:
         if part not in checked:
             _refuse_tracked_changes(tree)
             checked.add(part)
-        if not pt.text.replace(PLACEHOLDER, "").strip():
+        if not is_block_text(pt.text):
             continue  # nothing to proofread (e.g. inside a TOC field); the key index is kept
         if part != DOCUMENT_PART:
             notes.append(ParsedBlock(key, BlockKind.FOOTNOTE, pt.text, pt.marks))
