@@ -4,7 +4,8 @@ x-app: &app
     - path: .env
       required: false
   environment:
-    JEROME_DATABASE_URL: postgresql+psycopg://jerome:jerome@db:5432/jerome
+    # POSTGRES_PASSWORD comes from .env (letters and digits only); "jerome" is for local use.
+    JEROME_DATABASE_URL: postgresql+psycopg://jerome:${POSTGRES_PASSWORD:-jerome}@db:5432/jerome
     JEROME_LANGUAGETOOL_URL: http://languagetool:8010
     # ANTHROPIC_API_KEY comes from .env or your shell, never from this file.
     ANTHROPIC_API_KEY:
@@ -16,7 +17,7 @@ services:
     image: postgres:16
     environment:
       POSTGRES_USER: jerome
-      POSTGRES_PASSWORD: jerome
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-jerome}
       POSTGRES_DB: jerome
     ports:
       - "127.0.0.1:5433:5432"

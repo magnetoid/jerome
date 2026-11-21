@@ -24,6 +24,32 @@ docs are at http://127.0.0.1:8000/docs.
 `jerome-db` volume is first created. To re-run it, remove the volume with
 `docker compose down -v`, which also deletes the database.
 
+## Deploying on a server
+
+The compose stack is also how Jerome runs on a server. Before the first `up`, set these in `.env`:
+
+- `ANTHROPIC_API_KEY`.
+- `POSTGRES_PASSWORD`: a long random password of letters and digits
+  (`openssl rand -hex 24`). Postgres applies it only when the `jerome-db` volume is first
+  created, so changing it later means changing it inside Postgres too.
+- `JEROME_WEBHOOK_SECRET`, if you use job webhooks.
+
+Then:
+
+```bash
+docker compose up -d --build
+docker compose exec api jerome keys create NAME     # one key per person or client
+```
+
+- **HTTPS.** Every port is bound to 127.0.0.1. Put a TLS reverse proxy (Caddy, nginx,
+  Traefik, Coolify, …) in front of `127.0.0.1:8000` instead of opening the port: API keys
+  travel as bearer tokens.
+- **Memory.** LanguageTool wants about 2 GB of RAM.
+- **Backups.** The `jerome-db` volume holds books, suggestions and decisions; `jerome-data`
+  holds the uploaded originals and exports. Back up both.
+- **Updating.** `git pull && docker compose up -d --build`. Migrations run when the API
+  starts, and the worker finishes its current chunk before it stops.
+
 ## Local development
 
 ```bash
