@@ -8,12 +8,10 @@ from lxml import etree
 from jerome.documents.docx_xml import (
     DOCUMENT_PART,
     NS,
-    iter_paragraphs,
-    paragraph_runs,
+    iter_paragraph_runs,
     parse_xml,
     qn,
     read_package,
-    read_rels,
 )
 from jerome.documents.model import (
     PLACEHOLDER,
@@ -44,15 +42,14 @@ def read_docx(data: bytes) -> ParsedBook:
 
     body: list[tuple[ParsedBlock, int | None]] = []  # with the outline level of headings
     notes: list[ParsedBlock] = []
-    links: dict[str, dict[str, str]] = {}  # per part: hyperlink r:id -> URL
-    for key, p, tree in iter_paragraphs(package):
+    checked: set[str] = set()  # parts already checked for tracked changes
+    for key, p, tree, pt in iter_paragraph_runs(package):
         part = key.partition("#")[0]
-        if part not in links:
+        if part not in checked:
             _refuse_tracked_changes(tree)
-            links[part] = read_rels(package, part)
-        pt = paragraph_runs(p, links[part])
+            checked.add(part)
         if not pt.text.replace(PLACEHOLDER, "").strip():
-            continue  # nothing to proofread; the key index is kept for the writer
+            continue  # nothing to proofread (e.g. inside a TOC field); the key index is kept
         if part != DOCUMENT_PART:
             notes.append(ParsedBlock(key, BlockKind.FOOTNOTE, pt.text, pt.marks))
             continue

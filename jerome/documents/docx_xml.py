@@ -9,7 +9,7 @@ import io
 import posixpath
 import zipfile
 import zlib
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 
 from lxml import etree
@@ -33,6 +33,7 @@ NS: dict[str, str] = {
 
 DOCUMENT_PART = "word/document.xml"
 NOTE_PARTS = ("word/footnotes.xml", "word/endnotes.xml")
+MAX_UNCOMPRESSED_BYTES = 512 * 1024 * 1024  # a DOCX larger than this when unzipped is refused
 
 
 def qn(name: str) -> str:
@@ -45,10 +46,20 @@ def qn(name: str) -> str:
 
 
 def read_package(data: bytes) -> dict[str, bytes]:
-    """Unzip a DOCX into {part name: bytes}, in zip order."""
+    """Unzip a DOCX into {part name: bytes}, in zip order.
+
+    Refuses archives whose declared uncompressed size exceeds MAX_UNCOMPRESSED_BYTES.
+    That bound holds while reading, because zipfile stops each entry at its declared size
+    (and fails its CRC check if the data was longer).
+    """
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as zf:
-            return {info.filename: zf.read(info) for info in zf.infolist()}
+            infos = zf.infolist()
+            if sum(info.file_size for info in infos) > MAX_UNCOMPRESSED_BYTES:
+                raise UnsupportedDocumentError(
+                    f"Document is too large: over {MAX_UNCOMPRESSED_BYTES // 2**20} MB unzipped"
+                )
+            return {info.filename: zf.read(info) for info in infos}
     except (zipfile.BadZipFile, zlib.error, EOFError, NotImplementedError, RuntimeError) as exc:
         raise UnsupportedDocumentError("Not a DOCX file: it is not a readable zip archive") from exc
 
@@ -135,6 +146,57 @@ def _part_paragraphs(root: etree._Element) -> Iterator[etree._Element]:
                 yield p
 
 
+def iter_paragraph_runs(
+    package: Mapping[str, bytes],
+    read: Callable[..., "ParagraphText"] | None = None,
+) -> Iterator[tuple[str, etree._Element, etree._ElementTree, "ParagraphText"]]:
+    """``iter_paragraphs`` plus each paragraph's text, with fields carried across paragraphs.
+
+    A complex field can span paragraphs (a table of contents, an index). The open-field
+    depth flows from one paragraph to the next within a story (the body, or one note), so
+    such a field is one placeholder per paragraph it touches: paragraphs wholly inside it
+    read as a lone PLACEHOLDER (no text to proofread), and the closing paragraph starts
+    with one. If a story ends with a field still open, the document is malformed; that
+    story is re-read paragraph by paragraph so the field cannot swallow the rest of it.
+
+    ``read(p, links, open_fields)`` reads one paragraph and defaults to ``paragraph_runs``.
+    Callers needing another view of the text (e.g. revision-aware) pass their own, and
+    must return the depth still open at the paragraph's end as ``open_fields``. Hyperlink
+    ids are resolved through each part's relationships.
+    """
+    read = read or paragraph_runs
+    links: dict[str, dict[str, str]] = {}
+    story: list[tuple[str, etree._Element, etree._ElementTree]] = []
+    story_root = None
+    for key, p, tree in iter_paragraphs(package):
+        part = key.partition("#")[0]
+        if part not in links:
+            links[part] = read_rels(package, part)
+        root = next(p.iterancestors(qn("w:body"), qn("w:footnote"), qn("w:endnote")), None)
+        if story and root is not story_root:
+            yield from _read_story(story, read, links)
+            story = []
+        story_root = root
+        story.append((key, p, tree))
+    yield from _read_story(story, read, links)
+
+
+def _read_story(
+    story: list[tuple[str, etree._Element, etree._ElementTree]],
+    read: Callable[..., "ParagraphText"],
+    links: Mapping[str, Mapping[str, str]],
+) -> list[tuple[str, etree._Element, etree._ElementTree, "ParagraphText"]]:
+    out = []
+    open_fields = 0
+    for key, p, tree in story:
+        pt = read(p, links[key.partition("#")[0]], open_fields)
+        out.append((key, p, tree, pt))
+        open_fields = pt.open_fields
+    if open_fields:  # a field that never ends: no carrying over in this story
+        out = [(key, p, tree, read(p, links[key.partition("#")[0]], 0)) for key, p, tree in story]
+    return out
+
+
 # --- paragraph text -------------------------------------------------------------------
 
 
@@ -150,7 +212,9 @@ class Piece:
       ``run`` and ``node`` are that element.
     - Complex field (``fldChar`` begin ... end): ``run`` is the run holding the begin
       ``fldChar`` (``node``), ``last_run`` the run holding the end ``fldChar``, or the
-      paragraph's last run when the field continues into the next paragraph.
+      paragraph's last run when the field continues into the next paragraph. For the
+      part of a field that began in an earlier paragraph, ``run`` and ``node`` are this
+      paragraph's first run.
 
     ``last_run`` is ``run`` for everything but complex fields, so content inserted
     before a piece goes before ``run`` and content inserted after it goes after
@@ -177,20 +241,31 @@ class ParagraphText:
     text: str
     marks: list[Mark]
     pieces: list[Piece]
+    open_fields: int = 0  # complex fields still open at the paragraph's end
 
 
-def paragraph_runs(p: etree._Element, links: Mapping[str, str] | None = None) -> ParagraphText:
+def paragraph_runs(
+    p: etree._Element, links: Mapping[str, str] | None = None, open_fields: int = 0
+) -> ParagraphText:
     """Text, marks and offset map of a ``w:p``.
 
     ``links`` resolves ``w:hyperlink/@r:id`` to the LINK mark's href (see
     ``read_rels``); without it only anchor links (``#bookmark``) get an href, and a
     hyperlink with no href gets no LINK mark. Marks come from direct run properties
     only, and adjacent marks of the same kind are merged.
+
+    ``open_fields`` is the depth of complex fields already open when the paragraph
+    starts; ``iter_paragraph_runs`` carries it from paragraph to paragraph.
     """
     walker = _Walker(links or {})
+    if open_fields:
+        walker.field = _OpenField(None, None, None, depth=open_fields)
     walker.walk(p)
-    walker.close_field()  # a field still open continues into the next paragraph
-    return ParagraphText("".join(walker.chunks), merge_marks(walker.marks), walker.pieces)
+    still_open = walker.field.depth if walker.field is not None else 0
+    walker.close_field()  # this paragraph's share of a field that continues
+    return ParagraphText(
+        "".join(walker.chunks), merge_marks(walker.marks), walker.pieces, still_open
+    )
 
 
 _R = qn("w:r")
@@ -231,9 +306,9 @@ _VERT_ALIGN_MARKS = {"superscript": MarkKind.SUPERSCRIPT, "subscript": MarkKind.
 
 @dataclass
 class _OpenField:
-    run: etree._Element
-    node: etree._Element
-    last_run: etree._Element
+    run: etree._Element | None  # None until a run of a field continued from earlier is seen
+    node: etree._Element | None
+    last_run: etree._Element | None
     depth: int = 1
 
 
@@ -275,6 +350,8 @@ class _Walker:
         self.href = outer
 
     def run(self, r: etree._Element) -> None:
+        if self.field is not None and self.field.run is None:
+            self.field.run = self.field.node = r
         for child in r:
             tag = child.tag
             if tag == _FLD_CHAR:
@@ -299,11 +376,11 @@ class _Walker:
             if self.field.depth == 0:
                 self.field.last_run = r
                 self.close_field()
-        # "separate", and an "end" whose "begin" was in an earlier paragraph, add nothing.
+        # "separate", and an "end" without a "begin", add nothing.
 
     def close_field(self) -> None:
         field, self.field = self.field, None
-        if field is not None:
+        if field is not None and field.run is not None:
             self.emit(PLACEHOLDER, field.run, field.node, field.last_run)
 
     def emit(

@@ -3,8 +3,10 @@ import zipfile
 
 import pytest
 
+from jerome.documents import docx_xml
 from jerome.documents.docx_reader import read_docx
 from jerome.documents.docx_xml import (
+    iter_paragraph_runs,
     iter_paragraphs,
     paragraph_runs,
     qn,
@@ -153,6 +155,79 @@ def test_fields_are_single_placeholders():
     assert simple.run is simple.node and simple.node.tag == qn("w:fldSimple")
 
 
+def _field(instr: str, result: str) -> str:
+    return (
+        '<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+        f'<w:r><w:instrText xml:space="preserve"> {instr} </w:instrText></w:r>'
+        '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+        f"<w:r><w:t>{result}</w:t></w:r>"
+        '<w:r><w:fldChar w:fldCharType="end"/></w:r>'
+    )
+
+
+def _toc_entry(n: int, title: str, *, first: bool = False, last: bool = False) -> str:
+    """A TOC paragraph as Word writes it; the TOC field opens in the first, ends in the last."""
+    opening = (
+        '<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+        '<w:r><w:instrText xml:space="preserve"> TOC \\o "1-3" \\h </w:instrText></w:r>'
+        '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+    )
+    closing = '<w:r><w:fldChar w:fldCharType="end"/></w:r>' if last else ""
+    page = _field(f"PAGEREF _Toc{n} \\h", str(n))
+    return (
+        f'<w:p><w:pPr><w:pStyle w:val="TOC1"/></w:pPr>{opening if first else ""}'
+        f'<w:hyperlink w:anchor="_Toc{n}"><w:r><w:t>{title}</w:t></w:r><w:r><w:tab/></w:r>'
+        f"{page}</w:hyperlink>{closing}</w:p>"
+    )
+
+
+def test_field_spanning_paragraphs_is_one_placeholder():  # a table of contents
+    body = (
+        _toc_entry(1, "Chapter Oen", first=True)
+        + _toc_entry(2, "Chapter Two")
+        + _toc_entry(3, "Chapter Thre", last=True)
+        + '<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Chapter One</w:t></w:r></w:p>'
+        + "<w:p><w:r><w:t>Body.</w:t></w:r></w:p>"
+    )
+    book = read_docx(package_docx(body))
+    assert [c.title for c in book.chapters] == ["Chapter One"]
+    assert [(b.key, b.text) for b in book.chapters[0].blocks] == [
+        ("word/document.xml#3", "Chapter One"),
+        ("word/document.xml#4", "Body."),
+    ]
+
+
+def test_paragraph_closing_a_field_starts_with_its_placeholder():
+    body = (
+        '<w:p><w:r><w:t xml:space="preserve">Before </w:t></w:r>'
+        '<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText> INDEX </w:instrText></w:r>'
+        '<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>x</w:t></w:r></w:p>'
+        "<w:p><w:r><w:t>inside</w:t></w:r></w:p>"
+        '<w:p><w:r><w:t>y</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r>'
+        '<w:r><w:t xml:space="preserve"> after.</w:t></w:r></w:p>'
+    )
+    read = list(iter_paragraph_runs(read_package(package_docx(body))))
+    assert [pt.text for *_, pt in read] == [
+        f"Before {PLACEHOLDER}",
+        PLACEHOLDER,
+        f"{PLACEHOLDER} after.",
+    ]
+    assert [pt.open_fields for *_, pt in read] == [1, 1, 0]
+    _, closing_p, _, closing = read[2]
+    _assert_pieces_cover(closing)
+    runs = closing_p.findall(qn("w:r"))
+    assert (closing.pieces[0].run, closing.pieces[0].last_run) == (runs[0], runs[1])
+
+
+def test_field_that_never_ends_does_not_swallow_the_rest():
+    body = (
+        '<w:p><w:r><w:t xml:space="preserve">A </w:t></w:r>'
+        '<w:r><w:fldChar w:fldCharType="begin"/></w:r></w:p>'
+        "<w:p><w:r><w:t>B</w:t></w:r></w:p>"
+    )
+    assert [b.text for b in all_blocks(package_docx(body))] == [f"A {PLACEHOLDER}", "B"]
+
+
 def test_runs_inside_smart_tags_and_content_controls_are_text():
     body = (
         '<w:p><w:smartTag w:uri="urn:x" w:element="place"><w:r><w:t>Vienna</w:t></w:r>'
@@ -268,6 +343,13 @@ def _zip(parts: dict[str, bytes]) -> bytes:
 def test_refuses_non_docx(data):
     with pytest.raises(UnsupportedDocumentError):
         read_docx(data)
+
+
+def test_read_package_refuses_archives_too_large_when_unzipped(monkeypatch):
+    monkeypatch.setattr(docx_xml, "MAX_UNCOMPRESSED_BYTES", 1000)
+    assert read_package(_zip({"a.xml": b" " * 600, "b.xml": b" " * 400}))  # at the cap
+    with pytest.raises(UnsupportedDocumentError, match="too large"):
+        read_package(_zip({"a.xml": b" " * 600, "b.xml": b" " * 401}))
 
 
 def test_write_package_keeps_order_and_compression():
