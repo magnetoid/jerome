@@ -647,24 +647,39 @@ def _fallback(suggestions: Sequence[SuggestionView], note: str) -> BlockOutcome:
     return BlockOutcome({sv.id: ("unchanged", None) for sv in suggestions}, [], [note])
 
 
-def _bookmark_id(rb: ReviewedBlock) -> int | None:
-    name = rb.bookmark or ""
-    tail = name[len(BOOKMARK_PREFIX) :]
-    return int(tail) if name.startswith(BOOKMARK_PREFIX) and tail.isdigit() else None
+def _bookmark_ids(rb: ReviewedBlock) -> list[int]:
+    ids = []
+    for name in rb.bookmarks:
+        tail = name[len(BOOKMARK_PREFIX) :]
+        if name.startswith(BOOKMARK_PREFIX) and tail.isdecimal() and tail.isascii():
+            ids.append(int(tail))
+    return ids
 
 
-def match_blocks(
+@dataclass
+class BlockMatch:
+    matched: dict[int, ReviewedBlock]  # block id -> its paragraph, safe to classify
+    structural: list[int]  # block ids whose paragraph was split or merged in Word
+    paragraphs: dict[int, ReviewedBlock]  # matched and structural: every paragraph found
+
+
+def match_structure(
     expected: Sequence[tuple[int, str]], reviewed: Sequence[ReviewedBlock], threshold: float = 0.8
-) -> dict[int, ReviewedBlock]:
-    """Reviewed block for each expected block id: by bookmark, then by position and text."""
-    wanted = {bid for bid, _ in expected}
+) -> BlockMatch:
+    """Reviewed block for each expected block id: by bookmark, then by position and text.
+
+    A block whose paragraph the editor split or merged (untracked) is *structural*: it is
+    reported apart and left out of ``matched``, so nothing is imported for it.
+    """
+    wanted = {bid: text for bid, text in expected}
     position: dict[int, int] = {}  # block id -> index in ``reviewed``
     claimed: set[int] = set()
     for idx, rb in enumerate(reviewed):
-        bid = _bookmark_id(rb)
-        if bid in wanted and bid not in position:
-            position[bid] = idx
-            claimed.add(idx)
+        for bid in _bookmark_ids(rb):
+            if bid in wanted and bid not in position:
+                position[bid] = idx
+                claimed.add(idx)
+    by_bookmark = set(position)
     order = [bid for bid, _ in expected]
     for k, (bid, original) in enumerate(expected):
         if bid in position:
@@ -683,9 +698,50 @@ def match_blocks(
         if best is not None:
             position[bid] = best
             claimed.add(best)
-    return {
-        bid: reviewed[idx] for bid, idx in position.items() if is_block_text(reviewed[idx].text)
-    }
+    found = {bid: idx for bid, idx in position.items() if is_block_text(reviewed[idx].text)}
+    structural = [
+        bid
+        for bid in order
+        if bid in found and _is_structural(bid, found, by_bookmark, wanted, reviewed, claimed)
+    ]
+    paragraphs = {bid: reviewed[idx] for bid, idx in found.items()}
+    return BlockMatch(
+        {bid: rb for bid, rb in paragraphs.items() if bid not in structural}, structural, paragraphs
+    )
+
+
+def _is_structural(
+    bid: int,
+    found: dict[int, int],
+    by_bookmark: set[int],
+    wanted: dict[int, str],
+    reviewed: Sequence[ReviewedBlock],
+    claimed: set[int],
+) -> bool:
+    idx = found[bid]
+    rb = reviewed[idx]
+    if bid in by_bookmark:
+        # (a) merge: another exported block starts in the same paragraph
+        if sum(1 for b in _bookmark_ids(rb) if b in wanted) > 1:
+            return True
+        # (b) split: the bookmark starts here but does not end here
+        if f"{BOOKMARK_PREFIX}{bid}" not in rb.bookmark_ends:
+            return True
+    # (c) split by adjacency: the next paragraph is an unclaimed tail of this block's text
+    nxt = reviewed[idx + 1] if idx + 1 < len(reviewed) else None
+    if nxt is None or idx + 1 in claimed or not is_block_text(nxt.text):
+        return False
+    if any(b in wanted for b in _bookmark_ids(nxt)):
+        return False
+    original = wanted[bid]
+    return original.endswith(nxt.text) or original.endswith(nxt.text.strip())
+
+
+def match_blocks(
+    expected: Sequence[tuple[int, str]], reviewed: Sequence[ReviewedBlock], threshold: float = 0.8
+) -> dict[int, ReviewedBlock]:
+    """The reviewed block for each expected block id that can be imported safely."""
+    return match_structure(expected, reviewed, threshold).matched
 
 
 def _read(data: bytes):
@@ -699,7 +755,7 @@ def _read(data: bytes):
 
 def _export_for(session: Session, book_id: int, props: dict[str, str]) -> ReviewExport:
     raw = props.get(PROPERTY, "").strip()
-    rx = session.get(ReviewExport, int(raw)) if raw.isdigit() else None
+    rx = session.get(ReviewExport, int(raw)) if raw.isdecimal() and raw.isascii() else None
     if rx is None or rx.book_id != book_id:
         raise UnsupportedDocumentError(
             "this file is not a Jerome review copy of this book (missing or unknown export id)"
@@ -780,13 +836,17 @@ def import_review(session: Session, book_id: int, data: bytes, actor: str) -> Re
     rx = _export_for(session, book_id, doc.properties)
     blocks = {b.id: b for b in session.scalars(select(Block).where(Block.id.in_(rx.block_ids)))}
     expected = [(bid, blocks[bid].text) for bid in rx.block_ids if bid in blocks]
-    matched = match_blocks(expected, doc.blocks)
+    found = match_structure(expected, doc.blocks)
+    matched = found.matched
     ri = ReviewImport(review_export_id=rx.id, book_id=book_id, report={}, created_by=actor)
     session.add(ri)
     session.flush()
 
-    notes: list[str] = []
-    extra = _unmatched_paragraphs(doc.blocks, matched, expected, blocks)
+    notes: list[str] = [
+        f"block {bid}: paragraph split or merged in Word; left as it was."
+        for bid in found.structural
+    ]
+    extra = _unmatched_paragraphs(doc.blocks, found.paragraphs, expected, blocks)
     if extra:
         notes.append(
             f"{extra} paragraph(s) in the file match no exported block "

@@ -242,3 +242,94 @@ def _renumber(trees: Mapping[str, etree._ElementTree]) -> None:
         for el in elements:
             if el.get(_ID):
                 el.set(_ID, mapping[el.get(_ID)])
+
+
+# --- structural edits (untracked, as Word saves them) ---------------------------------
+
+
+def _edit_trees(data: bytes, edit) -> bytes:
+    package = read_package(data)
+    for part, xml in package.items():
+        if part.startswith("word/") and part.count("/") == 1 and part.endswith(".xml"):
+            tree = parse_xml(xml, part)
+            if edit(tree.getroot()):
+                package[part] = etree.tostring(
+                    tree, xml_declaration=True, encoding="UTF-8", standalone=True
+                )
+                return write_package(package, data)
+    raise ValueError("paragraph not found")
+
+
+def _p_text(p: etree._Element) -> str:
+    return "".join(t.text or "" for t in p.iter(_T))
+
+
+def split_paragraph(data: bytes, before: str, *, drop_bookmark_end: bool = False) -> bytes:
+    """Press Enter, untracked, right before ``before`` (found in one plain run).
+
+    The paragraph's trailing content, including its bookmarkEnd, moves to the new
+    paragraph, as in Word; ``drop_bookmark_end`` loses that bookmarkEnd instead.
+    """
+
+    def edit(root: etree._Element) -> bool:
+        for p in root.iter(_P):
+            for r in p.findall(_R):
+                t = r.find(_T)
+                if t is None or t.text is None or before not in t.text:
+                    continue
+                head, _, rest = t.text.partition(before)
+                tail = before + rest
+                t.text = head
+                t.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
+                tail_run = _run(r.find(_RPR), tail, _T)
+                moved = [tail_run, *r.itersiblings()]
+                new = etree.Element(_P)
+                ppr = p.find(qn("w:pPr"))
+                if ppr is not None:
+                    new.append(etree.fromstring(etree.tostring(ppr)))
+                for el in moved:
+                    if drop_bookmark_end and el.tag == qn("w:bookmarkEnd"):
+                        p.remove(el)
+                        continue
+                    new.append(el)
+                p.addnext(new)
+                return True
+        return False
+
+    return _edit_trees(data, edit)
+
+
+def merge_paragraphs(data: bytes, first: str, second: str) -> bytes:
+    """Delete the paragraph mark between the paragraphs holding ``first`` and ``second``.
+
+    ``second``'s content (with its bookmarks) joins ``first``; ``first``'s bookmarkEnd
+    stays where it was, mid-paragraph.
+    """
+
+    def edit(root: etree._Element) -> bool:
+        paragraphs = list(root.iter(_P))
+        for a, b in zip(paragraphs, paragraphs[1:], strict=False):
+            if first in _p_text(a) and second in _p_text(b):
+                for el in list(b):
+                    if el.tag != qn("w:pPr"):
+                        a.append(el)
+                b.getparent().remove(b)
+                return True
+        return False
+
+    return _edit_trees(data, edit)
+
+
+def insert_paragraph(data: bytes, after: str, text: str) -> bytes:
+    """A new untracked paragraph of plain ``text`` right after the one holding ``after``."""
+
+    def edit(root: etree._Element) -> bool:
+        for p in root.iter(_P):
+            if after in _p_text(p):
+                new = etree.Element(_P)
+                new.append(_run(None, text, _T))
+                p.addnext(new)
+                return True
+        return False
+
+    return _edit_trees(data, edit)

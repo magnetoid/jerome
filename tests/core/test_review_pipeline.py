@@ -1,18 +1,37 @@
 """Classification fed by the real writer, Word simulator and reader (no hand-built revisions)."""
 
 import random
+import re
 import time
 from datetime import UTC, datetime
 
 import pytest
 
-from jerome.core.review_imports import SuggestionView, _exact_assignments, classify_block
+from jerome.core.books import import_book
+from jerome.core.exports import export_book
+from jerome.core.review_imports import (
+    SuggestionView,
+    _exact_assignments,
+    classify_block,
+    import_review,
+    match_blocks,
+    match_structure,
+)
 from jerome.documents.changes import Change
-from jerome.documents.docx_review import read_reviewed_docx
+from jerome.documents.docx_review import ReviewedBlock, read_reviewed_docx
 from jerome.documents.docx_writer import DocxWriteOptions, write_docx
+from jerome.documents.docx_xml import read_package, write_package
+from jerome.errors import UnsupportedDocumentError
+from jerome.orm import Block, Suggestion
 from tests.core.test_classify import _held
 from tests.fixtures.docx_builders import all_blocks, make_docx
-from tests.fixtures.word_sim import simulate_word_review
+from tests.fixtures.suggestions import add_one
+from tests.fixtures.word_sim import (
+    insert_paragraph,
+    merge_paragraphs,
+    simulate_word_review,
+    split_paragraph,
+)
 
 NOW = datetime(2026, 11, 22, tzinfo=UTC)
 
@@ -315,3 +334,149 @@ def test_large_paragraph_with_eight_suggestions_classifies_quickly():
     assert time.perf_counter() - start < 1.0
     assert not out.notes and {r for r, _ in out.results.values()} == {"accepted"}
     assert len(out.editor_changes) == 1
+
+
+# --- paragraphs split or merged (or added) in Word: left as they were (R36a) ------------
+
+_TEXTS = ["Alpha para one. Second sentence here.", "Beta para two.", "Gamma para three."]
+
+
+def _structural_book(session, tmp_storage):
+    book = import_book(
+        session, tmp_storage, filename="s.docx", data=make_docx(_TEXTS), variant="en-US"
+    )
+    blocks = session.query(Block).filter_by(book_id=book.id).order_by(Block.id).all()
+    add_one(session, blocks[0], 6, 10, "para", "paragraph")
+    add_one(session, blocks[1], 0, 4, "Beta", "Bet")
+    copy = export_book(session, tmp_storage, book.id, "docx-review", actor="a").data
+    return book, blocks, copy
+
+
+def _clean_texts(session, tmp_storage, book):
+    clean = export_book(session, tmp_storage, book.id, "docx-clean").data
+    return [b.text for b in all_blocks(clean)]
+
+
+def _structural_note(block):
+    return f"block {block.id}: paragraph split or merged in Word; left as it was."
+
+
+def test_split_with_bookmark_end_in_next_paragraph_is_left_alone(session, tmp_storage):
+    book, blocks, copy = _structural_book(session, tmp_storage)
+    doc = read_reviewed_docx(split_paragraph(copy, " Second sentence"))
+    assert doc.blocks[0].bookmarks == (f"_jb{blocks[0].id}",) and not doc.blocks[0].bookmark_ends
+    assert doc.blocks[1].bookmark_ends == doc.blocks[0].bookmarks
+    reviewed = simulate_word_review(split_paragraph(copy, " Second sentence"), accept=["paragraph"])
+    r = import_review(session, book.id, reviewed, actor="ed")
+    assert blocks[0].id in r.unmatched_block_ids and blocks[1].id not in r.unmatched_block_ids
+    assert _structural_note(blocks[0]) in r.notes
+    assert any("match no exported block" in n for n in r.notes)
+    assert [s.status for s in session.query(Suggestion).filter_by(block_id=blocks[0].id)] == [
+        "open"
+    ]
+    assert _clean_texts(session, tmp_storage, book) == _TEXTS
+
+
+def test_split_with_dropped_bookmark_end_is_left_alone(session, tmp_storage):
+    book, blocks, copy = _structural_book(session, tmp_storage)
+    split = split_paragraph(copy, " Second sentence", drop_bookmark_end=True)
+    r = import_review(
+        session, book.id, simulate_word_review(split, accept=["paragraph"]), actor="ed"
+    )
+    assert blocks[0].id in r.unmatched_block_ids
+    assert _structural_note(blocks[0]) in r.notes
+    assert _clean_texts(session, tmp_storage, book) == _TEXTS
+
+
+def test_merge_with_both_bookmarks_in_one_paragraph_is_left_alone(session, tmp_storage):
+    book, blocks, copy = _structural_book(session, tmp_storage)
+    merged = merge_paragraphs(copy, "Alpha", "para two")
+    r = import_review(session, book.id, simulate_word_review(merged, accept=["Bet"]), actor="ed")
+    assert {blocks[0].id, blocks[1].id} <= set(r.unmatched_block_ids)
+    assert _structural_note(blocks[0]) in r.notes and _structural_note(blocks[1]) in r.notes
+    assert blocks[2].id not in r.unmatched_block_ids
+    assert session.query(Suggestion).filter_by(source="editor").count() == 0
+    assert _clean_texts(session, tmp_storage, book) == _TEXTS
+
+
+def test_inserted_paragraph_that_is_not_the_tail_still_imports(session, tmp_storage):
+    book, blocks, copy = _structural_book(session, tmp_storage)
+    added = insert_paragraph(copy, "Alpha", "A brand new paragraph.")
+    r = import_review(
+        session, book.id, simulate_word_review(added, accept=["paragraph"]), actor="ed"
+    )
+    assert r.unmatched_block_ids == [] and r.counts["accepted"] == 1
+    assert not any("split or merged in Word; left" in n for n in r.notes)
+    assert any("match no exported block" in n for n in r.notes)
+
+
+def test_inserted_paragraph_equal_to_the_tail_is_fail_safe(session, tmp_storage):
+    book, blocks, copy = _structural_book(session, tmp_storage)
+    added = insert_paragraph(copy, "Alpha", "Second sentence here.")
+    r = import_review(
+        session, book.id, simulate_word_review(added, accept=["paragraph"]), actor="ed"
+    )
+    assert blocks[0].id in r.unmatched_block_ids and _structural_note(blocks[0]) in r.notes
+    assert _clean_texts(session, tmp_storage, book) == _TEXTS
+
+
+def _rb(bookmarks, ends, text):
+    return ReviewedBlock(
+        bookmarks[0] if bookmarks else None, text, [], tuple(bookmarks), tuple(ends)
+    )
+
+
+def test_match_blocks_merge_marks_every_block_in_the_paragraph():
+    expected = [(1, "Alpha."), (2, "Beta."), (3, "Gamma.")]
+    reviewed = [
+        _rb(["_jb1", "_jb2"], ["_jb1", "_jb2"], "Alpha.Beta."),
+        _rb(["_jb3"], ["_jb3"], "Gamma."),
+    ]
+    got = match_structure(expected, reviewed)
+    assert sorted(got.structural) == [1, 2] and list(got.matched) == [3]
+    assert match_blocks(expected, reviewed).keys() == {3}
+
+
+def test_match_blocks_split_by_bookmark_end_elsewhere_or_missing():
+    expected = [(1, "Alpha. Tail."), (2, "Beta.")]
+    moved = [
+        _rb(["_jb1"], [], "Alpha."),
+        _rb([], ["_jb1"], " Tail."),
+        _rb(["_jb2"], ["_jb2"], "Beta."),
+    ]
+    assert list(match_blocks(expected, moved)) == [2]
+    assert match_structure(expected, moved).structural == [1]
+    gone = [_rb(["_jb1"], [], "Alpha. Tail."), _rb(["_jb2"], ["_jb2"], "Beta.")]
+    assert match_structure(expected, gone).structural == [1]
+
+
+def test_match_blocks_split_by_adjacency_needs_a_suffix_tail():
+    expected = [(1, "Alpha. Tail."), (2, "Beta.")]
+    tail = [
+        _rb(["_jb1"], ["_jb1"], "Alpha."),
+        _rb([], [], " Tail."),
+        _rb(["_jb2"], ["_jb2"], "Beta."),
+    ]
+    assert match_structure(expected, tail).structural == [1]
+    other = [
+        _rb(["_jb1"], ["_jb1"], "Alpha."),
+        _rb([], [], "Something new."),
+        _rb(["_jb2"], ["_jb2"], "Beta."),
+    ]
+    got = match_structure(expected, other)
+    assert got.structural == [] and set(got.matched) == {1, 2}
+    # a following paragraph that belongs to another exported block is never a tail
+    claimed = [_rb(["_jb1"], ["_jb1"], "Alpha."), _rb(["_jb2"], ["_jb2"], "Beta.")]
+    assert match_structure([(1, "Alpha."), (2, "Beta.")], claimed).structural == []
+
+
+def test_crafted_unicode_digit_property_is_unsupported_not_a_crash(session, tmp_storage):
+    book, _, copy = _structural_book(session, tmp_storage)
+    package = read_package(copy)
+    xml = package["docProps/custom.xml"].decode()
+    package["docProps/custom.xml"] = re.sub(
+        r"(<vt:lpwstr>)\d+(</vt:lpwstr>)", "\\1\u00b2\\2", xml
+    ).encode()
+    assert "\u00b2" in package["docProps/custom.xml"].decode()
+    with pytest.raises(UnsupportedDocumentError):
+        import_review(session, book.id, write_package(package, copy), actor="ed")

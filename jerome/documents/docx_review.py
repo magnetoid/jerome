@@ -42,9 +42,15 @@ class PendingRevision:
 
 @dataclass
 class ReviewedBlock:
-    bookmark: str | None  # the ``_jb`` bookmark starting in the paragraph
+    bookmark: str | None  # the first ``_jb`` bookmark starting in the paragraph
     text: str  # base view
     pending: list[PendingRevision]
+    bookmarks: tuple[str, ...] = ()  # every ``_jb`` bookmark starting in the paragraph
+    bookmark_ends: tuple[str, ...] = ()  # names of the ``_jb`` bookmarks ending in it
+
+    def __post_init__(self) -> None:
+        if self.bookmark and not self.bookmarks:
+            self.bookmarks = (self.bookmark,)
 
 
 @dataclass
@@ -61,21 +67,37 @@ def read_reviewed_docx(data: bytes) -> ReviewedDocument:
     """
     package = read_package(data)
     blocks = []
-    for _key, p, _tree, pt in iter_paragraph_runs(package, read=paragraph_revisions):
-        bookmark = _block_bookmark(p)
-        if bookmark is None and not is_block_text(pt.text):
+    end_ids: list[list[tuple[str, int]]] = []  # per block: its bookmarkEnd (tree, id) pairs
+    names: dict[tuple[int, str], str] = {}  # (tree, bookmark id) -> ``_jb`` name
+    for _key, p, tree, pt in iter_paragraph_runs(package, read=paragraph_revisions):
+        starts = _bookmark_starts(p)
+        for name, bid in starts:
+            names.setdefault((id(tree), bid), name)
+        ends = [(id(tree), i) for i in _bookmark_end_ids(p)]
+        if not starts and not is_block_text(pt.text):
             continue
         pending = _merge([PendingRevision(**vars(r)) for r in pt.revisions])
-        blocks.append(ReviewedBlock(bookmark, pt.text, pending))
+        bookmarks = tuple(name for name, _ in starts)
+        blocks.append(
+            ReviewedBlock(bookmarks[0] if bookmarks else None, pt.text, pending, bookmarks)
+        )
+        end_ids.append(ends)
+    for rb, ends in zip(blocks, end_ids, strict=True):
+        rb.bookmark_ends = tuple(names[e] for e in ends if e in names)
     return ReviewedDocument(blocks, _custom_properties(package))
 
 
-def _block_bookmark(p: etree._Element) -> str | None:
-    for start in p.iter(qn("w:bookmarkStart")):
-        name = start.get(qn("w:name"), "")
-        if name.startswith(BOOKMARK_PREFIX):
-            return name
-    return None
+def _bookmark_starts(p: etree._Element) -> list[tuple[str, str]]:
+    """``(name, id)`` of each ``_jb`` bookmark starting in the paragraph, in order."""
+    return [
+        (name, start.get(qn("w:id"), ""))
+        for start in p.iter(qn("w:bookmarkStart"))
+        if (name := start.get(qn("w:name"), "")).startswith(BOOKMARK_PREFIX)
+    ]
+
+
+def _bookmark_end_ids(p: etree._Element) -> list[str]:
+    return [end.get(qn("w:id"), "") for end in p.iter(qn("w:bookmarkEnd"))]
 
 
 def _merge(revisions: Iterable[PendingRevision]) -> list[PendingRevision]:
