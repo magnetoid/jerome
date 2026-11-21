@@ -43,6 +43,12 @@ def _ts() -> Mapped[datetime]:
     return mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+AUTO_APPLY_DEFAULT = (
+    '{"enabled": false, "categories": ["punctuation", "typo"], '
+    '"min_severity": "high", "house_rules": true}'
+)
+
+
 def _empty_obj() -> Any:
     return mapped_column(JSONB, server_default=sql_text("'{}'::jsonb"))
 
@@ -60,6 +66,9 @@ class Book(Base):
     format: Mapped[str] = mapped_column(String)
     local_only: Mapped[bool] = mapped_column(Boolean, server_default=sql_text("false"))
     original_filename: Mapped[str | None] = mapped_column(String)
+    auto_apply: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, server_default=sql_text(f"'{AUTO_APPLY_DEFAULT}'::jsonb")
+    )
     created_at: Mapped[datetime] = _ts()
 
     chapters: Mapped[list["Chapter"]] = relationship(
@@ -230,6 +239,10 @@ class Suggestion(Base):
         ForeignKey("suggestions.id", ondelete="SET NULL")
     )
     model: Mapped[str | None] = mapped_column(String)
+    agreed: Mapped[bool] = mapped_column(Boolean, server_default=sql_text("false"))
+    disputed: Mapped[bool] = mapped_column(Boolean, server_default=sql_text("false"))
+    alternative: Mapped[str | None] = mapped_column(Text)
+    rule: Mapped[str | None] = mapped_column(String)
     created_at: Mapped[datetime] = _ts()
 
 
@@ -291,6 +304,30 @@ class ApiKey(Base):
     key_hash: Mapped[str] = mapped_column(String)
     created_at: Mapped[datetime] = _ts()
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    email: Mapped[str] = mapped_column(String, unique=True)
+    name: Mapped[str] = mapped_column(String)
+    password_hash: Mapped[str] = mapped_column(String)
+    active: Mapped[bool] = mapped_column(Boolean, server_default=sql_text("true"))
+    must_change_password: Mapped[bool] = mapped_column(Boolean, server_default=sql_text("false"))
+    created_at: Mapped[datetime] = _ts()
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class UserSession(Base):
+    __tablename__ = "user_sessions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    token_hash: Mapped[str] = mapped_column(String, unique=True)
+    created_at: Mapped[datetime] = _ts()
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    last_seen_at: Mapped[datetime] = _ts()
 
 
 class ModelUsage(Base):

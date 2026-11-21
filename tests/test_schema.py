@@ -1,6 +1,6 @@
 import pytest
 from alembic.migration import MigrationContext
-from sqlalchemy import delete, select
+from sqlalchemy import delete, inspect, select, text
 from sqlalchemy.exc import IntegrityError
 
 from jerome.orm import (
@@ -252,3 +252,26 @@ def test_book_delete_does_not_load_children(session, book_factory):
     assert "chapters" not in book.__dict__  # passive_deletes: children stay unloaded
     session.flush()
     assert session.scalars(select(Segment)).first() is None
+
+
+def test_migration_0003_adds_web_interface_columns(engine):
+    insp = inspect(engine)
+    assert {"users", "user_sessions"} <= set(insp.get_table_names())
+    cols = {c["name"] for c in insp.get_columns("suggestions")}
+    assert {"agreed", "disputed", "alternative", "rule"} <= cols
+    assert "auto_apply" in {c["name"] for c in insp.get_columns("books")}
+
+
+def test_books_without_auto_apply_get_it_off(session):
+    book_id = session.execute(
+        text("INSERT INTO books (title, format) VALUES ('Legacy', 'docx') RETURNING id")
+    ).scalar_one()
+    stored = session.execute(
+        text("SELECT auto_apply FROM books WHERE id = :id"), {"id": book_id}
+    ).scalar_one()
+    assert stored == {
+        "enabled": False,
+        "categories": ["punctuation", "typo"],
+        "min_severity": "high",
+        "house_rules": True,
+    }
