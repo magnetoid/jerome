@@ -1,0 +1,77 @@
+# Production deployment for Coolify behind the existing Irving Plesk HTTPS proxy.
+x-app:
+  build: .
+  env_file: &id001
+  - path: .env
+    required: false
+  environment: &id002
+    JEROME_DATABASE_URL: postgresql+psycopg://jerome:${POSTGRES_PASSWORD:-jerome}@db:5432/jerome
+    JEROME_LANGUAGETOOL_URL: http://languagetool:8010
+    ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    JEROME_WEBHOOK_SECRET: ${JEROME_WEBHOOK_SECRET:-}
+  volumes: &id003
+  - jerome-data:/data
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: jerome
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-jerome}
+      POSTGRES_DB: jerome
+    volumes:
+    - jerome-db:/var/lib/postgresql/data
+    - ./docker/postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - pg_isready -U jerome -d jerome
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+  languagetool:
+    image: erikvl87/languagetool:6.8
+    restart: unless-stopped
+  api:
+    build: .
+    env_file: *id001
+    environment: *id002
+    volumes: *id003
+    command:
+    - sh
+    - -c
+    - jerome db-upgrade && jerome serve --host 0.0.0.0
+    depends_on:
+      db:
+        condition: service_healthy
+      languagetool:
+        condition: service_started
+    healthcheck:
+      test:
+      - CMD
+      - python
+      - -c
+      - import urllib.request; urllib.request.urlopen('http://localhost:8000/openapi.json')
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+    ports:
+    - 127.0.0.1:9199:8000
+  worker:
+    build: .
+    env_file: *id001
+    environment: *id002
+    volumes: *id003
+    command:
+    - jerome
+    - worker
+    stop_grace_period: 180s
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+volumes:
+  jerome-db: null
+  jerome-data: null
