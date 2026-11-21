@@ -1,6 +1,6 @@
 import pytest
 from alembic.migration import MigrationContext
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 
 from jerome.orm import (
@@ -182,3 +182,73 @@ def test_jsonb_roundtrip(session, book_factory):
     got = session.get(ReviewExport, export.id)
     assert got.suggestion_statuses == {"12": "open", "13": "accepted"}
     assert got.filters == {"severity": ["high"], "nested": {"a": [1, None]}}
+
+
+def test_check_constraints_reject_bad_vocabulary(session, book_factory):
+    b = book_factory()
+    _, blk = _block(session, b)
+    good = dict(
+        book_id=b.id,
+        block_id=blk.id,
+        start=0,
+        end=1,
+        original="H",
+        replacement="h",
+        category="typo",
+        severity="low",
+        source="model",
+        explanation="x",
+    )
+    for field in ("category", "severity", "source"):
+        sp = session.begin_nested()
+        session.add(Suggestion(**{**good, field: "bogus"}))
+        with pytest.raises(IntegrityError):
+            session.flush()
+        sp.rollback()
+
+    s = Suggestion(**good)
+    session.add(s)
+    session.flush()
+    for field in ("previous_status", "new_status"):
+        args = dict(
+            suggestion_id=s.id,
+            action="accept",
+            previous_status="open",
+            new_status="accepted",
+            actor="a",
+            channel="api",
+        )
+        args[field] = "bogus"
+        sp = session.begin_nested()
+        session.add(Decision(**args))
+        with pytest.raises(IntegrityError):
+            session.flush()
+        sp.rollback()
+
+
+def test_db_level_cascade_on_bulk_delete(session, book_factory):
+    b = book_factory()
+    _, blk = _block(session, b)
+    session.add(Segment(block_id=blk.id, ordinal=0, start=0, end=5))
+    job = Job(book_id=b.id, type="proofread", status="queued", max_cost=1, passes=[])
+    session.add(job)
+    session.flush()
+    session.add(JobTask(job_id=job.id, kind="consistency"))
+    session.flush()
+    session.execute(delete(Book).where(Book.id == b.id))
+    session.expire_all()
+    for model in (Chapter, Block, Segment, StyleSheetRow, Job, JobTask):
+        assert session.scalars(select(model)).first() is None
+
+
+def test_book_delete_does_not_load_children(session, book_factory):
+    b = book_factory()
+    _, blk = _block(session, b)
+    session.add(Segment(block_id=blk.id, ordinal=0, start=0, end=5))
+    session.flush()
+    session.expire_all()
+    book = session.get(Book, b.id)
+    session.delete(book)
+    assert "chapters" not in book.__dict__  # passive_deletes: children stay unloaded
+    session.flush()
+    assert session.scalars(select(Segment)).first() is None

@@ -1,5 +1,7 @@
+from collections.abc import Iterable
 from datetime import datetime
 from decimal import Decimal
+from enum import Enum
 from typing import Any
 
 from sqlalchemy import (
@@ -21,15 +23,20 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
+from jerome.types import Category, Severity, Source, Status
+
 JOB_STATUSES = ("queued", "running", "paused_cost_cap", "cancelled", "failed", "completed")
 ACTIVE_JOB_STATUSES = ("queued", "running", "paused_cost_cap")
 TASK_STATUSES = ("queued", "running", "done", "failed")
-SUGGESTION_STATUSES = ("open", "accepted", "rejected", "edited", "superseded")
 CHANNELS = ("api", "word", "system")
 
 
-def _in(column: str, values: tuple[str, ...]) -> str:
-    return f"{column} IN ({', '.join(repr(v) for v in values)})"
+def _values(vocab: Iterable[str]) -> tuple[str, ...]:
+    return tuple(str(v.value) if isinstance(v, Enum) else v for v in vocab)
+
+
+def _in(column: str, vocab: Iterable[str]) -> str:
+    return f"{column} IN ({', '.join(repr(v) for v in _values(vocab))})"
 
 
 def _ts() -> Mapped[datetime]:
@@ -56,10 +63,13 @@ class Book(Base):
     created_at: Mapped[datetime] = _ts()
 
     chapters: Mapped[list["Chapter"]] = relationship(
-        back_populates="book", cascade="all, delete-orphan", order_by="Chapter.ordinal"
+        back_populates="book",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="Chapter.ordinal",
     )
     style_sheet: Mapped["StyleSheetRow | None"] = relationship(
-        back_populates="book", cascade="all, delete-orphan", uselist=False
+        back_populates="book", cascade="all, delete-orphan", passive_deletes=True, uselist=False
     )
 
 
@@ -91,7 +101,10 @@ class Chapter(Base):
 
     book: Mapped[Book] = relationship(back_populates="chapters")
     blocks: Mapped[list["Block"]] = relationship(
-        back_populates="chapter", cascade="all, delete-orphan", order_by="Block.ordinal"
+        back_populates="chapter",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="Block.ordinal",
     )
 
 
@@ -112,7 +125,10 @@ class Block(Base):
 
     chapter: Mapped[Chapter] = relationship(back_populates="blocks")
     segments: Mapped[list["Segment"]] = relationship(
-        back_populates="block", cascade="all, delete-orphan", order_by="Segment.ordinal"
+        back_populates="block",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="Segment.ordinal",
     )
 
 
@@ -156,7 +172,10 @@ class Job(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     tasks: Mapped[list["JobTask"]] = relationship(
-        back_populates="job", cascade="all, delete-orphan", order_by="JobTask.id"
+        back_populates="job",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="JobTask.id",
     )
 
 
@@ -186,7 +205,10 @@ class JobTask(Base):
 class Suggestion(Base):
     __tablename__ = "suggestions"
     __table_args__ = (
-        CheckConstraint(_in("status", SUGGESTION_STATUSES), name="ck_suggestions_status"),
+        CheckConstraint(_in("status", Status), name="ck_suggestions_status"),
+        CheckConstraint(_in("category", Category), name="ck_suggestions_category"),
+        CheckConstraint(_in("severity", Severity), name="ck_suggestions_severity"),
+        CheckConstraint(_in("source", Source), name="ck_suggestions_source"),
         Index("ix_suggestions_block_id_status", "block_id", "status"),
     )
 
@@ -213,7 +235,11 @@ class Suggestion(Base):
 
 class Decision(Base):
     __tablename__ = "decisions"
-    __table_args__ = (CheckConstraint(_in("channel", CHANNELS), name="ck_decisions_channel"),)
+    __table_args__ = (
+        CheckConstraint(_in("channel", CHANNELS), name="ck_decisions_channel"),
+        CheckConstraint(_in("previous_status", Status), name="ck_decisions_previous_status"),
+        CheckConstraint(_in("new_status", Status), name="ck_decisions_new_status"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     suggestion_id: Mapped[int] = mapped_column(

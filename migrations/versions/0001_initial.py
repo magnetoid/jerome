@@ -284,6 +284,15 @@ def upgrade() -> None:
             "status IN ('open', 'accepted', 'rejected', 'edited', 'superseded')",
             name="ck_suggestions_status",
         ),
+        sa.CheckConstraint(
+            "category IN ('typo', 'grammar', 'punctuation', 'consistency', 'style')",
+            name="ck_suggestions_category",
+        ),
+        sa.CheckConstraint("severity IN ('high', 'medium', 'low')", name="ck_suggestions_severity"),
+        sa.CheckConstraint(
+            "source IN ('languagetool', 'model', 'consistency', 'editor')",
+            name="ck_suggestions_source",
+        ),
         sa.ForeignKeyConstraint(["block_id"], ["blocks.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["book_id"], ["books.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["job_id"], ["jobs.id"], ondelete="SET NULL"),
@@ -312,6 +321,14 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.CheckConstraint("channel IN ('api', 'word', 'system')", name="ck_decisions_channel"),
+        sa.CheckConstraint(
+            "previous_status IN ('open', 'accepted', 'rejected', 'edited', 'superseded')",
+            name="ck_decisions_previous_status",
+        ),
+        sa.CheckConstraint(
+            "new_status IN ('open', 'accepted', 'rejected', 'edited', 'superseded')",
+            name="ck_decisions_new_status",
+        ),
         sa.ForeignKeyConstraint(["review_import_id"], ["review_imports.id"], ondelete="SET NULL"),
         sa.ForeignKeyConstraint(["suggestion_id"], ["suggestions.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
