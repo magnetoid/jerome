@@ -28,9 +28,8 @@ def test_epub_route_round_trip(client, auth, epub_book_id):
     assert "the cat sat" in texts and "an open suggestion stays teh" in texts
 
 
-def test_review_501_unknown_422_unknown_book_404_auth(client, auth, docx_book_with_decisions):
+def test_unknown_422_unknown_book_404_auth(client, auth, docx_book_with_decisions):
     base = f"/v1/books/{docx_book_with_decisions.id}/export"
-    assert client.get(f"{base}?format=docx-review", headers=auth).status_code == 501
     assert client.get(f"{base}?format=pdf", headers=auth).status_code == 422
     assert client.get(f"{base}", headers=auth).status_code == 422
     assert client.get("/v1/books/999999/export?format=docx-clean", headers=auth).status_code == 404

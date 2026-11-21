@@ -1,12 +1,13 @@
 from typing import Annotated
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy.orm import Session
 
 from jerome.api.deps import current_actor, get_session, get_storage
-from jerome.core.exports import ExportFormat, export_book
+from jerome.core.exports import ExportFormat, ReviewFilters, export_book
 from jerome.storage import Storage
+from jerome.types import Category, Severity
 
 router = APIRouter()
 
@@ -27,11 +28,12 @@ def export(
     session: Annotated[Session, Depends(get_session)],
     storage: Annotated[Storage, Depends(get_storage)],
     actor: Annotated[str, Depends(current_actor)],
+    min_severity: Annotated[Severity | None, Query()] = None,
+    categories: Annotated[list[Category] | None, Query()] = None,
+    chapters: Annotated[list[int] | None, Query()] = None,
 ):
-    try:
-        f = export_book(session, storage, book_id, format, actor=actor)
-    except NotImplementedError as exc:
-        raise HTTPException(status_code=501, detail=str(exc)) from exc
+    filters = ReviewFilters(min_severity, categories, chapters)
+    f = export_book(session, storage, book_id, format, filters=filters, actor=actor)
     return Response(
         f.data,
         media_type=f.media_type,

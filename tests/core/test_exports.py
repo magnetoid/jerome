@@ -70,11 +70,6 @@ def test_export_saved_under_data_dir(session, tmp_storage, docx_book_with_decisi
     assert saved.read_bytes() == f.data
 
 
-def test_docx_review_not_implemented(session, tmp_storage, docx_book_with_decisions):
-    with pytest.raises(NotImplementedError, match="Word round trip"):
-        export_book(session, tmp_storage, docx_book_with_decisions.id, "docx-review")
-
-
 def test_format_mismatch(session, tmp_storage, docx_book_with_decisions, epub_book_with_decisions):
     with pytest.raises(UnsupportedDocumentError, match="EPUB"):
         export_book(session, tmp_storage, docx_book_with_decisions.id, "epub-clean")
