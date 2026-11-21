@@ -3,8 +3,9 @@
 The book is never regenerated. Only the text nodes a change touches are rewritten, and only
 content documents with changes are re-serialized, the way they were parsed (XML, or HTML
 for the lxml.html fallback). Those keep their original bytes up to the root element (BOM,
-XML declaration, comments, doctype) and their encoding. Every other zip entry keeps its
-bytes, its place in the zip order and its compression.
+XML declaration, comments, doctype) and their encoding, and empty non-void XHTML elements
+keep an end tag (``<a id="n"></a>``). Every other zip entry keeps its bytes, its place in
+the zip order and its compression.
 
 Block offsets map back to raw node text through the pieces ``element_text`` gives:
 
@@ -262,6 +263,10 @@ _BOMS = (
     (codecs.BOM_UTF16_LE, "utf-16-le"),
     (codecs.BOM_UTF16_BE, "utf-16-be"),
 )
+_XHTML_NS = "http://www.w3.org/1999/xhtml"
+_VOID = frozenset(
+    "area base br col embed hr img input link meta param source track wbr".split()
+)  # HTML elements that never have content or an end tag
 _COMMENT_OR_PI = re.compile(r"<!--.*?-->|<\?.*?\?>", re.S)
 _DOCTYPE = re.compile("<!DOCTYPE", re.I)
 
@@ -270,6 +275,8 @@ def _serialize(doc: ContentDocument, original: bytes, path: str) -> bytes:
     """The patched document: the original's bytes up to its root element, then the root
     and what follows it serialized as parsed, then the original's trailing whitespace."""
     codec = _codec(doc, original, path)
+    if doc.parser == "xml":
+        _keep_end_tags(doc.root)
     tostring = lxml_html.tostring if doc.parser == "html" else etree.tostring
     nodes = (doc.root, *doc.root.itersiblings())
     body = "".join(tostring(node, encoding="unicode") for node in nodes)
@@ -283,6 +290,21 @@ def _serialize(doc: ContentDocument, original: bytes, path: str) -> bytes:
         )
     except UnicodeError as exc:
         raise UnsupportedDocumentError(f"{path} cannot be written back as {codec}") from exc
+
+
+def _keep_end_tags(root: etree._Element) -> None:
+    """Make empty non-void XHTML elements serialize as ``<a id="n"></a>``, not ``<a/>``.
+
+    Reading systems with an HTML parser read ``<a/>``, ``<div/>`` or ``<script/>`` as a
+    start tag and swallow what follows; some show a page with ``<title/>`` blank. The tree
+    cannot tell how the original wrote them, so every one gets an end tag. Void elements
+    (``<br/>``), and SVG and MathML elements, stay self-closed.
+    """
+    for el in root.iter(etree.Element):
+        if el.text is None and len(el) == 0:
+            name = etree.QName(el)
+            if name.namespace in (_XHTML_NS, None) and name.localname.lower() not in _VOID:
+                el.text = ""
 
 
 def _codec(doc: ContentDocument, original: bytes, path: str) -> str:

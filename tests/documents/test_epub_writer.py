@@ -261,13 +261,46 @@ def test_only_elements_emptied_by_a_change_are_removed():
     assert block(out, 0, 1).text == "Hello WORLD and words"
     data = _entry(out)
     assert b"<i>" not in data and b"<b>" not in data
-    empty = b'class="CharOverride-2"'  # empty from the start: not removed
+    empty = b'<span class="CharOverride-2"></span>'  # empty from the start: kept as written
     assert data.count(empty) == _entry(src).count(empty) > 0
     # an emptied element that may be a link target stays
     src = _epub_with_page(_page('<p><a id="here">Gone</a> stays</p>'))
     out = write_epub(src, {f"{CH1}#0": [Change(0, 5, "")]})
     assert _only(out).text == "stays"
     assert b'<a id="here"></a>stays' in _entry(out)
+
+
+def test_empty_elements_elsewhere_keep_their_end_tags():
+    # Reading systems with an HTML parser read <a/>, <div/> or <script/> as start tags.
+    page = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        f'{_HTML}<head><title></title><script src="a.js"></script>'
+        '<link rel="stylesheet" href="s.css"/></head><body>'
+        '<p><a id="n"></a>One<br/>line</p><div id="top"></div><p>teh two</p>'
+        '<div><svg xmlns="http://www.w3.org/2000/svg"><rect width="1" height="1"/></svg>'
+        '<img src="a.png" alt=""/> Picture</div></body></html>\n'
+    )
+    src = _epub_with_page(page)
+    out = write_epub(src, {f"{CH1}#2": [Change(0, 3, "the")]})
+    assert [b.text for b in _blocks(out)] == [
+        f"One{PLACEHOLDER}line",
+        "the two",
+        f"{PLACEHOLDER}{PLACEHOLDER} Picture",
+    ]
+    data = _entry(out)
+    for kept in (
+        b"<title></title>",
+        b'<script src="a.js"></script>',
+        b'<a id="n"></a>',
+        b'<div id="top"></div>',
+        # void HTML elements, and SVG, stay self-closed
+        b'<link rel="stylesheet" href="s.css"/>',
+        b"<br/>",
+        b'<img src="a.png" alt=""/>',
+        b'<rect width="1" height="1"/>',
+    ):
+        assert kept in data, kept
+    assert data == page.replace("teh two", "the two").encode()
 
 
 def test_blocks_without_effective_changes_leave_their_file_alone():
