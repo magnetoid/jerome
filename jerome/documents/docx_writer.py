@@ -11,7 +11,6 @@ Either mode can wrap blocks in bookmarks and set custom document properties.
 """
 
 import posixpath
-import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -19,7 +18,7 @@ from typing import Literal
 
 from lxml import etree
 
-from jerome.documents.changes import Change, validate_changes
+from jerome.documents.changes import NOT_XML, Change, validate_changes
 from jerome.documents.docx_runs import (
     REVISIONS,
     deletion_groups,
@@ -121,14 +120,11 @@ def _find_blocks(
     return blocks, trees
 
 
-_NOT_XML = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\ud800-\udfff\ufffe\uffff]")
-
-
 def _validate(pt: ParagraphText, key: str, changes: Sequence[Change]) -> list[Change]:
     """Sorted changes, without the ones that change nothing (empty insertions)."""
     ordered = [c for c in validate_changes(pt.text, changes) if c.start < c.end or c.replacement]
     for c in ordered:
-        if any(_NOT_XML.search(s) for s in (c.replacement, c.comment or "", c.author)):
+        if any(NOT_XML.search(s) for s in (c.replacement, c.comment or "", c.author)):
             raise InvalidChangeError(f"{key}: change ({c.start}, {c.end}) has non-XML characters")
         if c.start == c.end and (
             (c.start == 0 and pt.pieces[0].node.tag == _R)  # a field from the paragraph before

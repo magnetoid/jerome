@@ -406,3 +406,23 @@ def test_placeholder_spans_are_rejected(session, block):
     assert session.query(Suggestion).filter_by(block_id=block.id).count() == 0
     # an insertion next to a placeholder is fine
     assert add_candidates(session, block.book_id, None, [cand(block, 3, 3, "", "!")]).created == 1
+
+
+@pytest.mark.parametrize("bad", ["x￼y", "x\x0by"])
+def test_unwritable_replacements_are_refused_or_dropped(session, block, bad):
+    s = add_one(session, block, 0, 3, "teh", "the")
+    with pytest.raises(InvalidChangeError):
+        decide(session, s.id, "edit", actor="a", replacement=bad)
+    assert session.get(Suggestion, s.id).status == "open"
+    with pytest.raises(InvalidChangeError):
+        record_editor_change(
+            session, block.id, 4, 7, "cat", bad, pending=False, actor="a", review_import_id=None
+        )
+    r = add_candidates(
+        session,
+        block.book_id,
+        None,
+        [cand(block, 4, 7, "cat", bad), cand(block, 8, 11, "sat", "sits")],
+    )
+    assert (r.created, r.dropped_invalid) == (1, 1)
+    decide(session, s.id, "edit", actor="a", replacement="a\tb")  # tab is fine

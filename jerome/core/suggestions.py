@@ -5,7 +5,7 @@ from typing import Literal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from jerome.documents.changes import Change, apply_changes
+from jerome.documents.changes import Change, apply_changes, check_replacement_text
 from jerome.documents.model import PLACEHOLDER
 from jerome.errors import Conflict, InvalidChangeError, NotFound
 from jerome.orm import Block, Chapter, Decision, Suggestion
@@ -21,6 +21,7 @@ class AddResult:
     dropped_decided_overlap: int
     dropped_rejected_repeat: int
     dropped_open_overlap: int
+    dropped_invalid: int = 0  # replacement the documents cannot carry (placeholder, control)
 
 
 @dataclass
@@ -123,6 +124,11 @@ def add_candidates(
     existing: dict[int, list[Suggestion]] = {}
     result = AddResult(0, 0, 0, 0)
     for c in candidates:
+        try:
+            check_replacement_text(c.replacement)
+        except InvalidChangeError:
+            result.dropped_invalid += 1
+            continue
         known = existing.setdefault(c.block_id, _block_suggestions(session, c.block_id))
         overlapping = [s for s in known if spans_overlap(c.start, c.end, s.start, s.end)]
         if any(s.status in DECIDED for s in overlapping):
@@ -218,6 +224,8 @@ def decide(
         raise Conflict(f"cannot {action} a {previous} suggestion")
     if action == "edit" and replacement is None:
         raise InvalidChangeError("edit requires a replacement")
+    if action == "edit":
+        check_replacement_text(replacement)  # type: ignore[arg-type]
     if action in ("accept", "edit") and _decided_overlap(
         _block_suggestions(session, s.block_id), s
     ):
@@ -270,6 +278,7 @@ def record_editor_change(
     if block is None:
         raise NotFound(f"block {block_id} not found")
     _check_original(block, start, end, original)
+    check_replacement_text(replacement)
     siblings = _block_suggestions(session, block_id)
     if _decided_overlap(siblings, (start, end)):
         raise Conflict("change overlaps an accepted or edited suggestion")

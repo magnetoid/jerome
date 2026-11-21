@@ -357,6 +357,7 @@ def _run_chunk(
             added.dropped_decided_overlap
             + added.dropped_rejected_repeat
             + added.dropped_open_overlap
+            + added.dropped_invalid
         )
         deltas = {"dropped": dropped}
         if refusals:
@@ -413,7 +414,8 @@ def _run_consistency(sf: SessionFactory, task_id: int, plan: _Plan, deps: Worker
             job.stats,
             dropped=added.dropped_decided_overlap
             + added.dropped_rejected_repeat
-            + added.dropped_open_overlap,
+            + added.dropped_open_overlap
+            + added.dropped_invalid,
         )
         note = _complete_task(s, job, task, deps)
         s.commit()

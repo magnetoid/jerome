@@ -28,6 +28,7 @@ from tests.fixtures.docx_builders import all_blocks, make_docx
 from tests.fixtures.suggestions import add_one
 from tests.fixtures.word_sim import (
     insert_paragraph,
+    insert_tab,
     merge_paragraphs,
     simulate_word_review,
     split_paragraph,
@@ -480,3 +481,12 @@ def test_crafted_unicode_digit_property_is_unsupported_not_a_crash(session, tmp_
     assert "\u00b2" in package["docProps/custom.xml"].decode()
     with pytest.raises(UnsupportedDocumentError):
         import_review(session, book.id, write_package(package, copy), actor="ed")
+
+
+def test_tab_typed_inside_a_word_is_not_recorded_and_never_reaches_the_export(session, tmp_storage):
+    book, blocks, copy = _structural_book(session, tmp_storage)
+    r = import_review(session, book.id, insert_tab(copy, "Gamma"), actor="ed")
+    assert any("not recorded" in n for n in r.notes)
+    assert session.query(Suggestion).filter_by(source="editor").count() == 0
+    clean = export_book(session, tmp_storage, book.id, "docx-clean").data
+    assert all("\ufffc" not in b.text for b in all_blocks(clean))

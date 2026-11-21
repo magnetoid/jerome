@@ -333,3 +333,30 @@ def insert_paragraph(data: bytes, after: str, text: str) -> bytes:
         return False
 
     return _edit_trees(data, edit)
+
+
+def insert_tab(data: bytes, inside: str) -> bytes:
+    """An untracked tab in the middle of ``inside`` (found in one plain run)."""
+
+    def edit(root: etree._Element) -> bool:
+        for r in root.iter(_R):
+            t = r.find(_T)
+            if (
+                t is None
+                or t.text is None
+                or inside not in t.text
+                or r.getparent().tag in (_INS, _DEL)
+            ):
+                continue
+            head, _, rest = t.text.partition(inside)
+            half = len(inside) // 2
+            t.text = head + inside[:half]
+            tab = etree.Element(_R)
+            etree.SubElement(tab, qn("w:tab"))
+            tail = _run(r.find(_RPR), inside[half:] + rest, _T)
+            r.addnext(tab)
+            tab.addnext(tail)
+            return True
+        return False
+
+    return _edit_trees(data, edit)

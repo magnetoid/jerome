@@ -1,3 +1,5 @@
+import pytest
+
 from jerome.orm import Block, Suggestion
 from tests.fixtures.docx_builders import make_docx
 from tests.fixtures.suggestions import add_one
@@ -85,3 +87,19 @@ def test_block_route_404_for_block_of_other_book(client, auth, session, block, t
     other_block = session.query(Block).filter_by(book_id=other.id).one()
     r = client.get(f"/v1/books/{block.book_id}/blocks/{other_block.id}", headers=auth)
     assert r.status_code == 404
+
+
+@pytest.mark.parametrize("bad", ["a￼b", "a\x01b", "a￾b"])
+def test_edit_with_unwritable_text_is_422_and_leaves_the_suggestion_open(
+    client, auth, session, block, bad
+):
+    s = add_one(session, block, 0, 3, "teh", "the")
+    r = client.post(f"/v1/suggestions/{s.id}/edit", headers=auth, json={"replacement": bad})
+    assert r.status_code == 422
+    assert client.post(f"/v1/suggestions/{s.id}/accept", headers=auth).status_code == 200
+
+
+def test_edit_with_tab_and_newline_is_fine(client, auth, session, block):
+    s = add_one(session, block, 0, 3, "teh", "the")
+    r = client.post(f"/v1/suggestions/{s.id}/edit", headers=auth, json={"replacement": "a\tb\nc"})
+    assert r.status_code == 200

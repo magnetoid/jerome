@@ -1,8 +1,24 @@
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 
 from jerome.documents.model import PLACEHOLDER
 from jerome.errors import InvalidChangeError
+
+# characters XML 1.0 cannot carry
+NOT_XML = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\ud800-\udfff\ufffe\uffff]")
+
+
+def check_replacement_text(text: str) -> None:
+    """Raise InvalidChangeError if ``text`` cannot be written into a document.
+
+    It must not hold the placeholder (a non-text object) or a character XML 1.0 forbids.
+    Tab, line feed and carriage return are fine.
+    """
+    if PLACEHOLDER in text:
+        raise InvalidChangeError("replacement text contains the object placeholder (U+FFFC)")
+    if NOT_XML.search(text):
+        raise InvalidChangeError("replacement text contains characters not allowed in XML")
 
 
 @dataclass(frozen=True)

@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from lxml import etree
 from lxml import html as lxml_html
 
-from jerome.documents.changes import Change, validate_changes
+from jerome.documents.changes import NOT_XML, Change, validate_changes
 from jerome.documents.docx_xml import ParagraphText, write_package
 from jerome.documents.epub_xml import (
     ContentDocument,
@@ -43,7 +43,6 @@ from jerome.documents.epub_xml import (
 from jerome.errors import InvalidChangeError, UnsupportedDocumentError
 
 _XML_WS = " \t\n\r"
-_NOT_XML = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\ud800-\udfff￾￿]")
 
 # (element, "text" | "tail", raw_start, raw_end, new text)
 _Edit = tuple[etree._Element, str, int, int, str]
@@ -94,7 +93,7 @@ def _validate(text: ParagraphText, key: str, changes: Sequence[Change]) -> list[
     """Sorted changes, without the ones that change nothing (empty insertions)."""
     ordered = [c for c in validate_changes(text.text, changes) if c.start < c.end or c.replacement]
     for c in ordered:
-        if _NOT_XML.search(c.replacement):
+        if NOT_XML.search(c.replacement):
             raise InvalidChangeError(f"{key}: change ({c.start}, {c.end}) has non-XML characters")
     return ordered
 
