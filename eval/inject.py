@@ -20,7 +20,8 @@ class InjectedError:
 
 
 # (paragraph, start, end) in the original text, and the possible wrong forms of that span
-_Site = tuple[int, int, int, list[str]]
+# optional extras: a group key and the most changes allowed within that group
+_Site = tuple
 
 _WORD = re.compile(r"(?<!\w)[^\W\d_]{4,}(?!\w)")
 _EN_COMMA_WHICH = re.compile(r"(\w+), which\b")
@@ -120,8 +121,10 @@ def _consistency_sites(paras: list[str], language: str) -> list[_Site]:
                 for m in re.finditer(rf"(?<![\w-]){re.escape(other)}(?![\w-])", p, re.I)
                 if m.group() in (other, other.capitalize())
             )
-            if len(hits) >= 2 and len(hits) >= n_other:
-                sites += [(i, s, e, [_match_case(w, other)]) for i, s, e, w in hits]
+            # the majority must survive k changes: hits - k > n_other + k (a tie yields nothing)
+            budget = (len(hits) - n_other - 1) // 2
+            if len(hits) >= 2 and budget >= 1:
+                sites += [(i, s, e, [_match_case(w, other)], form, budget) for i, s, e, w in hits]
     return sites
 
 
@@ -148,11 +151,17 @@ def inject_errors(
         sites = sorted(find(paragraphs, language), key=lambda s: s[:3])
         rng.shuffle(sites)
         taken = 0
-        for para, start, end, wrongs in sites:
+        group_taken: dict[str, int] = {}
+        for para, start, end, wrongs, *extra in sites:
             if taken >= per_category:
                 break
             if para in used:
                 continue
+            if extra:
+                group, budget = extra
+                if group_taken.get(group, 0) >= budget:
+                    continue
+                group_taken[group] = group_taken.get(group, 0) + 1
             wrong = rng.choice(wrongs)
             original = paragraphs[para]
             out[para] = original[:start] + wrong + original[end:]

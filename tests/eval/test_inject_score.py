@@ -21,6 +21,8 @@ PARAS_EN = [
     "The grey sky hung over the market while merchants carried their baskets towards the crowded square.",
     "Nothing could prevent the travellers from reaching the station before the evening train departed from it.",
     "A careful reader would notice every small mistake hidden inside these simple practice sentences today.",
+    "Every colour in the painting seemed brighter after the rain had washed the dust from the window.",
+    "The colour of her dress matched the autumn leaves that covered the path behind the old church.",
 ]
 PARAS_DE = [
     "Er sagte dem Mann, dass das Wetter schlecht werden würde und alle zu Hause bleiben sollten.",
@@ -33,6 +35,8 @@ PARAS_DE = [
     "Der Lehrer gab einem Schüler das Buch des Dichters und bat ihn, es sorgfältig und langsam zu lesen.",
     "Niemand konnte sagen, warum der Hund so laut bellte, als der Fremde die Straße entlang gegangen kam.",
     "Es war ein kalter Morgen und die Bauern gingen früh auf die Felder um die letzte Arbeit zu beenden.",
+    "Der Pfarrer meinte, daß die Gemeinde im nächsten Jahr eine neue Glocke für den Turm bekommen sollte.",
+    "Alle wußten längst, daß der Winter in diesem Jahr früh kommen und sehr lange dauern würde im Tal.",
 ]
 
 
@@ -282,3 +286,69 @@ def test_run_eval_stops_at_cost_cap():
     )
     assert len(provider.calls) == 1
     assert result["stopped_at_cost_cap"] is True
+
+
+def _consistency_truth(paras, seed=1, per_category=10):
+    out, truth = inject_errors(paras, "en", seed=seed, per_category=per_category)
+    return out, [t for t in truth if t.category == Category.CONSISTENCY]
+
+
+def _filler(n):
+    return [f"Paragraph number {i} talks about nothing in particular at all." for i in range(n)]
+
+
+def test_consistency_majority_survives_injection():
+    # 5 "colour" and 2 "color": at most k=1 change keeps colour strictly ahead (4 > 3)
+    paras = [f"The colour of item {i} was lovely to see." for i in range(5)]
+    paras += [f"The color of item {i} was lovely to see." for i in range(2)]
+    for seed in range(5):
+        out, truth = _consistency_truth(paras, seed=seed)
+        assert len(truth) == 1 and truth[0].correct == "colour"
+        k = len(truth)
+        assert 5 - k > 2 + k  # the original majority is still a strict majority
+        assert all(out[t.paragraph][t.start : t.end] == "color" for t in truth)
+
+
+def test_consistency_tie_yields_no_sites():
+    paras = [f"The colour of item {i} was lovely." for i in range(2)]
+    paras += [f"The color of item {i} was lovely." for i in range(2)]
+    assert _consistency_truth(paras)[1] == []
+
+
+def test_run_eval_counts_unbilled_provider_errors():
+    provider = FakeProvider(
+        [RuntimeError("network down")], usage=Usage(1000, 150), token_count=1000
+    )
+    result = run_eval(
+        ["Some text here."],
+        [],
+        language="en",
+        variant="en-GB",
+        passes=["ai"],
+        registry=fake_registry(provider),
+        lt_client=FakeLT([]),
+        max_cost=Decimal("1"),
+    )
+    assert result["ai_errors"] == 1 and "network down" in result["first_error"]
+    assert "overall" in result["scores"]["merged"] and result["completed"] is True
+
+
+def test_main_writes_results_when_run_eval_raises(tmp_path, monkeypatch):
+    import json
+
+    import eval.run as run_mod
+
+    monkeypatch.setattr(run_mod, "RESULTS", tmp_path)
+    monkeypatch.setattr(run_mod, "load_paragraphs", lambda _id: PARAS_EN)
+    monkeypatch.setattr("builtins.input", lambda _prompt: "y")
+
+    def boom(*a, **k):
+        raise RuntimeError("lt exploded")
+
+    monkeypatch.setattr(run_mod, "run_eval", boom)
+    with pytest.raises(RuntimeError):
+        run_mod.main(["--language", "en", "--passes", "consistency", "--max-cost", "1"])
+    files = list(tmp_path.glob("*.json"))
+    assert len(files) == 1 and list(tmp_path.glob("*.md"))
+    data = json.loads(files[0].read_text())
+    assert data["completed"] is False and "lt exploded" in data["error"]

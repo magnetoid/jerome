@@ -93,6 +93,7 @@ def run_eval(
     stopped = False
     model = None
     ai_errors = 0
+    first_error: str | None = None
     if "languagetool" in passes:
         per_pass["languagetool"], _ = languagetool_candidates(blocks, style, lt_client)
     if "ai" in passes:
@@ -112,6 +113,10 @@ def run_eval(
                     ai_errors += 1
                     if exc.usage is not None:
                         spent += cost(price, exc.usage)
+                    continue
+                except Exception as exc:  # provider or network failure: keep the run going
+                    ai_errors += 1
+                    first_error = first_error or repr(exc)
                     continue
                 spent += cost(price, res.result.usage)
                 per_pass["ai"] += res.candidates
@@ -136,6 +141,8 @@ def run_eval(
         "cost": str(spent),
         "stopped_at_cost_cap": stopped,
         "ai_errors": ai_errors,
+        "first_error": first_error,
+        "completed": True,
         "scores": {
             "merged": scored(merged),
             "passes": {name: scored(found) for name, found in per_pass.items()},
@@ -144,12 +151,15 @@ def run_eval(
 
 
 def markdown(result: dict) -> str:
+    if not result.get("completed"):
+        return f"# Seeded-error evaluation (aborted)\n\nError: {result.get('error')}\n"
     lines = [
         f"# Seeded-error evaluation ({result['language']}, {result['variant']})",
         "",
         f"- model: {result['model']}",
         f"- paragraphs: {result['paragraphs']}, injected errors: {result['injected']}",
         f"- cost: {result['cost']} (stopped at cost cap: {result['stopped_at_cost_cap']})",
+        f"- AI errors: {result['ai_errors']} (first: {result['first_error']})",
         "",
         "| scope | key | precision | recall |",
         "|---|---|---|---|",
@@ -201,17 +211,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("Aborted.")
         return 1
 
-    result = run_eval(
-        sample,
-        truth,
-        language=args.language,
-        variant=variant,
-        passes=args.passes,
-        registry=registry,
-        lt_client=lt,
-        max_cost=args.max_cost,
-    )
-    result["args"] = {
+    args_record = {
         "language": args.language,
         "passes": args.passes,
         "max_cost": str(args.max_cost),
@@ -220,12 +220,29 @@ def main(argv: Sequence[str] | None = None) -> int:
         "clean": args.clean,
         "source": entry["id"],
     }
-    RESULTS.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-    base: Path = RESULTS / stamp
-    base.with_suffix(".json").write_text(json.dumps(result, indent=2), encoding="utf-8")
-    base.with_suffix(".md").write_text(markdown(result), encoding="utf-8")
-    print(f"Wrote {base}.json and .md; cost {result['cost']}")
+    result: dict = {"args": args_record, "completed": False, "error": "run did not finish"}
+    try:
+        result = run_eval(
+            sample,
+            truth,
+            language=args.language,
+            variant=variant,
+            passes=args.passes,
+            registry=registry,
+            lt_client=lt,
+            max_cost=args.max_cost,
+        )
+        result["args"] = args_record
+    except BaseException as exc:
+        result = {**result, "error": repr(exc)}
+        raise
+    finally:  # always keep what was learned, even when the run aborts
+        RESULTS.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+        base: Path = RESULTS / stamp
+        base.with_suffix(".json").write_text(json.dumps(result, indent=2), encoding="utf-8")
+        base.with_suffix(".md").write_text(markdown(result), encoding="utf-8")
+        print(f"Wrote {base}.json and .md; cost {result.get('cost', 'unknown')}")
     return 0
 
 
