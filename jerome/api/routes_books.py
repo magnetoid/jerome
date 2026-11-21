@@ -1,10 +1,10 @@
 from dataclasses import asdict
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Response, UploadFile
 from sqlalchemy.orm import Session
 
-from jerome.api.deps import get_session, get_settings_dep, get_storage
+from jerome.api.deps import get_session, get_settings_dep, get_storage, read_limited
 from jerome.api.schemas import (
     BookOut,
     ChapterOut,
@@ -19,23 +19,9 @@ from jerome.types import Variant
 
 router = APIRouter()
 
-_CHUNK = 1024 * 1024
-
 SessionDep = Annotated[Session, Depends(get_session)]
 StorageDep = Annotated[Storage, Depends(get_storage)]
 SettingsDep = Annotated[Settings, Depends(get_settings_dep)]
-
-
-def _read_limited(file: UploadFile, limit: int) -> bytes:
-    """Read the upload in chunks, stopping as soon as it exceeds the limit."""
-    parts: list[bytes] = []
-    size = 0
-    while chunk := file.file.read(_CHUNK):
-        size += len(chunk)
-        if size > limit:
-            raise HTTPException(status_code=413, detail="Upload too large")
-        parts.append(chunk)
-    return b"".join(parts)
 
 
 @router.post("/books", status_code=201, response_model=BookOut)
@@ -48,7 +34,7 @@ def upload_book(
     title: Annotated[str | None, Form()] = None,
     local_only: Annotated[bool, Form()] = False,
 ):
-    data = _read_limited(file, settings.max_upload_mb * 1024 * 1024)
+    data = read_limited(file, settings.max_upload_mb * 1024 * 1024)
     return books.import_book(
         session,
         storage,

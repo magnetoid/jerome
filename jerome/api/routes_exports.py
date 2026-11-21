@@ -1,11 +1,16 @@
+from dataclasses import asdict
 from typing import Annotated
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, File, Query, Response, UploadFile
 from sqlalchemy.orm import Session
 
-from jerome.api.deps import current_actor, get_session, get_storage
+from jerome.api.deps import current_actor, get_session, get_settings_dep, get_storage, read_limited
+from jerome.config import Settings
 from jerome.core.exports import ExportFormat, ReviewFilters, export_book
+from jerome.core.review_imports import import_review
+from jerome.errors import NotFound
+from jerome.orm import ReviewImport
 from jerome.storage import Storage
 from jerome.types import Category, Severity
 
@@ -39,3 +44,27 @@ def export(
         media_type=f.media_type,
         headers={"Content-Disposition": content_disposition(f.filename)},
     )
+
+
+@router.post("/books/{book_id}/review-imports", status_code=201)
+def create_review_import(
+    book_id: int,
+    file: Annotated[UploadFile, File()],
+    session: Annotated[Session, Depends(get_session)],
+    settings: Annotated[Settings, Depends(get_settings_dep)],
+    actor: Annotated[str, Depends(current_actor)],
+):
+    data = read_limited(file, settings.max_upload_mb * 1024 * 1024)
+    return asdict(import_review(session, book_id, data, actor))
+
+
+@router.get("/books/{book_id}/review-imports/{import_id}")
+def get_review_import(
+    book_id: int,
+    import_id: int,
+    session: Annotated[Session, Depends(get_session)],
+):
+    row = session.get(ReviewImport, import_id)
+    if row is None or row.book_id != book_id:
+        raise NotFound(f"review import {import_id} not found in book {book_id}")
+    return row.report

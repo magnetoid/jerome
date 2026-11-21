@@ -60,7 +60,7 @@ def _decided_overlap(siblings: Sequence[Suggestion], s: Suggestion | tuple[int, 
     )
 
 
-def _lock_blocks(session: Session, block_ids: Sequence[int]) -> dict[int, Block]:
+def lock_blocks(session: Session, block_ids: Sequence[int]) -> dict[int, Block]:
     stmt = (
         select(Block)
         .where(Block.id.in_(set(block_ids)))
@@ -113,7 +113,7 @@ def add_candidates(
     candidates: Sequence[Candidate],
     model: str | None = None,
 ) -> AddResult:
-    blocks = _lock_blocks(session, [c.block_id for c in candidates])
+    blocks = lock_blocks(session, [c.block_id for c in candidates])
     for c in candidates:
         block = blocks.get(c.block_id)
         if block is None or block.book_id != book_id:
@@ -207,7 +207,7 @@ def decide(
     s = session.get(Suggestion, suggestion_id)
     if s is None:
         raise NotFound(f"suggestion {suggestion_id} not found")
-    _lock_blocks(session, [s.block_id])
+    lock_blocks(session, [s.block_id])
     session.refresh(s)
 
     previous = s.status
@@ -266,7 +266,7 @@ def record_editor_change(
     actor: str,
     review_import_id: int | None,
 ) -> Suggestion | None:
-    block = _lock_blocks(session, [block_id]).get(block_id)
+    block = lock_blocks(session, [block_id]).get(block_id)
     if block is None:
         raise NotFound(f"block {block_id} not found")
     _check_original(block, start, end, original)

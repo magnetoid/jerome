@@ -1,7 +1,7 @@
 from collections.abc import Iterator
 from typing import Annotated
 
-from fastapi import Depends, HTTPException, Request
+from fastapi import Depends, HTTPException, Request, UploadFile
 from sqlalchemy.orm import Session
 
 from jerome.config import Settings
@@ -10,6 +10,20 @@ from jerome.db import session_scope
 from jerome.jobs.worker import WorkerDeps
 from jerome.models import Registry
 from jerome.storage import Storage
+
+_CHUNK = 1024 * 1024
+
+
+def read_limited(file: UploadFile, limit: int) -> bytes:
+    """Read the upload in chunks, stopping as soon as it exceeds the limit."""
+    parts: list[bytes] = []
+    size = 0
+    while chunk := file.file.read(_CHUNK):
+        size += len(chunk)
+        if size > limit:
+            raise HTTPException(status_code=413, detail="Upload too large")
+        parts.append(chunk)
+    return b"".join(parts)
 
 
 def get_settings_dep(request: Request) -> Settings:
