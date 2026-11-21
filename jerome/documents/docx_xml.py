@@ -10,7 +10,8 @@ import posixpath
 import zipfile
 import zlib
 from collections.abc import Callable, Iterator, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Literal
 
 from lxml import etree
 
@@ -244,11 +245,27 @@ class Piece:
 
 
 @dataclass
+class Revision:
+    """A pending tracked change in a paragraph's base view (see ``paragraph_revisions``).
+
+    A deletion is the span ``[start, end)`` of the base text; an insertion sits at
+    ``start == end`` and carries its text, which is not part of the base text.
+    """
+
+    start: int
+    end: int
+    kind: Literal["ins", "del"]
+    author: str
+    text: str
+
+
+@dataclass
 class ParagraphText:
     text: str
     marks: list[Mark]
     pieces: list[Piece]
     open_fields: int = 0  # complex fields still open at the paragraph's end
+    revisions: list[Revision] = field(default_factory=list)  # only from paragraph_revisions
 
 
 def paragraph_runs(
@@ -264,19 +281,45 @@ def paragraph_runs(
     ``open_fields`` is the depth of complex fields already open when the paragraph
     starts; ``iter_paragraph_runs`` carries it from paragraph to paragraph.
     """
-    walker = _Walker(links or {})
+    return _read_paragraph(p, links, open_fields, track=False)
+
+
+def paragraph_revisions(
+    p: etree._Element, links: Mapping[str, str] | None = None, open_fields: int = 0
+) -> ParagraphText:
+    """Like ``paragraph_runs`` but the base view of a paragraph with pending revisions.
+
+    Insertions (``w:ins``, ``w:moveTo``) are left out of the text and listed in
+    ``revisions`` as zero-width items carrying their text; deletions (``w:del``,
+    ``w:moveFrom``) stay in the text, as ``w:delText`` is read like ``w:t``, and are listed
+    as spans. Paragraph-mark and property revisions are ignored. Usable as the ``read``
+    hook of ``iter_paragraph_runs``.
+    """
+    return _read_paragraph(p, links, open_fields, track=True)
+
+
+def _read_paragraph(
+    p: etree._Element, links: Mapping[str, str] | None, open_fields: int, track: bool
+) -> ParagraphText:
+    walker = _Walker(links or {}, track)
     if open_fields:
         walker.field = _OpenField(None, None, None, depth=open_fields)
     walker.walk(p)
     still_open = walker.field.depth if walker.field is not None else 0
     walker.close_field()  # this paragraph's share of a field that continues
     return ParagraphText(
-        "".join(walker.chunks), merge_marks(walker.marks), walker.pieces, still_open
+        "".join(walker.chunks),
+        merge_marks(walker.marks),
+        walker.pieces,
+        still_open,
+        walker.revisions,
     )
 
 
 _R = qn("w:r")
 _T = qn("w:t")
+_DEL_TEXT = qn("w:delText")
+_AUTHOR = qn("w:author")
 _HYPERLINK = qn("w:hyperlink")
 _SDT = qn("w:sdt")
 _SDT_CONTENT = qn("w:sdtContent")
@@ -284,6 +327,10 @@ _FLD_CHAR = qn("w:fldChar")
 _FLD_CHAR_TYPE = qn("w:fldCharType")
 _RPR = qn("w:rPr")
 _VAL = qn("w:val")
+
+# Revision containers, read as pending changes by ``paragraph_revisions``.
+_INSERTED = {qn("w:ins"), qn("w:moveTo")}
+_DELETED = {qn("w:del"), qn("w:moveFrom")}
 
 # Containers whose runs are part of the visible text. Everything else at paragraph level
 # holds no visible text: properties, bookmarks, proofErr, comment ranges, and deleted
@@ -322,8 +369,11 @@ class _OpenField:
 class _Walker:
     """Accumulates text, pieces and marks while walking a paragraph's content."""
 
-    def __init__(self, links: Mapping[str, str]):
+    def __init__(self, links: Mapping[str, str], track: bool = False):
         self.links = links
+        self.track = track  # read pending revisions (see paragraph_revisions)
+        self.revisions: list[Revision] = []
+        self.deleted = False  # inside a pending deletion, where text is w:delText
         self.chunks: list[str] = []
         self.length = 0
         self.pieces: list[Piece] = []
@@ -336,6 +386,10 @@ class _Walker:
             tag = child.tag
             if tag == _R:
                 self.run(child)
+            elif self.track and tag in _INSERTED:
+                self.insertion(child)
+            elif self.track and tag in _DELETED:
+                self.deletion(child)
             elif tag == _HYPERLINK:
                 self.hyperlink(child)
             elif tag in _TRANSPARENT:
@@ -346,6 +400,30 @@ class _Walker:
                     self.walk(content)
             elif tag in _OBJECTS:
                 self.emit(PLACEHOLDER, child, child)
+
+    def insertion(self, ins: etree._Element) -> None:
+        """A pending insertion: not base text. Only its text is kept, with placeholders."""
+        text = "".join(
+            child.text or "" if child.tag == _T else PLACEHOLDER
+            for r in ins.iter(_R)
+            for child in r
+            if child.tag == _T or child.tag in _RUN_OBJECTS
+        )
+        if text:
+            at = self.length
+            self.revisions.append(Revision(at, at, "ins", ins.get(_AUTHOR, ""), text))
+
+    def deletion(self, deleted: etree._Element) -> None:
+        """A pending deletion: base text, and a span of it."""
+        outer, self.deleted = self.deleted, True
+        start = self.length
+        self.walk(deleted)
+        self.deleted = outer
+        if self.length > start:
+            text = "".join(self.chunks)[start : self.length]
+            self.revisions.append(
+                Revision(start, self.length, "del", deleted.get(_AUTHOR, ""), text)
+            )
 
     def hyperlink(self, link: etree._Element) -> None:
         rid = link.get(qn("r:id"))
@@ -363,7 +441,7 @@ class _Walker:
             tag = child.tag
             if tag == _FLD_CHAR:
                 self.field_char(r, child)
-            elif tag == _T:
+            elif tag == _T or (self.deleted and tag == _DEL_TEXT):
                 if child.text:
                     self.emit(child.text, r, child)
             elif tag in _RUN_OBJECTS:
