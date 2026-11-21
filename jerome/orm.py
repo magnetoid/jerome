@@ -265,6 +265,7 @@ class ReviewExport(Base):
     suggestion_statuses: Mapped[dict[str, Any]] = mapped_column(JSONB)
     block_ids: Mapped[list[Any]] = mapped_column(JSONB)
     filters: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    last_decision_id: Mapped[int | None] = mapped_column(Integer)
     created_by: Mapped[str | None] = mapped_column(String)
     created_at: Mapped[datetime] = _ts()
 

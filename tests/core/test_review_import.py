@@ -207,3 +207,120 @@ def test_untouched_copy_reports_nothing_odd(session, tmp_storage, book_with_thre
     copy = _copy(session, tmp_storage, book_with_three_open)
     r = import_review(session, book_with_three_open.id, copy, actor="ed")
     assert r.notes == [] and r.unmatched_block_ids == [] and r.counts["unchanged"] == 3
+
+
+def test_misspelling_fixes_are_exact_and_clean_export_is_correct(session, tmp_storage):
+    from tests.fixtures.docx_builders import all_blocks
+
+    book = import_book(
+        session,
+        tmp_storage,
+        filename="m.docx",
+        data=make_docx(["teh wierd cat.", "I recieved it and beleive it."]),
+        variant="en-US",
+    )
+    first = _blocks(session, book)[0]
+    add_one(session, first, 0, 3, "teh", "the")
+    reviewed = simulate_word_review(
+        _copy(session, tmp_storage, book),
+        untracked_edits={"wierd": "weird", "recieved": "received", "beleive": "believe"},
+    )
+    r = import_review(session, book.id, reviewed, actor="ed")
+    assert r.counts["editor_changes"] == 3 and r.notes == []
+    got = {
+        (s.original, s.replacement) for s in session.query(Suggestion).filter_by(source="editor")
+    }
+    assert got == {("wierd", "weird"), ("recieved", "received"), ("beleive", "believe")}
+    clean = export_book(session, tmp_storage, book.id, "docx-clean").data
+    assert [b.text for b in all_blocks(clean)] == [
+        "teh weird cat.",
+        "I received it and believe it.",
+    ]
+
+
+def test_touching_suggestions_reject_a_accept_b(session, tmp_storage):
+    from tests.fixtures.docx_builders import all_blocks
+
+    book = import_book(
+        session, tmp_storage, filename="t.docx", data=make_docx(["teh cat sat."]), variant="en-US"
+    )
+    block = _blocks(session, book)[0]
+    a = add_one(session, block, 0, 3, "teh", "the")
+    b = add_one(session, block, 3, 4, " ", ", ")
+    reviewed = simulate_word_review(
+        _copy(session, tmp_storage, book), reject=["the"], accept=[", "]
+    )
+    r = import_review(session, book.id, reviewed, actor="ed")
+    assert r.counts["rejected"] == 1 and r.counts["accepted"] == 1
+    assert (session.get(Suggestion, a.id).status, session.get(Suggestion, b.id).status) == (
+        "rejected",
+        "accepted",
+    )
+    clean = export_book(session, tmp_storage, book.id, "docx-clean").data
+    assert [x.text for x in all_blocks(clean)] == ["teh, cat sat."]
+
+
+def test_api_redecision_after_export_is_a_conflict(session, tmp_storage, book_with_three_open):
+    sid = first_open_id(session)
+    decide(session, sid, "edit", actor="a", replacement="The")
+    copy = _copy(session, tmp_storage, book_with_three_open)
+    decide(session, sid, "undo", actor="api-user")
+    decide(session, sid, "edit", actor="api-user", replacement="THE")
+    r = import_review(
+        session, book_with_three_open.id, simulate_word_review(copy, accept=["The"]), actor="ed"
+    )
+    assert r.conflicts == [sid]
+    s = session.get(Suggestion, sid)
+    assert (s.status, s.final_text) == ("edited", "THE")
+
+
+def test_accept_undo_accept_after_export_then_word_reject_conflicts(
+    session, tmp_storage, book_with_three_open
+):
+    sid = first_open_id(session)
+    decide(session, sid, "accept", actor="a")
+    copy = _copy(session, tmp_storage, book_with_three_open)
+    decide(session, sid, "undo", actor="api-user")
+    decide(session, sid, "accept", actor="api-user")
+    r = import_review(
+        session, book_with_three_open.id, simulate_word_review(copy, reject=["the"]), actor="ed"
+    )
+    assert r.conflicts == [sid] and session.get(Suggestion, sid).status == "accepted"
+
+
+def test_same_copy_twice_with_changed_mind_applies(session, tmp_storage, book_with_three_open):
+    copy = _copy(session, tmp_storage, book_with_three_open)
+    import_review(
+        session, book_with_three_open.id, simulate_word_review(copy, accept=["the"]), actor="ed"
+    )
+    r = import_review(
+        session, book_with_three_open.id, simulate_word_review(copy, reject=["the"]), actor="ed"
+    )
+    assert r.counts["rejected"] == 1 and r.counts["conflicts"] == 0
+    assert _statuses(session)["the"] == "rejected"
+
+
+def test_filtered_copy_has_no_structural_note(session, tmp_storage):
+    from jerome.core.exports import ReviewFilters
+    from jerome.orm import Chapter
+
+    book = import_book(
+        session,
+        tmp_storage,
+        filename="c.docx",
+        data=make_docx(["# One", "teh a", "teh a2", "# Two", "teh b", "teh b2"]),
+        variant="en-US",
+    )
+    two = session.query(Chapter).filter_by(book_id=book.id).order_by(Chapter.ordinal).all()[1]
+    for b in session.query(Block).filter_by(chapter_id=two.id, kind="paragraph"):
+        add_one(session, b, 0, 3, "teh", "the")
+    copy = export_book(
+        session,
+        tmp_storage,
+        book.id,
+        "docx-review",
+        filters=ReviewFilters(chapter_ids=[two.id]),
+        actor="a",
+    ).data
+    r = import_review(session, book.id, copy, actor="ed")
+    assert r.notes == [] and r.counts["unchanged"] == 2

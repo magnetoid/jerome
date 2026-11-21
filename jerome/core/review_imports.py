@@ -22,7 +22,7 @@ from jerome.documents.docx_review import (
 )
 from jerome.documents.docx_xml import is_block_text
 from jerome.errors import Conflict, InvalidChangeError, UnsupportedDocumentError
-from jerome.orm import Block, ReviewExport, ReviewImport, Suggestion
+from jerome.orm import Block, Decision, ReviewExport, ReviewImport, Suggestion
 
 JEROME = "Jerome"
 PROPERTY = "jerome_review_export_id"
@@ -51,6 +51,7 @@ class EditorChange:
 class BlockOutcome:
     results: dict[int, tuple[Result, str | None]]
     editor_changes: list[EditorChange]
+    notes: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -65,11 +66,6 @@ class ReviewImportReport:
 Opcode = tuple[str, int, int, int, int]
 
 
-def _belongs(op: Opcode, s: int, e: int) -> bool:
-    _, i1, i2, _, _ = op
-    return (i1 < e and i2 > s) or (i1 == i2 and s <= i1 <= e)
-
-
 def _linear(ops: Sequence[Opcode], pos: int, *, back: bool = False) -> int:
     """Map ``pos`` through the equal opcode containing it (``back``: reviewed -> original)."""
     for tag, i1, i2, j1, j2 in ops:
@@ -79,55 +75,12 @@ def _linear(ops: Sequence[Opcode], pos: int, *, back: bool = False) -> int:
     return pos
 
 
-def _map_span(ops: Sequence[Opcode], s: int, e: int) -> tuple[int, int]:
-    belonging = [op for op in ops if op[0] != "equal" and _belongs(op, s, e)]
-    if belonging and belonging[0][1] <= s:
-        ms = belonging[0][3]
-    else:
-        ms = _linear(ops, s)
-    if belonging and belonging[-1][2] >= e:
-        me = belonging[-1][4]
-    else:
-        me = _linear(ops, e)
-    return ms, max(ms, me)
-
-
 def _map_back(ops: Sequence[Opcode], pos: int, *, end: bool) -> int:
     """Base-view offset -> original offset: inside a changed region, start -> i1, end -> i2."""
     for tag, i1, i2, j1, j2 in ops:
         if tag != "equal" and (j1 < pos < j2 or j1 == pos == j2):
             return i2 if end else i1
     return _linear(ops, pos, back=True)
-
-
-def _intersects(r: PendingRevision, ms: int, me: int) -> bool:
-    if r.start == r.end:
-        return ms <= r.start <= me
-    return r.start < me and r.end > ms or (ms == me and r.start < ms < r.end)
-
-
-def _editor_regions(
-    original: str, text: str, ops: Sequence[Opcode], spans: Sequence[tuple[int, int]]
-) -> list[EditorChange]:
-    regions: list[list[int]] = []
-    for op in ops:
-        tag, i1, i2, j1, j2 = op
-        if tag == "equal" or any(_belongs(op, s, e) for s, e in spans):
-            continue
-        lo = max((e for s, e in spans if e <= i1), default=0)
-        hi = min((s for s, e in spans if s >= i2), default=len(original))
-        first = original[i1:i2][:1] or text[j1:j2][:1]
-        last = original[i1:i2][-1:] or text[j1:j2][-1:]
-        while i1 > lo and j1 > 0 and original[i1 - 1].isalnum() and first.isalnum():
-            i1, j1 = i1 - 1, j1 - 1
-        while i2 < hi and j2 < len(text) and original[i2].isalnum() and last.isalnum():
-            i2, j2 = i2 + 1, j2 + 1
-        if regions and i1 <= regions[-1][1]:
-            regions[-1][1] = max(regions[-1][1], i2)
-            regions[-1][3] = max(regions[-1][3], j2)
-        else:
-            regions.append([i1, i2, j1, j2])
-    return [EditorChange(a, b, original[a:b], text[c:d], False) for a, b, c, d in regions]
 
 
 def _pending_changes(
@@ -164,28 +117,233 @@ def _pending_changes(
     return sorted(changes, key=lambda c: (c.start, c.end))
 
 
+def _ins_at(ops: Sequence[Opcode]) -> dict[int, int]:
+    return {i1: k for k, (tag, i1, i2, _, _) in enumerate(ops) if tag == "insert"}
+
+
+def _pending_hits(pending: Sequence[PendingRevision], ms: int, me: int) -> bool:
+    for r in pending:
+        if r.start == r.end:
+            if ms < r.start < me or ms == me == r.start:
+                return True
+        elif r.start < me and r.end > ms:
+            return True
+    return False
+
+
+@dataclass
+class _Plan:
+    """Working state of one block: what each suggestion and editor change accounts for."""
+
+    original: str
+    text: str
+    ops: list[Opcode]
+    ins: dict[int, int]
+    claimed: set[int] = field(default_factory=set)  # insertion opcodes claimed by a suggestion
+    consumed: set[int] = field(default_factory=set)  # opcodes accounted for by a suggestion
+    blocked: list[tuple[int, int]] = field(default_factory=list)
+    segs: list[tuple[int, int, str]] = field(default_factory=list)
+    extra: list[EditorChange] = field(default_factory=list)
+    results: dict[int, tuple[Result, str | None]] = field(default_factory=dict)
+    notes: list[str] = field(default_factory=list)
+
+    def ins_text(self, pos: int) -> str | None:
+        k = self.ins.get(pos)
+        if k is None or k in self.claimed or k in self.consumed:
+            return None
+        return self.text[self.ops[k][3] : self.ops[k][4]]
+
+
+def _plan_suggestion(pl: _Plan, sv: SuggestionView, pending: Sequence[PendingRevision]) -> None:
+    ops, s, e = pl.ops, sv.start, sv.end
+    zero = s == e
+    over = [
+        k
+        for k, (tag, i1, i2, _, _) in enumerate(ops)
+        if tag != "equal"
+        and ((i1 != i2 and i1 < e and i2 > s) or (i1 == i2 and (s < i1 < e or (zero and i1 == s))))
+    ]
+    ins_s, ins_e = (None, None) if zero else (pl.ins.get(s), pl.ins.get(e))
+    if over and ops[over[0]][1] <= s:
+        ms = ops[over[0]][3]
+    elif ins_s is not None:
+        ms = ops[ins_s][4]
+    else:
+        ms = _linear(ops, s)
+    if over and ops[over[-1]][2] >= e:
+        me = ops[over[-1]][4]
+    elif ins_e is not None:
+        me = ops[ins_e][3]
+    else:
+        me = _linear(ops, e)
+    me = max(ms, me)
+    pl.consumed.update(over)
+    solid = [k for k in over if ops[k][1] != ops[k][2]]
+    left = any(ops[k][1] < s for k in solid)
+    right = any(ops[k][2] > e for k in solid)
+    lo = min([s] + [ops[k][1] for k in solid])
+    hi = max([e] + [ops[k][2] for k in solid])
+    core = pl.text[ms:me]
+    pl.blocked.append((lo, hi))
+    if _pending_hits(pending, ms, me):
+        pl.results[sv.id] = ("unchanged", None)
+        pl.segs.append((lo, hi, core))
+        return
+    if left and right or (zero and solid):
+        pl.results[sv.id] = ("unchanged", None)
+        pl.segs.append((lo, hi, core))
+        pl.notes.append(
+            f"suggestion {sv.id}: the editor's change runs across its edges; left as it was"
+        )
+        return
+    if left or right:
+        fits = [
+            (name, f)
+            for name, f in (("accepted", sv.replacement), ("rejected", sv.original))
+            if (core.endswith(f) if left else core.startswith(f))
+        ]
+        if not fits:
+            pl.results[sv.id] = ("unchanged", None)
+            pl.segs.append((lo, hi, core))
+            pl.notes.append(
+                f"suggestion {sv.id}: the editor's change runs across its edges; left as it was"
+            )
+            return
+        name, f = max(fits, key=lambda t: len(t[1]))
+        pl.results[sv.id] = (name, None)  # type: ignore[assignment]
+        pl.segs.append((s, e, f))
+        if right:
+            rest = core[len(f) :]
+            pl.extra.append(EditorChange(e, hi, pl.original[e:hi], rest, False))
+        else:
+            rest = core[: len(core) - len(f)]
+            pl.extra.append(EditorChange(lo, s, pl.original[lo:s], rest, False))
+        return
+    left_t, right_t = pl.ins_text(s) if not zero else None, pl.ins_text(e) if not zero else None
+    options = [(core, False, False)]
+    if right_t is not None:
+        options.append((core + right_t, False, True))
+    if left_t is not None:
+        options.append(((left_t or "") + core, True, False))
+        if right_t is not None:
+            options.append((left_t + core + right_t, True, True))
+    for name, target in (("accepted", sv.replacement), ("rejected", sv.original)):
+        for cand, use_l, use_r in options:
+            if cand == target:
+                if use_l and ins_s is not None:
+                    pl.claimed.add(ins_s)
+                if use_r and ins_e is not None:
+                    pl.claimed.add(ins_e)
+                pl.results[sv.id] = (name, None)  # type: ignore[assignment]
+                pl.segs.append((s, e, target))
+                return
+    pl.results[sv.id] = ("edited", core)
+    pl.segs.append((s, e, core))
+
+
+def _expand_regions(pl: _Plan) -> list[EditorChange]:
+    original, text, ops = pl.original, pl.text, pl.ops
+    free = [k for k, op in enumerate(ops) if op[0] != "equal" and k not in pl.consumed]
+    free = [k for k in free if k not in pl.claimed]
+    taken: set[int] = set()
+    changes: list[EditorChange] = []
+    for seed in free:
+        if seed in taken:
+            continue
+        a, b = ops[seed][1], ops[seed][2]
+        inc = {seed}
+        while True:
+            lo = max((e for _s, e in pl.blocked if e <= a), default=0)
+            hi = min((s for s, _e in pl.blocked if s >= b), default=len(original))
+            first = original[a : a + 1] if a < b else _first_text(pl, inc, a)
+            last = original[b - 1 : b] if a < b else _last_text(pl, inc, a)
+            grown = False
+            while a > lo and original[a - 1].isalnum() and first.isalnum():
+                a, grown = a - 1, True
+                first = original[a]
+            while b < hi and original[b].isalnum() and last.isalnum():
+                b, grown = b + 1, True
+                last = original[b - 1]
+            for k in free:
+                if k not in inc and ops[k][1] <= b and ops[k][2] >= a:
+                    a, b = min(a, ops[k][1]), max(b, ops[k][2])
+                    inc.add(k)
+                    grown = True
+            if not grown:
+                break
+        taken |= inc
+        ja = _bound_start(pl, a, inc)
+        jb = _bound_end(pl, b, inc)
+        if original[a:b] != text[ja:jb]:
+            changes.append(EditorChange(a, b, original[a:b], text[ja:jb], False))
+    return changes
+
+
+def _first_text(pl: _Plan, inc: set[int], pos: int) -> str:
+    k = pl.ins.get(pos)
+    return pl.text[pl.ops[k][3] : pl.ops[k][4]][:1] if k in inc and k is not None else ""
+
+
+def _last_text(pl: _Plan, inc: set[int], pos: int) -> str:
+    k = pl.ins.get(pos)
+    return pl.text[pl.ops[k][3] : pl.ops[k][4]][-1:] if k in inc and k is not None else ""
+
+
+def _bound_start(pl: _Plan, a: int, inc: set[int]) -> int:
+    k = pl.ins.get(a)
+    if k is not None:
+        return pl.ops[k][3] if k in inc else pl.ops[k][4]
+    for k in inc:
+        if pl.ops[k][1] == a:
+            return pl.ops[k][3]
+    return _linear(pl.ops, a)
+
+
+def _bound_end(pl: _Plan, b: int, inc: set[int]) -> int:
+    k = pl.ins.get(b)
+    if k is not None:
+        return pl.ops[k][4] if k in inc else pl.ops[k][3]
+    for k in inc:
+        if pl.ops[k][2] == b:
+            return pl.ops[k][4]
+    return _linear(pl.ops, b)
+
+
+def _reconstructs(pl: _Plan, changes: Sequence[EditorChange]) -> bool:
+    segs = pl.segs + [(c.start, c.end, c.replacement) for c in changes]
+    out: list[str] = []
+    pos = 0
+    for a, b, t in sorted(segs, key=lambda x: (x[0], x[1])):
+        if a < pos:
+            return False
+        out += [pl.original[pos:a], t]
+        pos = b
+    out.append(pl.original[pos:])
+    return "".join(out) == pl.text
+
+
 def classify_block(
-    original: str, reviewed: ReviewedBlock, suggestions: Sequence[SuggestionView]
+    original: str,
+    reviewed: ReviewedBlock,
+    suggestions: Sequence[SuggestionView],
+    block_id: int | None = None,
 ) -> BlockOutcome:
     text = reviewed.text
     ops = difflib.SequenceMatcher(None, original, text, autojunk=False).get_opcodes()
-    results: dict[int, tuple[Result, str | None]] = {}
-    for sv in suggestions:
-        ms, me = _map_span(ops, sv.start, sv.end)
-        if any(_intersects(r, ms, me) for r in reviewed.pending):
-            results[sv.id] = ("unchanged", None)
-            continue
-        final = text[ms:me]
-        if final == sv.replacement:
-            results[sv.id] = ("accepted", None)
-        elif final == sv.original:
-            results[sv.id] = ("rejected", None)
-        else:
-            results[sv.id] = ("edited", final)
-    spans = [(sv.start, sv.end) for sv in suggestions]
-    changes = _editor_regions(original, text, ops, spans)
+    pl = _Plan(original, text, ops, _ins_at(ops))
+    for sv in sorted(suggestions, key=lambda v: (v.start, v.end, v.id)):
+        _plan_suggestion(pl, sv, reviewed.pending)
+    changes = _expand_regions(pl)
+    if not _reconstructs(pl, changes + pl.extra):
+        label = f"block {block_id}" if block_id is not None else "block"
+        return BlockOutcome(
+            {sv.id: ("unchanged", None) for sv in suggestions},
+            [],
+            [f"{label}: could not align the editor's changes reliably; left as it was"],
+        )
+    changes = sorted(changes + pl.extra, key=lambda c: (c.start, c.end))
     changes += _pending_changes(original, ops, reviewed.pending)
-    return BlockOutcome(results, changes)
+    return BlockOutcome(pl.results, changes, pl.notes)
 
 
 def _bookmark_id(rb: ReviewedBlock) -> int | None:
@@ -252,6 +410,69 @@ def _current(s: Suggestion) -> tuple[str, str | None]:
     return s.status, (s.final_text if s.status == "edited" else None)
 
 
+def _unmatched_paragraphs(
+    reviewed: Sequence[ReviewedBlock],
+    matched: dict[int, ReviewedBlock],
+    expected: Sequence[tuple[int, str]],
+    blocks: dict[int, Block],
+) -> int:
+    """Unclaimed block-text paragraphs between matched blocks that are export neighbours."""
+    position = {id(rb): i for i, rb in enumerate(reviewed)}
+    taken = {id(rb) for rb in matched.values()}
+    count = 0
+    for (a, _), (b, _) in zip(expected, expected[1:], strict=False):
+        if a not in matched or b not in matched or blocks[a].chapter_id != blocks[b].chapter_id:
+            continue
+        lo, hi = position[id(matched[a])], position[id(matched[b])]
+        count += sum(
+            1
+            for i in range(lo + 1, hi)
+            if id(reviewed[i]) not in taken and is_block_text(reviewed[i].text)
+        )
+    return count
+
+
+def _later_decisions(
+    session: Session, rx: ReviewExport, ids: list[int]
+) -> tuple[dict[int, list[int | None]], dict[int, int]]:
+    """Decisions made on the suggestions after the export, and which export each import was of."""
+    later: dict[int, list[int | None]] = {}
+    if rx.last_decision_id is None or not ids:
+        return later, {}
+    rows = session.execute(
+        select(Decision.suggestion_id, Decision.review_import_id).where(
+            Decision.suggestion_id.in_(ids), Decision.id > rx.last_decision_id
+        )
+    )
+    for sid, import_id in rows:
+        later.setdefault(sid, []).append(import_id)
+    wanted = {i for v in later.values() for i in v if i is not None}
+    imports = {
+        i: x
+        for i, x in session.execute(
+            select(ReviewImport.id, ReviewImport.review_export_id).where(
+                ReviewImport.id.in_(wanted)
+            )
+        )
+    }
+    return later, imports
+
+
+def _is_conflict(
+    s: Suggestion,
+    exported_status: str,
+    rx: ReviewExport,
+    later: list[int | None],
+    import_exports: dict[int, int],
+) -> bool:
+    """Changed since the export by anyone but an earlier upload of this same copy."""
+    if rx.last_decision_id is None:
+        return s.status != exported_status
+    if any(i is None or import_exports.get(i) != rx.id for i in later):
+        return True
+    return not later and s.status != exported_status
+
+
 def import_review(session: Session, book_id: int, data: bytes, actor: str) -> ReviewImportReport:
     get_book(session, book_id)
     doc = _read(data)
@@ -264,8 +485,7 @@ def import_review(session: Session, book_id: int, data: bytes, actor: str) -> Re
     session.flush()
 
     notes: list[str] = []
-    seen = {id(rb) for rb in matched.values()}
-    extra = sum(1 for rb in doc.blocks if id(rb) not in seen and is_block_text(rb.text))
+    extra = _unmatched_paragraphs(doc.blocks, matched, expected, blocks)
     if extra:
         notes.append(
             f"{extra} paragraph(s) in the file match no exported block "
@@ -290,6 +510,7 @@ def import_review(session: Session, book_id: int, data: bytes, actor: str) -> Re
         ("accepted", "rejected", "edited", "unchanged", "editor_changes", "conflicts"), 0
     )
     conflicts: list[int] = []
+    later, import_exports = _later_decisions(session, rx, [s.id for s in rows])
     todo: list[tuple[Suggestion, Result, str | None]] = []
     outcomes: dict[int, BlockOutcome] = {}
     for bid in sorted(matched):
@@ -306,7 +527,8 @@ def import_review(session: Session, book_id: int, data: bytes, actor: str) -> Re
             )
             for s in group
         ]
-        out = outcomes[bid] = classify_block(locked[bid].text, matched[bid], views)
+        out = outcomes[bid] = classify_block(locked[bid].text, matched[bid], views, bid)
+        notes += out.notes
         for s, v in zip(group, views, strict=True):
             result, final = out.results[s.id]
             if result == "unchanged":
@@ -323,7 +545,7 @@ def import_review(session: Session, book_id: int, data: bytes, actor: str) -> Re
             )
             if target == _current(s):
                 counts["unchanged"] += 1
-            elif s.status != exported[s.id]:
+            elif _is_conflict(s, exported[s.id], rx, later.get(s.id, []), import_exports):
                 conflicts.append(s.id)
             else:
                 todo.append((s, result, target[1]))

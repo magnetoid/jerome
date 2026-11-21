@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from pathlib import PurePath
 from typing import Literal
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from jerome.core.books import get_book
@@ -18,7 +18,7 @@ from jerome.documents.changes import Change
 from jerome.documents.docx_writer import DocxWriteOptions, write_docx
 from jerome.documents.epub_writer import write_epub
 from jerome.errors import NotFound, UnsupportedDocumentError
-from jerome.orm import Block, Chapter, ReviewExport, Suggestion
+from jerome.orm import Block, Chapter, Decision, ReviewExport, Suggestion
 from jerome.storage import Storage
 from jerome.types import Category, Severity
 
@@ -144,6 +144,7 @@ def _review_copy(
             else None,
             "chapter_ids": filters.chapter_ids,
         },
+        last_decision_id=session.scalar(select(func.coalesce(func.max(Decision.id), 0))),
         created_by=actor,
     )
     session.add(rx)
