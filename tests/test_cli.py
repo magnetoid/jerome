@@ -22,6 +22,16 @@ def test_cli_keys_create(cli_runner, engine, monkeypatch):
             s.execute(delete(ApiKey).where(ApiKey.name == "editor"))
 
 
+def test_users_create_prints_a_password_once(cli_runner, cli_env, session_factory):
+    from jerome.core.users import authenticate
+
+    out = cli_runner.invoke(app, ["users", "create", "ana@x.org", "--name", "Ana"])
+    assert out.exit_code == 0, out.output
+    assert len(out.stdout.strip().splitlines()) == 1
+    with session_factory() as s:
+        assert authenticate(s, "ana@x.org", out.stdout.strip()) is not None
+
+
 @pytest.fixture
 def cli_env(monkeypatch, tmp_path, session_factory):
     """Point the CLI at the test database and a temp data dir; truncate afterwards."""

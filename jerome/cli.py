@@ -10,12 +10,15 @@ import uvicorn
 import jerome
 from jerome.config import get_settings
 from jerome.core.keys import create_api_key
+from jerome.core.users import create_user
 from jerome.db import make_engine, session_scope
 from jerome.errors import JeromeError, UnsupportedDocumentError
 
 app = typer.Typer(help="Jerome: book proofreading engine", no_args_is_help=True)
 keys_app = typer.Typer(help="Manage API keys", no_args_is_help=True)
 app.add_typer(keys_app, name="keys")
+users_app = typer.Typer(help="Manage team users", no_args_is_help=True)
+app.add_typer(users_app, name="users")
 
 
 @keys_app.command("create")
@@ -28,6 +31,18 @@ def keys_create(name: str) -> None:
     finally:
         engine.dispose()
     typer.echo(key)
+
+
+@users_app.command("create")
+def users_create(email: str, name: Annotated[str, typer.Option("--name")]) -> None:
+    """Create a user and print the temporary password (shown once)."""
+    engine = make_engine(get_settings().database_url)
+    try:
+        with session_scope(engine) as session:
+            _, password = create_user(session, email, name)
+    finally:
+        engine.dispose()
+    typer.echo(password)
 
 
 @app.command()
