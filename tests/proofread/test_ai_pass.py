@@ -79,6 +79,7 @@ def test_user_message_marks_context_read_only_with_ids():
     assert 'id="1"' in user and 'id="2"' in user
     assert "read_only" in user and "Ctx" in user and "Body" in user
     assert user.index("Ctx") < user.index("Body")
+    assert "U+FFFC" in user and "never appear in `original` or `replacement`" in user
     _, no_ctx = build_request(STYLE_EN, Chunk([BlockText(2, "Body")], None))
     assert "read_only" not in no_ctx
 

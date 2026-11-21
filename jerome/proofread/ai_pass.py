@@ -91,6 +91,12 @@ def _style_text(style: StyleSheet) -> str:
     return f"{heading}:\n" + json.dumps(sheet, ensure_ascii=False, sort_keys=True, indent=2)
 
 
+_REMINDER = (
+    "Reminder: U+FFFC marks an inline object. It must never appear in `original` or "
+    "`replacement`. Only propose corrections for the <block> elements above."
+)
+
+
 def build_request(style: StyleSheet, chunk: Chunk) -> tuple[list[SystemPart], str]:
     system = [
         SystemPart(_instructions(style), cache=True),
@@ -103,6 +109,7 @@ def build_request(style: StyleSheet, chunk: Chunk) -> tuple[list[SystemPart], st
             f"{chunk.context.text}\n</context_block>"
         )
     parts.extend(f'<block id="{b.id}">\n{b.text}\n</block>' for b in chunk.blocks)
+    parts.append(_REMINDER)
     return system, "\n\n".join(parts)
 
 
