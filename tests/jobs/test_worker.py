@@ -236,6 +236,42 @@ def test_cancel_stops_between_chunks(session_factory, test_settings, lt_route, j
     assert count(session_factory, ModelUsage) == 1
 
 
+def test_stop_between_chunks_requeues_task_and_job(
+    session_factory, test_settings, lt_route, job_three_chunks
+):
+    stop = threading.Event()
+
+    def stop_during_first_call(_kwargs):
+        stop.set()  # SIGTERM arrives while the first chunk is with the model
+        return reply()
+
+    provider = FakeProvider([stop_during_first_call, reply(), reply()])
+    deps = make_deps(test_settings, provider)
+    tid = job_three_chunks.task_id
+    run_task(session_factory, tid, deps, stop)
+    t = task(session_factory, tid)
+    assert (t.status, t.chunks_done, t.attempts) == ("queued", 1, 0)
+    assert job(session_factory, job_three_chunks.job_id).status == "queued"
+    assert len(provider.calls) == 1  # the chunk in flight was kept, no second call
+    assert count(session_factory, ModelUsage) == 1
+    run_task(session_factory, tid, deps)  # a restarted worker picks it up where it was
+    assert task(session_factory, tid).chunks_done == 3 and len(provider.calls) == 3
+
+
+def test_work_forever_exits_after_a_stop_mid_task(
+    session_factory, test_settings, lt_route, job_two_chunks
+):
+    stop = threading.Event()
+
+    def stop_during_call(_kwargs):
+        stop.set()
+        return reply()
+
+    deps = make_deps(test_settings, FakeProvider([stop_during_call, reply()]))
+    work_forever(session_factory, deps, poll_interval=0.01, stop=stop)  # returns, not hangs
+    assert task(session_factory, job_two_chunks.task_id).status == "queued"
+
+
 def test_consistency_task_waits_for_chapters(session_factory, job_two_chapters):
     with session_factory() as s:
         claimed = claim_task(s)

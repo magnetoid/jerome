@@ -58,6 +58,7 @@ services:
   worker:
     <<: *app
     command: ["jerome", "worker"]
+    stop_grace_period: 180s  # finish the chunk in flight, then requeue the task
     depends_on:
       api:
         condition: service_healthy

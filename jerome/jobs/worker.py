@@ -5,8 +5,12 @@ cost cap), the model calls with no transaction open, then one locked write that 
 chunk's suggestions, its usage and the task's progress together. A chunk that fails commits
 nothing, so paid-for chunks are never thrown away or bought twice.
 
-Known limitation: there is no task lease or heartbeat. A crashed worker's `running` task
-waits for a resume, which re-queues it.
+A stop request (SIGTERM or SIGINT, via the ``stop`` event) is honoured between chunks: the
+chunk in flight is committed, then the task and its job go back to ``queued``.
+
+Known limitation: there is no task lease or heartbeat. After a crash the job stays
+``running``; resuming it would double-process a task a live worker may still hold, so it is
+refused: cancel it, then resume.
 """
 
 import logging
@@ -158,7 +162,12 @@ def _lock_job_task(session: Session, job_id: int, task_id: int) -> tuple[Job, Jo
     return job, task
 
 
-def run_task(session_factory: SessionFactory, task_id: int, deps: WorkerDeps) -> None:
+def run_task(
+    session_factory: SessionFactory,
+    task_id: int,
+    deps: WorkerDeps,
+    stop: threading.Event | None = None,
+) -> None:
     paid = _Paid()
     try:
         plan = _start(session_factory, task_id, deps)
@@ -167,7 +176,7 @@ def run_task(session_factory: SessionFactory, task_id: int, deps: WorkerDeps) ->
         if plan.kind == "consistency":
             _run_consistency(session_factory, task_id, plan, deps)
         else:
-            _run_chapter(session_factory, task_id, plan, deps, paid)
+            _run_chapter(session_factory, task_id, plan, deps, paid, stop)
     except Exception as exc:
         log.exception("task %s failed", task_id)
         _record_failure(session_factory, task_id, exc, paid, deps)
@@ -227,14 +236,40 @@ def _precheck(sf: SessionFactory, task_id: int, plan: _Plan, deps: WorkerDeps) -
     return go
 
 
+def _requeue_for_stop(sf: SessionFactory, task_id: int, plan: _Plan) -> None:
+    """The worker is stopping between chunks: the task, and the job unless another of its
+    tasks is still running elsewhere, go back to the queue. Attempts are not counted."""
+    with sf() as s:
+        job, task = _lock_job_task(s, plan.job_id, task_id)
+        if task.status != "done":
+            task.status = "queued"
+            task.not_before = None
+        others = s.scalar(
+            select(func.count())
+            .select_from(JobTask)
+            .where(JobTask.job_id == job.id, JobTask.id != task_id, JobTask.status == "running")
+        )
+        if job.status == "running" and not others:
+            job.status = "queued"
+        s.commit()
+
+
 def _run_chapter(
-    sf: SessionFactory, task_id: int, plan: _Plan, deps: WorkerDeps, paid: _Paid
+    sf: SessionFactory,
+    task_id: int,
+    plan: _Plan,
+    deps: WorkerDeps,
+    paid: _Paid,
+    stop: threading.Event | None = None,
 ) -> None:
     index = plan.chunks_done
     if index >= len(plan.chunks):  # every chunk already committed
         _finish(sf, task_id, plan, deps)
         return
     while index < len(plan.chunks):
+        if stop is not None and stop.is_set():
+            _requeue_for_stop(sf, task_id, plan)
+            return
         if not _precheck(sf, task_id, plan, deps):
             return
         paid.result = paid.billed = None
@@ -463,7 +498,7 @@ def work_forever(
             if task_id is None:
                 stop.wait(poll_interval)
             else:
-                run_task(session_factory, task_id, deps)
+                run_task(session_factory, task_id, deps, stop)
         except Exception:
             log.exception("worker loop error")
             stop.wait(poll_interval)

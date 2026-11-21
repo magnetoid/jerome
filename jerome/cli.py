@@ -1,3 +1,5 @@
+import signal
+import threading
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Annotated
@@ -50,8 +52,18 @@ def worker(poll_interval: float = 1.0) -> None:
         lt=LanguageToolClient(settings.languagetool_url),
         webhook_secret=settings.webhook_secret,
     )
+    stop = threading.Event()
+
+    def request_stop(signum: int, _frame: object) -> None:
+        if stop.is_set():  # a second Ctrl-C (or SIGTERM) stops now
+            raise KeyboardInterrupt
+        typer.echo("stopping after the current chunk...")
+        stop.set()
+
+    signal.signal(signal.SIGTERM, request_stop)
+    signal.signal(signal.SIGINT, request_stop)
     try:
-        work_forever(sessionmaker(engine), deps, poll_interval)
+        work_forever(sessionmaker(engine), deps, poll_interval, stop)
     except KeyboardInterrupt:
         typer.echo("worker stopped")
     finally:

@@ -91,6 +91,11 @@ def cancel_job(session: Session, job_id: int) -> Job:
 
 def resume_job(session: Session, job_id: int, *, max_cost: Decimal | None = None) -> Job:
     job = _lock_job(session, job_id)
+    if job.status == "running":
+        raise Conflict(
+            "job is running; if no worker is processing it (e.g. after a crash), "
+            "cancel it first, then resume"
+        )
     if job.status not in RESUMABLE:
         raise Conflict(f"job {job_id} is {job.status} and cannot be resumed")
     if _active_job_id(session, job.book_id, exclude=job.id) is not None:
@@ -102,7 +107,7 @@ def resume_job(session: Session, job_id: int, *, max_cost: Decimal | None = None
         .execution_options(populate_existing=True)
     )
     for task in tasks:
-        if task.status != "done":  # queued, failed, or left running by a dead worker
+        if task.status != "done":  # queued, failed, or left running by a cancelled job's worker
             task.status = "queued"
             task.attempts = 0
             task.not_before = None

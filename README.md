@@ -71,6 +71,17 @@ The default AI model is `claude-opus-5-5`. Before a job starts, Jerome estimates
 spend reaches it, the job pauses as `paused_cost_cap` and can be resumed with a higher cap.
 A book imported with `local_only` is never sent to a remote model.
 
+## Stopping and crashes
+
+`jerome worker` handles SIGTERM and SIGINT: it finishes the chunk it is on, commits it, puts
+the task and job back in the queue and exits (the compose file gives it 180 s for that). A
+restarted worker carries on from the next chunk.
+
+If a worker crashes or is killed, its job stays `running` and cannot be resumed while it says
+so, because a live worker might still hold it. Cancel the job
+(`POST /v1/jobs/{id}/cancel`), then resume it (`POST /v1/jobs/{id}/resume`); committed chunks
+are kept and not paid for twice.
+
 ## Word round trip
 
 1. Import the manuscript and run a proofreading job.

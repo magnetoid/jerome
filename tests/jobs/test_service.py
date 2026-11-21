@@ -183,3 +183,17 @@ def test_resume_keeps_max_cost_and_done_tasks(session, registry, book_3_chapters
     resumed = resume_job(session, job.id)
     assert resumed.max_cost == Decimal(5) and resumed.status == "queued"
     assert resumed.tasks[0].status == "done"
+
+
+def test_resume_of_a_running_job_is_refused_with_advice(session, registry, book):
+    job = make(session, registry, book)
+    job.status = "running"
+    session.flush()
+    with pytest.raises(Conflict) as exc:
+        resume_job(session, job.id)
+    assert str(exc.value) == (
+        "job is running; if no worker is processing it (e.g. after a crash), "
+        "cancel it first, then resume"
+    )
+    cancelled = cancel_job(session, job.id)
+    assert resume_job(session, cancelled.id).status == "queued"
