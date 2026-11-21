@@ -45,6 +45,8 @@ def _assert_pieces_cover(pt):
                 out = pt.text[piece.start + i]
                 raw = piece.raw[a:b]
                 assert raw == out if out != " " else raw and all(c in _WS for c in raw)
+        elif piece.where == "entity":
+            assert pt.text[piece.start : piece.end] == piece.raw
         else:
             assert pt.text[piece.start : piece.end] == PLACEHOLDER
         pos = piece.end
@@ -269,3 +271,50 @@ def test_public_fixtures_parse(name, lang):
         pytest.skip(f"{name} missing: run scripts/fetch_public_fixtures.py")
     book = read_epub(path.read_bytes())
     assert book.language.startswith(lang) and sum(len(c.blocks) for c in book.chapters) > 50
+
+
+_XHTML11 = (
+    b'<?xml version="1.0" encoding="utf-8"?>\n'
+    b'<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" '
+    b'"http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">\n'
+    b'<html xmlns="http://www.w3.org/1999/xhtml"><body>%s</body></html>'
+)
+
+
+def test_named_entities_under_xhtml_doctype_are_text():
+    doc = parse_content_document(_XHTML11 % b"<p>a&nbsp;b&mdash;c &amp; d</p>", "x.xhtml")
+    (_, el), *_ = iter_epub_blocks(doc.root)
+    pt = element_text(el)
+    assert doc.parser == "xml"
+    assert pt.text == "a b—c & d"
+    _assert_pieces_cover(pt)
+    entities = [p for p in pt.pieces if p.where == "entity"]
+    assert [(pt.text[p.start : p.end], p.element.name) for p in entities] == [
+        (" ", "nbsp"),
+        ("—", "mdash"),
+    ]
+
+
+def test_internal_subset_entity_is_text_and_kept_in_tree():
+    xml = (
+        b'<?xml version="1.0"?><!DOCTYPE html [<!ENTITY nbsp "&#160;">]>'
+        b'<html xmlns="http://www.w3.org/1999/xhtml"><body><p>a&nbsp;b &amp; c</p></body></html>'
+    )
+    doc = parse_content_document(xml, "x.xhtml")
+    (_, el), *_ = iter_epub_blocks(doc.root)
+    assert element_text(el).text == "a b & c"
+    assert b"&nbsp;" in etree.tostring(doc.root)  # still an entity reference when written back
+
+
+def test_html_fallback_decodes_utf8_without_declaration():
+    data = "<html><body><p>Grüße&nbsp;x</p></body></html>".encode()
+    doc = parse_content_document(data, "x.xhtml")
+    assert doc.parser == "html"
+    (_, el), *_ = iter_epub_blocks(doc.root)
+    assert element_text(el).text == "Grüße x"
+
+
+def test_html_fallback_honours_utf16_bom():
+    data = "<html><body><p>Grüße&nbsp;x</p></body></html>".encode("utf-16")
+    (_, el), *_ = iter_epub_blocks(parse_content_document(data, "x.xhtml").root)
+    assert element_text(el).text == "Grüße x"

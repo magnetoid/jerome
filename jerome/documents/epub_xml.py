@@ -6,9 +6,12 @@ non-text inline object becomes one PLACEHOLDER. CSS classes from stylesheets are
 resolved in this slice; marks come from elements and inline ``style`` attributes only.
 """
 
+import codecs
 import posixpath
+import re
 from collections.abc import Iterator
 from dataclasses import dataclass
+from html.entities import html5
 from typing import Literal
 from urllib.parse import unquote, urldefrag
 
@@ -245,10 +248,33 @@ def parse_content_document(data: bytes, path: str) -> ContentDocument:
     except etree.XMLSyntaxError:
         pass
     try:
-        root = lxml_html.document_fromstring(data)
+        parser = lxml_html.HTMLParser(encoding=_sniff_encoding(data))
+        root = lxml_html.document_fromstring(data, parser=parser)
     except (etree.ParserError, etree.XMLSyntaxError, ValueError) as exc:
         raise UnsupportedDocumentError(f"{path} cannot be parsed: {exc}") from exc
     return ContentDocument(root, "html")
+
+
+_BOMS = (
+    (codecs.BOM_UTF8, "utf-8"),
+    (codecs.BOM_UTF16_LE, "utf-16"),
+    (codecs.BOM_UTF16_BE, "utf-16"),
+)
+_XML_ENCODING = re.compile(rb"""^\s*<\?xml[^>]*?encoding\s*=\s*["']([A-Za-z0-9._-]+)["']""")
+
+
+def _sniff_encoding(data: bytes) -> str:
+    """Encoding of a content document: a BOM, else the XML declaration, else UTF-8."""
+    for bom, name in _BOMS:
+        if data.startswith(bom):
+            return name
+    if m := _XML_ENCODING.match(data):
+        name = m[1].decode("ascii")
+        try:
+            return codecs.lookup(name).name
+        except LookupError:
+            pass
+    return "utf-8"
 
 
 # --- blocks ---------------------------------------------------------------------------
@@ -321,6 +347,11 @@ class EpubPiece:
       collapsed run of whitespace is one output space whose slice is the whole run in
       that node. Raw characters not in any span (leading/trailing whitespace of the block,
       whitespace dropped after another space) are not in the block text.
+    - ``where == "entity"``: the characters are an entity reference node (``&nbsp;``,
+      ``&mdash;``; ``element.name`` is its name, ``raw`` the characters it stands for).
+      ``spans`` is empty; the node is not text. Written back untouched it stays an entity
+      reference. A change that covers it must replace the node with text (its tail text
+      moves along with the replacement).
     - ``where == "self"``: a placeholder; ``element`` is the object (``img``, ``br``,
       ``svg``, a ``noteref`` link, ...) and ``spans`` is empty. Its tail is a separate piece.
     """
@@ -328,15 +359,17 @@ class EpubPiece:
     start: int
     end: int
     element: etree._Element
-    where: Literal["text", "tail", "self"]
+    where: Literal["text", "tail", "entity", "self"]
     spans: tuple[tuple[int, int], ...] = ()
 
     @property
     def is_text(self) -> bool:
-        return self.where != "self"
+        return self.where in ("text", "tail")
 
     @property
     def raw(self) -> str:
+        if self.where == "entity":
+            return html5.get(f"{self.element.name};", "")
         return (getattr(self.element, self.where) or "") if self.is_text else ""
 
 
@@ -401,12 +434,22 @@ class _Collector:
         for i, ch in enumerate(s or ""):
             self.atoms.append(_Atom(ch, el, where, i))
 
+    def entity(self, el: etree._Element) -> None:
+        """A named entity reference (kept as a node because entities are not resolved)."""
+        chars = html5.get(f"{el.name};")
+        if chars is None:  # unknown: not text we can read, so one placeholder
+            self.atoms.append(_Atom(PLACEHOLDER, el, "self", -1))
+        else:
+            self.atoms += [_Atom(ch, el, "entity", i) for i, ch in enumerate(chars)]
+
     def walk(self, el: etree._Element) -> None:
         start = len(self.atoms)
         self.text(el.text, el, "text")
         for child in el:
             name = local_name(child)
-            if name and name not in _IGNORED:
+            if child.tag is etree.Entity:
+                self.entity(child)
+            elif name and name not in _IGNORED:
                 if _is_placeholder(child):
                     self.atoms.append(_Atom(PLACEHOLDER, child, "self", -1))
                 else:
@@ -433,7 +476,7 @@ def element_text(el: etree._Element) -> ParagraphText:
     before = [0] * (len(atoms) + 1)  # before[i] = output characters produced by atoms[:i]
     prev_space = True  # nothing yet: leading whitespace is dropped
     for i, atom in enumerate(atoms):
-        if atom.ch in _XML_WS:
+        if atom.ch in _XML_WS and atom.where != "entity":
             if not prev_space:
                 chars.append(" ")
                 out_atom.append(i)
@@ -456,8 +499,12 @@ def element_text(el: etree._Element) -> ParagraphText:
     pieces: list[EpubPiece] = []
     for pos, ai in enumerate(out_atom):
         atom = atoms[ai]
-        if atom.where == "self":
-            pieces.append(EpubPiece(pos, pos + 1, atom.element, "self"))
+        if atom.where in ("self", "entity"):
+            last = pieces[-1] if pieces else None
+            if atom.where == "entity" and last and last.element is atom.element:
+                last.end = pos + 1  # a multi-character entity
+            else:
+                pieces.append(EpubPiece(pos, pos + 1, atom.element, atom.where))
             continue
         raw_end = atom.raw_index + 1
         if atom.ch in _XML_WS:  # the collapsed run, within this node
