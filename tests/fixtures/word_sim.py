@@ -88,27 +88,40 @@ def simulate_word_review(
 def _jerome_changes(p: etree._Element) -> list[list[etree._Element]]:
     """Jerome's revisions in ``p`` grouped into changes: ``w:del``s, then their ``w:ins``.
 
-    A change crossing a container (a hyperlink) is several ``w:del`` siblings, so a group is
-    every ``w:del`` up to and including the next ``w:ins``.
+    A change crossing a container (a hyperlink) is several ``w:del`` siblings, so a ``w:del``
+    joins the previous group when nothing visible lies between them, and a ``w:ins`` closes
+    it. Paragraphs nested in ``p`` (text boxes) are their own.
     """
     changes: list[list[etree._Element]] = []
-    open_change = False  # the last group may still take dels
-    for el in p.iter(_DEL, _INS):
+    open_change = False  # the last group is adjacent to here and may still take dels
+    for el in p.iter(_R, _DEL, _INS):
+        if next(el.iterancestors(_P), None) is not p:
+            continue
+        if el.tag == _R:
+            if not _inside_jerome_revision(el) and _is_content(el):
+                open_change = False
+            continue
         if el.get(_AUTHOR) != _JEROME:
+            open_change = False
             continue
         if el.tag == _DEL and open_change:
             changes[-1].append(el)
-            continue
-        if el.tag == _DEL:
-            changes.append([el])
-            open_change = True
-        else:
-            if open_change:
-                changes[-1].append(el)
-            else:
-                changes.append([el])
+        elif el.tag == _INS and open_change:
+            changes[-1].append(el)
             open_change = False
+        else:
+            changes.append([el])
+            open_change = el.tag == _DEL
     return changes
+
+
+def _inside_jerome_revision(r: etree._Element) -> bool:
+    return any(a.get(_AUTHOR) == _JEROME for a in r.iterancestors(_DEL, _INS))
+
+
+def _is_content(r: etree._Element) -> bool:
+    """Whether a run shows something; the comment reference run Jerome adds does not."""
+    return any(c.tag not in (_RPR, qn("w:commentReference")) for c in r)
 
 
 def _change_key(change: list[etree._Element]) -> str:

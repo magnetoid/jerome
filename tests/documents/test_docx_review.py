@@ -149,3 +149,40 @@ def test_zip_cap_is_enforced(monkeypatch):
     monkeypatch.setattr(docx_xml, "MAX_UNCOMPRESSED_BYTES", 100)
     with pytest.raises(UnsupportedDocumentError, match="too large"):
         read_reviewed_docx(make_docx(["x"]))
+
+
+def test_separate_changes_in_a_paragraph_are_selected_independently():
+    original = make_docx(["a x teh b"])  # delete "a ", replace "teh" -> "the"
+    changes = {P0: [Change(0, 2, ""), Change(4, 7, "the")]}
+    out = write_docx(original, changes, DocxWriteOptions("tracked", NOW))
+    reviewed = simulate_word_review(out, accept=["the"])
+    (b,) = read_reviewed_docx(reviewed).blocks
+    assert b.text == "a x the b"
+    assert b.pending == [PendingRevision(0, 2, "del", "Jerome", "a ")]
+    rejected = simulate_word_review(out, reject=["a "])  # the deletion, by its deleted text
+    (b,) = read_reviewed_docx(rejected).blocks
+    assert b.pending == [
+        PendingRevision(4, 7, "del", "Jerome", "teh"),
+        PendingRevision(7, 7, "ins", "Jerome", "the"),
+    ]
+
+
+def test_changes_in_a_paragraph_with_a_text_box_are_resolved_once():
+    box = "<w:txbxContent><w:p><w:r><w:t>Box</w:t></w:r></w:p></w:txbxContent>"
+    body = (
+        '<w:p><w:del w:id="1" w:author="Jerome" w:date="2026-11-21T00:00:00Z">'
+        "<w:r><w:delText>teh</w:delText></w:r></w:del>"
+        '<w:ins w:id="2" w:author="Jerome" w:date="2026-11-21T00:00:00Z">'
+        "<w:r><w:t>the</w:t></w:r></w:ins>"
+        f'<w:r><w:pict><v:shape id="b"><v:textbox>{box}</v:textbox></v:shape></w:pict></w:r>'
+        '<w:ins w:id="3" w:author="Jerome" w:date="2026-11-21T00:00:00Z">'
+        "<w:r><w:t>!</w:t></w:r></w:ins></w:p>"
+    )
+    inner = (
+        '<w:ins w:id="4" w:author="Jerome" w:date="2026-11-21T00:00:00Z">'
+        "<w:r><w:t>in</w:t></w:r></w:ins>"
+    )
+    body = body.replace("<w:r><w:t>Box</w:t></w:r>", f"<w:r><w:t>Box</w:t></w:r>{inner}")
+    reviewed = simulate_word_review(package_docx(body), accept=["the", "in", "!"])
+    (b,) = read_reviewed_docx(reviewed).blocks
+    assert (b.text, b.pending) == ("the￼!", [])
