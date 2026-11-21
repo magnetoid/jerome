@@ -218,6 +218,47 @@ def test_tolerant_match_nbsp_and_whitespace_runs():
     assert text[c[0].start : c[0].end] == "one "
 
 
+def test_tolerant_match_keeps_the_books_typography_outside_the_fix():
+    text = "He said “teh dog”… and left."
+    c, _ = one(text, original='said "teh dog"...', replacement='said "the dog"...')
+    assert c[0].original == "said “teh dog”…"
+    assert c[0].replacement == "said “the dog”…"
+
+
+def test_tolerant_match_keeps_nbsp_and_whitespace_runs_outside_the_fix():
+    text = "one\u00a0two  three fur"
+    c, _ = one(text, original="two three fur", replacement="two three for")
+    assert c[0].original == "two  three fur"
+    assert c[0].replacement == "two  three for"
+    nbsp = "5\u00a0km far awya"
+    c, _ = one(nbsp, original="5 km far awya", replacement="5 km far away")
+    assert c[0].replacement == "5\u00a0km far away"
+
+
+def test_tolerant_replacement_falls_back_when_a_fold_is_split():
+    text = "wait… now"
+    # the echoed three dots are one ellipsis in the book; a fix inside them cannot be mapped
+    c, _ = one(text, original="wait... now", replacement="wait.. now")
+    assert c[0].replacement == "wait.. now"
+    c, _ = one(text, original="wait... now", replacement="wait... no")
+    assert c[0].replacement == "wait… no"
+
+
+def test_tolerant_match_that_changes_nothing_is_dropped():
+    text = "He said “hi”."
+    c, dropped = one(text, original='said "hi"', replacement='said "hi"')
+    assert c == [] and dropped == 1
+
+
+def test_style_suggestions_are_always_low():
+    c, _ = one(
+        "Quite good.", original="Quite", replacement="Very", category="style", severity="high"
+    )
+    assert c[0].severity == Severity.LOW
+    c, _ = one("teh cat", category="typo", severity="high")
+    assert c[0].severity == Severity.HIGH
+
+
 def test_tolerant_nth_occurrence():
     text = "“a” x “a”"
     c, _ = one(text, original='"a"', replacement="b", occurrence=2)

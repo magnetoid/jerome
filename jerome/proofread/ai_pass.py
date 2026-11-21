@@ -1,5 +1,6 @@
 """Model-backed proofreading pass: chunking, prompting and parsing suggestions."""
 
+import difflib
 import json
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -156,10 +157,19 @@ def _nth_exact(text: str, needle: str, n: int) -> int | None:
     return pos
 
 
-def _locate(text: str, original: str, n: int) -> tuple[int, int] | None:
+@dataclass(frozen=True)
+class _Fold:
+    """How a tolerant match was made: the folded needle sits at ``pos`` of the folded text."""
+
+    pos: int
+    starts: list[int]
+    ends: list[int]
+
+
+def _locate(text: str, original: str, n: int) -> tuple[int, int, _Fold | None] | None:
     pos = _nth_exact(text, original, n)
     if pos is not None:
-        return pos, pos + len(original)
+        return pos, pos + len(original), None
     norm, starts, ends = _normalize(text)
     needle = _normalize(original)[0]
     if not needle:
@@ -167,7 +177,42 @@ def _locate(text: str, original: str, n: int) -> tuple[int, int] | None:
     pos = _nth_exact(norm, needle, n)
     if pos is None:
         return None
-    return starts[pos], ends[pos + len(needle) - 1]
+    return starts[pos], ends[pos + len(needle) - 1], _Fold(pos, starts, ends)
+
+
+def _rebuild_replacement(text: str, echoed: str, replacement: str, fold: _Fold) -> str:
+    """The model's replacement with the typography of the book where it kept the text as is.
+
+    ``echoed`` is what the model sent as the original (folded quotes, plain spaces); the
+    book has something else there. Diff the echoed text against the replacement: stretches
+    that are equal take the book's characters, the rest is the model's. If the folding
+    cannot be undone cleanly, the model's replacement is returned unchanged.
+    """
+    folded, se, ee = _normalize(echoed)
+    k_of: dict[int, int] = {}  # echoed index -> folded index of its (first) folded character
+    for k in range(len(folded) - 1, -1, -1):
+        for i in range(se[k], ee[k]):
+            k_of[i] = k
+    out: list[str] = []
+    for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(
+        None, echoed, replacement, autojunk=False
+    ).get_opcodes():
+        if tag == "equal":
+            ks = sorted({k_of[i] for i in range(i1, i2)})
+            # every folded character must lie wholly inside the region ...
+            if any(se[k] < i1 or ee[k] > i2 for k in ks) or ks != list(range(ks[0], ks[-1] + 1)):
+                return replacement
+            lo, hi = fold.pos + ks[0], fold.pos + ks[-1]
+            # ... and so must every character of the book that several folded ones came from
+            a, b = fold.starts[lo], fold.ends[hi]
+            if (lo > 0 and fold.ends[lo - 1] > a) or (
+                hi + 1 < len(fold.starts) and fold.starts[hi + 1] < b
+            ):
+                return replacement
+            out.append(text[a:b])
+        elif tag != "delete":
+            out.append(replacement[j1:j2])
+    return "".join(out)
 
 
 def _is_int(v: object) -> bool:
@@ -205,13 +250,19 @@ def _parse_item(raw: object, blocks: dict[int, BlockText]) -> Candidate | None:
     block = blocks.get(block_id)
     if block is None or occurrence < 1 or not original or PLACEHOLDER in replacement:
         return None
-    span = _locate(block.text, original, occurrence)
-    if span is None:
+    found = _locate(block.text, original, occurrence)
+    if found is None:
         return None
-    start, end = span
+    start, end, fold = found
     actual = block.text[start:end]
-    if PLACEHOLDER in actual or replacement == actual:
+    if PLACEHOLDER in actual:
         return None
+    if fold is not None:  # the model echoed folded text: keep the book's typography
+        replacement = _rebuild_replacement(block.text, original, replacement, fold)
+    if replacement == actual:
+        return None
+    if category == Category.STYLE:
+        severity = Severity.LOW  # spec: style suggestions are low by default
     return Candidate(
         block_id, start, end, actual, replacement, category, severity, Source.MODEL, explanation
     )
