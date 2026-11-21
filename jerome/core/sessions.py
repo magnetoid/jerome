@@ -51,5 +51,9 @@ def revoke_session(session: Session, token: str) -> None:
     session.execute(delete(UserSession).where(UserSession.token_hash == _hash(token)))
 
 
-def revoke_user_sessions(session: Session, user_id: int) -> None:
-    session.execute(delete(UserSession).where(UserSession.user_id == user_id))
+def revoke_user_sessions(session: Session, user_id: int, *, keep_token: str | None = None) -> None:
+    """End all the user's sessions, except the one for ``keep_token`` if given."""
+    stmt = delete(UserSession).where(UserSession.user_id == user_id)
+    if keep_token is not None:
+        stmt = stmt.where(UserSession.token_hash != _hash(keep_token))
+    session.execute(stmt)

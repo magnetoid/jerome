@@ -9,7 +9,7 @@ from jerome.core.sessions import (
     revoke_session,
     revoke_user_sessions,
 )
-from jerome.core.users import create_user, update_user
+from jerome.core.users import change_password, create_user, reset_password, update_user
 from jerome.orm import UserSession
 
 NOW = datetime(2026, 11, 21, 12, 0, tzinfo=UTC)
@@ -71,3 +71,25 @@ def test_deactivating_a_user_revokes_their_sessions(session):
     create_session(session, ana, days=30, now=NOW)
     update_user(session, ana.id, active=False)
     assert session.scalar(select(UserSession).where(UserSession.user_id == ana.id)) is None
+
+
+def test_reset_password_revokes_all_the_users_sessions(session):
+    ana, _ = create_user(session, "ana@x.org", "Ana")
+    bo, _ = create_user(session, "bo@x.org", "Bo")
+    token = create_session(session, ana, days=30, now=NOW)
+    other = create_session(session, bo, days=30, now=NOW)
+    reset_password(session, ana.id)
+    assert resolve_session(session, token, days=30, now=NOW) is None
+    assert resolve_session(session, other, days=30, now=NOW) is bo
+
+
+def test_change_password_keeps_only_the_given_session(session):
+    ana, _ = create_user(session, "ana@x.org", "Ana", "old-password-1")
+    current = create_session(session, ana, days=30, now=NOW)
+    elsewhere = create_session(session, ana, days=30, now=NOW)
+    change_password(session, ana, "old-password-1", "new-password-1", keep_token=current)
+    assert resolve_session(session, current, days=30, now=NOW) is ana
+    assert resolve_session(session, elsewhere, days=30, now=NOW) is None
+
+    change_password(session, ana, "new-password-1", "newer-password-1")  # no session to keep
+    assert resolve_session(session, current, days=30, now=NOW) is None

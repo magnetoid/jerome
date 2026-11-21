@@ -104,10 +104,15 @@ def me(session: SessionDep, principal: PrincipalDep):
 
 
 @router.post("/auth/password", status_code=204)
-def change_password(body: PasswordIn, session: SessionDep, principal: PrincipalDep):
+def change_password(
+    body: PasswordIn, request: Request, session: SessionDep, principal: PrincipalDep
+):
     if principal.user_id is None:
         raise HTTPException(status_code=403, detail="API keys have no password to change")
     user = session.get(User, principal.user_id)
     assert user is not None
-    users.change_password(session, user, body.current, body.new)
+    # The principal came from this cookie, so it names the session making the change: it
+    # stays logged in and the person's other sessions end.
+    current = request.cookies.get(SESSION_COOKIE)
+    users.change_password(session, user, body.current, body.new, keep_token=current)
     return Response(status_code=204)

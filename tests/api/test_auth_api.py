@@ -1,8 +1,9 @@
+from fastapi.testclient import TestClient
 from sqlalchemy import select
 from starlette.requests import Request
 
 from jerome.api.auth import LoginThrottle, client_ip
-from jerome.core.users import create_user, update_user
+from jerome.core.users import create_user, reset_password, update_user
 from jerome.orm import Decision, Suggestion, UserSession
 from tests.fixtures.suggestions import add_one
 
@@ -186,6 +187,27 @@ def test_throttle_window_and_block_last_fifteen_minutes():
     assert throttle.check(["email:ana@x.org"]) is None
 
 
+def test_reset_password_ends_the_users_sessions(web_client, session):
+    ana = login(web_client, session)
+    create_user(session, "bo@x.org", "Bo")
+    assert web_client.get("/v1/books").status_code == 200
+    reset_password(session, ana.id)  # a teammate resets Ana's password
+    assert web_client.get("/v1/books").status_code == 401
+
+
+def test_changing_own_password_keeps_this_session_and_ends_others(web_client, session):
+    login(web_client, session)
+    laptop = TestClient(web_client.app, base_url="https://testserver")  # Ana's second browser
+    good = {"email": "ana@x.org", "password": PASSWORD}
+    assert laptop.post("/v1/auth/login", json=good).status_code == 200
+    assert laptop.get("/v1/books").status_code == 200
+
+    body = {"current": PASSWORD, "new": "a-new-password-1"}
+    assert web_client.post("/v1/auth/password", headers=WEB, json=body).status_code == 204
+    assert web_client.get("/v1/books").status_code == 200
+    assert laptop.get("/v1/books").status_code == 401
+
+
 def test_deactivating_a_user_ends_their_sessions(web_client, session):
     ana = login(web_client, session)
     create_user(session, "bo@x.org", "Bo")
@@ -194,19 +216,30 @@ def test_deactivating_a_user_ends_their_sessions(web_client, session):
     assert web_client.get("/v1/books").status_code == 401
 
 
-def _request(peer, forwarded=None):
-    headers = [(b"x-forwarded-for", forwarded.encode())] if forwarded else []
+def _request(peer, *forwarded):
+    headers = [(b"x-forwarded-for", value.encode()) for value in forwarded]
     return Request({"type": "http", "client": (peer, 1234), "headers": headers})
 
 
 def test_forwarded_ip_used_only_from_trusted_proxy():
     trusted = ["172.17.0.1"]
-    via_proxy = _request("172.17.0.1", "203.0.113.5, 10.1.2.3")
-    assert client_ip(via_proxy, trusted) == "203.0.113.5"
-    assert client_ip(via_proxy, []) is None
-    assert client_ip(_request("198.51.100.7", "203.0.113.5"), trusted) is None
-    assert client_ip(_request("172.17.0.1"), trusted) is None
+    # Apache appends the real peer on the right; anything to its left is client-supplied.
+    spoofed = _request("172.17.0.1", "6.6.6.6, 203.0.113.9")
+    assert client_ip(spoofed, trusted) == "203.0.113.9"
+    assert client_ip(spoofed, []) is None
+    assert client_ip(_request("198.51.100.7", "203.0.113.9"), trusted) is None  # untrusted peer
+    assert client_ip(_request("172.17.0.1"), trusted) is None  # missing header
+    assert client_ip(_request("172.17.0.1", ""), trusted) is None  # empty header
     assert client_ip(Request({"type": "http", "client": None, "headers": []}), trusted) is None
+
+    # a chain of trusted proxies is skipped from the right
+    chain = ["172.17.0.1", "10.0.0.2"]
+    assert client_ip(_request("172.17.0.1", "6.6.6.6, 203.0.113.9, 10.0.0.2"), chain) == (
+        "203.0.113.9"
+    )
+    assert client_ip(_request("172.17.0.1", "10.0.0.2, 172.17.0.1"), chain) is None  # all trusted
+    # repeated headers count as one list, in order
+    assert client_ip(_request("172.17.0.1", "6.6.6.6", "203.0.113.9"), trusted) == "203.0.113.9"
 
 
 def test_logout_clears_cookie(web_client, session):

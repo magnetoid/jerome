@@ -92,12 +92,17 @@ def authenticate(session: Session, email: str, password: str) -> User | None:
     return user
 
 
-def change_password(session: Session, user: User, current: str, new: str) -> None:
+def change_password(
+    session: Session, user: User, current: str, new: str, *, keep_token: str | None = None
+) -> None:
+    """Change the user's own password and end their other sessions. ``keep_token`` is the
+    session making the change, which stays logged in; without it every session ends."""
     if not _verify(user, current):
         raise InvalidChangeError("current password is wrong")
     _check_length(new)
     user.password_hash = _hasher.hash(new)
     user.must_change_password = False
+    revoke_user_sessions(session, user.id, keep_token=keep_token)
     session.flush()
 
 
@@ -106,6 +111,7 @@ def reset_password(session: Session, user_id: int) -> str:
     password = _temporary_password()
     user.password_hash = _hasher.hash(password)
     user.must_change_password = True
+    revoke_user_sessions(session, user.id)  # whoever held the old password is logged out
     session.flush()
     return password
 
