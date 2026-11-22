@@ -1,3 +1,4 @@
+import enum
 import signal
 import threading
 from decimal import Decimal, InvalidOperation
@@ -21,6 +22,11 @@ users_app = typer.Typer(help="Manage team users", no_args_is_help=True)
 app.add_typer(users_app, name="users")
 
 
+class RoleChoice(enum.StrEnum):
+    super_admin = "super_admin"
+    member = "member"
+
+
 @keys_app.command("create")
 def keys_create(name: str) -> None:
     """Create an API key and print it (shown once)."""
@@ -37,13 +43,13 @@ def keys_create(name: str) -> None:
 def users_create(
     email: str,
     name: Annotated[str, typer.Option("--name")],
-    role: Annotated[str | None, typer.Option("--role", help="super_admin or member")] = None,
+    role: Annotated[RoleChoice | None, typer.Option("--role", help="The new user's role")] = None,
 ) -> None:
     """Create a user and print the temporary password (shown once)."""
     engine = make_engine(get_settings().database_url)
     try:
         with session_scope(engine) as session:
-            _, password = create_user(session, email, name, role=role)  # type: ignore[arg-type]
+            _, password = create_user(session, email, name, role=role.value if role else None)
     except JeromeError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(2) from exc
@@ -53,19 +59,21 @@ def users_create(
 
 
 @users_app.command("set-role")
-def users_set_role(email: str, role: str) -> None:
+def users_set_role(email: str, role: RoleChoice) -> None:
     """Make a user a super_admin or a member."""
     engine = make_engine(get_settings().database_url)
     try:
         with session_scope(engine) as session:
-            user = set_role(session, get_user_by_email(session, email).id, role)
-            address, new_role = user.email, user.role
+            user = set_role(session, get_user_by_email(session, email).id, role.value)
+            address, new_role, active = user.email, user.role, user.active
     except JeromeError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(2) from exc
     finally:
         engine.dispose()
     typer.echo(f"{address} is now {new_role}")
+    if not active:
+        typer.echo(f"Warning: {address} is deactivated and cannot sign in", err=True)
 
 
 @app.command()

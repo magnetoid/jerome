@@ -90,8 +90,13 @@ def test_team_routes_are_for_super_admins_only(web_client, session, client, auth
         web_client.patch("/v1/users/1", headers=WEB, json={"name": "X"}),
     ):
         assert r.status_code == 403 and r.json()["detail"] == "super admin only"
-    keyed = client.get("/v1/users", headers=auth)  # API keys can't manage the team
-    assert keyed.status_code == 403 and keyed.json()["detail"] == "super admin only"
+    client.cookies.clear()  # same TestClient as web_client: drop Bo's session, keep only the key
+    for r in (
+        client.get("/v1/users", headers=auth),  # API keys can't manage the team
+        client.post("/v1/users", headers=auth, json={"email": "c@x.org", "name": "C"}),
+        client.patch("/v1/users/1", headers=auth, json={"name": "X"}),
+    ):
+        assert r.status_code == 403 and r.json()["detail"] == "super admin only"
     assert client.get("/v1/projects", headers=auth).status_code == 200  # ...but keep other routes
 
 
@@ -126,3 +131,11 @@ def test_team_routes_need_auth(client, session, web_client):
     r = web_client.post("/v1/users", json={"email": "bo@x.org", "name": "Bo"})
     assert r.status_code == 403
     assert web_client.patch("/v1/users/1", json={"name": "A"}).status_code == 403
+
+
+def test_api_refuses_to_deactivate_the_last_super_admin_among_members(web_client, session):
+    ana = login(web_client, session)
+    web_client.post("/v1/users", headers=WEB, json={"email": "bo@x.org", "name": "Bo"})
+    r = web_client.patch(f"/v1/users/{ana.id}", headers=WEB, json={"active": False})
+    assert r.status_code == 409
+    assert r.json()["detail"] == "cannot remove the last active super admin"

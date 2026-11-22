@@ -174,3 +174,36 @@ def test_unknown_role_and_unknown_email_are_refused(session):
     with pytest.raises(NotFound):
         get_user_by_email(session, "nobody@x.org")
     assert get_user_by_email(session, " A@X.org ").id == a.id
+
+
+def test_crossing_super_admin_demotions_do_not_deadlock(engine, session_factory):
+    """Two admins demote themselves at once: exactly one succeeds, the other gets the
+    Conflict, and Postgres never reports a deadlock."""
+    import threading
+
+    with session_factory() as s, s.begin():
+        a, _ = create_user(s, "a@x.org", "A", role="super_admin")
+        b, _ = create_user(s, "b@x.org", "B", role="super_admin")
+        ids = (a.id, b.id)
+
+    barrier = threading.Barrier(2)
+    outcomes: list[object] = []
+
+    def demote(user_id: int) -> None:
+        try:
+            with session_factory() as s, s.begin():
+                barrier.wait(timeout=10)
+                set_role(s, user_id, "member")
+            outcomes.append("ok")
+        except Exception as exc:  # noqa: BLE001 - the test inspects the type
+            outcomes.append(exc)
+
+    threads = [threading.Thread(target=demote, args=(i,)) for i in ids]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=30)
+
+    assert outcomes.count("ok") == 1, outcomes
+    conflicts = [o for o in outcomes if isinstance(o, Conflict)]
+    assert len(conflicts) == 1, outcomes

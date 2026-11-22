@@ -56,7 +56,29 @@ def test_users_set_role_errors_exit_2(cli_runner, cli_env):
     assert out.exit_code == 2 and "last active super admin" in out.stderr
 
     out = cli_runner.invoke(app, ["users", "create", "c@x.org", "--name", "C", "--role", "owner"])
-    assert out.exit_code == 2 and "Error:" in out.stderr
+    assert out.exit_code == 2
+    out = cli_runner.invoke(app, ["users", "set-role", "a@x.org", "owner"])
+    assert out.exit_code == 2
+
+
+def test_users_role_choices_are_listed_in_help(cli_runner):
+    for args in (["users", "create", "--help"], ["users", "set-role", "--help"]):
+        out = cli_runner.invoke(app, args)
+        assert out.exit_code == 0
+        assert "super_admin" in out.output and "member" in out.output
+
+
+def test_set_role_on_a_deactivated_user_warns(cli_runner, cli_env, session_factory):
+    from jerome.core.users import get_user_by_email, update_user
+
+    assert cli_runner.invoke(app, ["users", "create", "a@x.org", "--name", "A"]).exit_code == 0
+    assert cli_runner.invoke(app, ["users", "create", "b@x.org", "--name", "B"]).exit_code == 0
+    with session_factory() as s, s.begin():
+        update_user(s, get_user_by_email(s, "b@x.org").id, active=False)
+    out = cli_runner.invoke(app, ["users", "set-role", "b@x.org", "super_admin"])
+    assert out.exit_code == 0, out.output
+    assert out.stdout.strip() == "b@x.org is now super_admin"
+    assert "b@x.org is deactivated and cannot sign in" in out.stderr
 
 
 @pytest.fixture

@@ -60,14 +60,16 @@ def _check_role(role: str) -> None:
 
 
 def _guard_last_super_admin(session: Session, user: User) -> None:
-    """Refuse to remove the only active super admin. The other active super admins are
-    selected FOR UPDATE, so two concurrent demotions cannot both pass."""
-    others = session.scalars(
+    """Refuse to remove the only active super admin. All active super admins, the target
+    included, are selected FOR UPDATE in id order, so concurrent demotions queue up in a
+    fixed order (no deadlock) and cannot both pass."""
+    active_ids = session.scalars(
         select(User.id)
-        .where(User.role == "super_admin", User.active, User.id != user.id)
+        .where(User.role == "super_admin", User.active)
+        .order_by(User.id)
         .with_for_update()
     ).all()
-    if not others:
+    if not any(uid != user.id for uid in active_ids):
         raise Conflict("cannot remove the last active super admin")
 
 

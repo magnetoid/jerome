@@ -314,8 +314,8 @@ def test_migration_0005_makes_existing_users_super_admins(engine):
     from tests.conftest import alembic_config
 
     cfg = alembic_config()
-    command.downgrade(cfg, "0004")
     try:
+        command.downgrade(cfg, "0004")
         with engine.begin() as c:
             c.execute(
                 text(

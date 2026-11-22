@@ -73,7 +73,8 @@ execution log, then delete the task.
 
 The first account becomes the super admin. Only super admins manage the team, in the web
 Team page or with `--role` (`super_admin` or `member`). If no one can reach the Team page,
-`jerome users set-role EMAIL super_admin` restores access.
+`jerome users set-role EMAIL super_admin` restores access. If the only super admin lost
+their password, create a new account with `jerome users create … --role super_admin`.
 
 **Behind a reverse proxy.** Put a TLS reverse proxy in front of the container and set
 `JEROME_TRUSTED_PROXIES` to the address the proxy connects from (for example the Docker
