@@ -46,8 +46,9 @@ describe("ProjectsPage", () => {
     expect(rows.map((r) => within(r).getAllByRole("cell")[0].textContent)).toEqual([
       "Zebra Book", "Alpha Book", "Mid Book", "Busy Book", "Capped Book",
     ]);
-    const step = (i: number) => within(rows[i]).getByRole("link");
-    expect(within(rows[0]).getAllByRole("link")).toHaveLength(1);
+    const nextCell = (i: number) => within(rows[i]).getAllByRole("cell")[4];
+    const step = (i: number) => within(nextCell(i)).getByRole("link");
+    expect(within(nextCell(0)).getAllByRole("link")).toHaveLength(1);
     expect(step(0)).toHaveTextContent("Start proofreading");
     expect(step(0)).toHaveAttribute("href", "/projects/3");
     expect(step(1)).toHaveTextContent("Review (12 left)");
@@ -56,6 +57,16 @@ describe("ProjectsPage", () => {
     expect(step(3)).toHaveTextContent("View progress");
     expect(step(4)).toHaveTextContent("Resume");
     expect(step(4)).toHaveAttribute("href", "/projects/5");
+  });
+
+  it("links each title to its project page, whatever the stage (S3)", async () => {
+    listRoutes(LIST);
+    renderApp(<ProjectsPage />);
+    await screen.findByText("Zebra Book");
+    const table = within(screen.getByRole("table"));
+    for (const [title, id] of [["Zebra Book", 3], ["Alpha Book", 1], ["Mid Book", 2], ["Busy Book", 4], ["Capped Book", 5]]) {
+      expect(table.getByRole("link", { name: String(title) })).toHaveAttribute("href", `/projects/${id}`);
+    }
   });
 
   it("shows stage labels, counts, language and last activity", async () => {

@@ -15,7 +15,8 @@ export interface JobTask {
   chapter_id: number | null;
   status: "queued" | "running" | "done" | "failed";
   chunks_done: number;
-  chunks_total: number;
+  /** Null for the consistency check, which is not split into chunks. */
+  chunks_total: number | null;
   attempts: number;
   error: string | null;
 }

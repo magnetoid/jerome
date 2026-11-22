@@ -12,7 +12,26 @@ import { POLL_MS, PROJECTS_KEY } from "@/hooks/useProjects";
 import { money } from "@/lib/format";
 import {
   chaptersKey, detailOf, isJobActive, jobKey, jobsKey, summaryKey, type Chapter, type Job,
+  type JobTask,
 } from "@/lib/jobs";
+
+/** A task's state in words, for one without a chunk count (the consistency check). */
+const TASK_STATUS: Record<JobTask["status"], string> = {
+  queued: "Waiting",
+  running: "Running",
+  done: "Done",
+  failed: "Failed",
+};
+
+function taskProgress(t: JobTask): { text: string; pct: number } {
+  if (t.chunks_total === null) {
+    return { text: TASK_STATUS[t.status] ?? t.status, pct: t.status === "done" ? 100 : 0 };
+  }
+  return {
+    text: `${t.status === "queued" ? "Waiting " : ""}${t.chunks_done}/${t.chunks_total}`,
+    pct: t.chunks_total > 0 ? (t.chunks_done / t.chunks_total) * 100 : 0,
+  };
+}
 
 export default function ProgressPanel({ bookId, jobId }: { bookId: string; jobId: number | string }) {
   const client = useQueryClient();
@@ -73,18 +92,14 @@ export default function ProgressPanel({ bookId, jobId }: { bookId: string; jobId
         {j.tasks.map((t) => {
           const c = title(t.chapter_id);
           const name = t.kind === "consistency" ? "Consistency check" : c ? `${c.ordinal}. ${c.title}` : `Chapter ${t.chapter_id}`;
+          const progress = taskProgress(t);
           return (
             <li key={t.id} className="space-y-1">
               <div className="flex items-center justify-between text-sm">
                 <span>{name}</span>
-                <span className="text-muted-foreground">
-                  {t.status === "queued" ? "Waiting " : ""}{t.chunks_done}/{t.chunks_total}
-                </span>
+                <span className="text-muted-foreground">{progress.text}</span>
               </div>
-              <Progress
-                value={t.chunks_total > 0 ? (t.chunks_done / t.chunks_total) * 100 : 0}
-                aria-label={name}
-              />
+              <Progress value={progress.pct} aria-label={name} />
             </li>
           );
         })}

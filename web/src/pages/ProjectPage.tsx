@@ -18,6 +18,7 @@ import ExportMenu from "@/components/project/ExportMenu";
 import ReviewUpload from "@/components/project/ReviewUpload";
 import SettingsTab from "@/components/project/SettingsTab";
 import { PROJECTS_KEY, useProjects, type Project } from "@/hooks/useProjects";
+import { useBookJobs } from "@/hooks/useBookJobs";
 import { bookKey, detailOf } from "@/lib/jobs";
 
 interface Book {
@@ -30,7 +31,7 @@ function MainPanel({ project }: { project: Project }) {
   const id = String(project.id);
   switch (project.stage) {
     case "set_up":
-      return <StartPanel bookId={id} />;
+      return <StartPanel bookId={id} openCount={project.open_count} />;
     case "proofreading":
       return project.active_job
         ? <ProgressPanel bookId={id} jobId={project.active_job.id} />
@@ -51,6 +52,8 @@ export default function ProjectPage() {
     queryKey: bookKey(id),
     queryFn: () => apiFetch<Book>(`/v1/books/${id}`),
   });
+  const project = projects.data?.find((p) => String(p.id) === id);
+  const jobs = useBookJobs(id, project?.active_job);
   const [again, setAgain] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
@@ -66,13 +69,16 @@ export default function ProjectPage() {
   if (projects.isError) {
     return <main className="p-8"><p role="alert" className="text-destructive">{detailOf(projects.error)}</p></main>;
   }
-  const project = projects.data.find((p) => String(p.id) === id);
   if (!project) {
     return <main className="mx-auto max-w-3xl p-8"><h1 className="text-2xl font-semibold">Project not found</h1></main>;
   }
 
   const idle = project.active_job === null;
   const format = book.data?.format ?? project.format;
+  // A cancelled job is not a stage of its own (the stage shows what is there to review), but
+  // the cancel promised it could be resumed: offer that until another job takes its place.
+  const resumable =
+    idle && project.stage !== "needs_attention" && jobs.data?.[0]?.status === "cancelled";
 
   return (
     <main className="mx-auto max-w-4xl space-y-6 p-4 sm:p-8">
@@ -90,18 +96,23 @@ export default function ProjectPage() {
         <TabsContent value="overview" className="space-y-8 pt-4">
           <section className="space-y-4">
             <MainPanel project={project} />
+            {resumable && (
+              <div className="border-t pt-4">
+                <AttentionPanel bookId={id} activeJobId={null} />
+              </div>
+            )}
             {idle && project.stage !== "set_up" && (
               again ? (
                 <div className="space-y-4 border-t pt-4">
                   <h2 className="text-lg font-medium">Run proofreading again</h2>
-                  <StartPanel bookId={id} />
+                  <StartPanel bookId={id} openCount={project.open_count} />
                 </div>
               ) : (
                 <Button variant="outline" onClick={() => setAgain(true)}>Run proofreading again</Button>
               )
             )}
           </section>
-          <JobsList bookId={id} />
+          <JobsList jobs={jobs} />
           <ExportMenu bookId={id} format={format} />
           {format === "docx" && <ReviewUpload bookId={id} />}
           <section className="border-t pt-4">

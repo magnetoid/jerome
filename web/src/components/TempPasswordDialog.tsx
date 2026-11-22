@@ -11,7 +11,11 @@ import {
 
 export type TempPassword = { name: string; password: string };
 
-/** Shows a temporary password once. The caller keeps it in component state and clears it on close. */
+/**
+ * Shows a temporary password once. The caller keeps it in component state and clears it on
+ * close. Only Done closes it: Escape, a click outside or a stray close button would lose the
+ * password, and getting another one means a new reset.
+ */
 export default function TempPasswordDialog({
   value,
   onClose,
@@ -30,8 +34,12 @@ export default function TempPasswordDialog({
   }
 
   return (
-    <Dialog open={value !== null} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent>
+    <Dialog open={value !== null}>
+      <DialogContent
+        showCloseButton={false}
+        onEscapeKeyDown={(e) => e.preventDefault()}
+        onInteractOutside={(e) => e.preventDefault()}
+      >
         <DialogHeader>
           <DialogTitle>Temporary password</DialogTitle>
           <DialogDescription>

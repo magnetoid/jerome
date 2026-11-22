@@ -80,7 +80,9 @@ function ProjectsBody({ projects, search }: { projects: Project[]; search: strin
             const step = nextStep(p);
             return (
               <TableRow key={p.id}>
-                <TableCell className="font-medium">{p.title}</TableCell>
+                <TableCell className="font-medium">
+                  <Link to={`/projects/${p.id}`} className="underline-offset-2 hover:underline">{p.title}</Link>
+                </TableCell>
                 <TableCell>{variantLabel(p.variant)}</TableCell>
                 <TableCell><StageBadge stage={p.stage} /></TableCell>
                 <TableCell className="text-sm text-muted-foreground">

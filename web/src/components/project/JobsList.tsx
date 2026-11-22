@@ -1,14 +1,10 @@
-import { useQuery } from "@tanstack/react-query";
-import { apiFetch } from "@/lib/api";
+import type { UseQueryResult } from "@tanstack/react-query";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { money } from "@/lib/format";
-import { STATUS_LABELS, detailOf, jobsKey, passesLabel, type Job } from "@/lib/jobs";
+import { STATUS_LABELS, detailOf, passesLabel, type Job } from "@/lib/jobs";
 
-export default function JobsList({ bookId }: { bookId: string }) {
-  const jobs = useQuery({
-    queryKey: jobsKey(bookId),
-    queryFn: () => apiFetch<Job[]>(`/v1/books/${bookId}/jobs`),
-  });
+/** The book's jobs, newest first, from the page's `useBookJobs` query. */
+export default function JobsList({ jobs }: { jobs: UseQueryResult<Job[]> }) {
   return (
     <section className="space-y-2">
       <h2 className="text-lg font-medium">Jobs</h2>

@@ -98,13 +98,18 @@ describe("TeamPage", () => {
       expect(toast.error).toHaveBeenCalledWith("cannot deactivate the last active member"));
   });
 
-  it("resets a password and shows it in the same one-time dialog", async () => {
+  it("resets a password only after confirming, and shows it in the same one-time dialog", async () => {
     const { f, client } = setup({
       "PATCH /v1/users/2": () => json(200, { user: bob, temporary_password: "new-tmp-pw-9" }),
     });
     const user = userEvent.setup();
     const bobRow = (await screen.findByText("bob@example.com")).closest("tr")!;
     await user.click(within(bobRow).getByRole("button", { name: /Reset password/ }));
+    const confirm = await screen.findByRole("alertdialog", { name: "Reset Bob's password?" });
+    expect(confirm).toHaveTextContent(/signs them out everywhere/i);
+    expect(confirm).toHaveTextContent(/replaces their password/i);
+    expect(f.mock.calls.filter(([p]) => p === "/v1/users/2")).toHaveLength(0);
+    await user.click(within(confirm).getByRole("button", { name: "Reset password" }));
     const dialog = await screen.findByRole("dialog", { name: "Temporary password" });
     expect(within(dialog).getByText("new-tmp-pw-9")).toBeInTheDocument();
     const patch = f.mock.calls.find(([p]) => p === "/v1/users/2")!;
@@ -113,6 +118,41 @@ describe("TeamPage", () => {
     await user.click(within(dialog).getByRole("button", { name: "Done" }));
     await waitFor(() => expect(screen.queryByText("new-tmp-pw-9")).not.toBeInTheDocument());
     expect(cachedText(client)).not.toContain("new-tmp-pw-9");
+  });
+
+  it("sends nothing when the reset is cancelled", async () => {
+    const { f } = setup({
+      "PATCH /v1/users/2": () => json(200, { user: bob, temporary_password: "new-tmp-pw-9" }),
+    });
+    const user = userEvent.setup();
+    const bobRow = (await screen.findByText("bob@example.com")).closest("tr")!;
+    await user.click(within(bobRow).getByRole("button", { name: /Reset password/ }));
+    const confirm = await screen.findByRole("alertdialog");
+    await user.click(within(confirm).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+    expect(f.mock.calls.filter(([p]) => p === "/v1/users/2")).toHaveLength(0);
+  });
+
+  it("closes the temporary-password dialog only through Done", async () => {
+    setup({
+      "PATCH /v1/users/2": () => json(200, { user: bob, temporary_password: "new-tmp-pw-9" }),
+    });
+    // The modal makes the page behind it ignore the pointer; click there anyway.
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    const bobRow = (await screen.findByText("bob@example.com")).closest("tr")!;
+    await user.click(within(bobRow).getByRole("button", { name: /Reset password/ }));
+    await user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Reset password" }));
+    const dialog = await screen.findByRole("dialog", { name: "Temporary password" });
+    expect(within(dialog).queryByRole("button", { name: "Close" })).not.toBeInTheDocument();
+
+    await user.keyboard("{Escape}");
+    await user.click(document.querySelector<HTMLElement>('[data-slot="dialog-overlay"]')!);
+    await user.click(document.body);
+    expect(screen.getByRole("dialog", { name: "Temporary password" })).toBeInTheDocument();
+    expect(screen.getByText("new-tmp-pw-9")).toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole("button", { name: "Done" }));
+    await waitFor(() => expect(screen.queryByText("new-tmp-pw-9")).not.toBeInTheDocument());
   });
 
   it("renames a member", async () => {

@@ -62,6 +62,7 @@ export default function TeamPage() {
   const [renaming, setRenaming] = useState<Member | null>(null);
   const [renameTo, setRenameTo] = useState("");
   const [deactivating, setDeactivating] = useState<Member | null>(null);
+  const [resetting, setResetting] = useState<Member | null>(null);
 
   const onError = (err: unknown) =>
     toast.error(err instanceof ApiError ? err.detail : "Something went wrong");
@@ -206,7 +207,7 @@ export default function TeamPage() {
                         size="sm"
                         variant="ghost"
                         aria-label={`Reset password for ${u.name}`}
-                        onClick={() => patch.mutate({ id: u.id, body: { reset_password: true } })}
+                        onClick={() => setResetting(u)}
                       >
                         Reset password
                       </Button>
@@ -259,6 +260,28 @@ export default function TeamPage() {
               }
             >
               Deactivate
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={resetting !== null} onOpenChange={(o) => !o && setResetting(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Reset {resetting?.name}'s password?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This signs them out everywhere and replaces their password with a temporary one,
+              shown to you once. Their current password stops working.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() =>
+                resetting && patch.mutate({ id: resetting.id, body: { reset_password: true } })
+              }
+            >
+              Reset password
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

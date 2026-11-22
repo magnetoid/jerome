@@ -100,4 +100,21 @@ describe("StartPanel", () => {
     await userEvent.click(screen.getByRole("button", { name: /start proofreading/i }));
     expect(await screen.findByRole("alert")).toHaveTextContent("a job is already active");
   });
+
+  it("with the AI selected and suggestions already open, says the AI leaves those spots alone (R31)", async () => {
+    pageApi();
+    renderApp(<StartPanel bookId="1" openCount={5} />);
+    await ready();
+    const note = "Spots that already have an open suggestion keep it: the AI won't re-check or auto-apply them.";
+    expect(screen.getByText(note)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("radio", { name: /Free check/ }));
+    expect(screen.queryByText(note)).not.toBeInTheDocument();
+  });
+
+  it("says nothing about open suggestions when there are none", async () => {
+    pageApi();
+    renderApp(<StartPanel bookId="1" openCount={0} />);
+    await ready();
+    expect(screen.queryByText(/already have an open suggestion/)).not.toBeInTheDocument();
+  });
 });

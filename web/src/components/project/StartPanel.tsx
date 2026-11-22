@@ -27,7 +27,13 @@ function useDebounced<T>(value: T, ms: number): T {
   return v;
 }
 
-export default function StartPanel({ bookId }: { bookId: string }) {
+interface Props {
+  bookId: string;
+  /** Open suggestions in the book already: the AI pass leaves their spots alone. */
+  openCount?: number;
+}
+
+export default function StartPanel({ bookId, openCount = 0 }: Props) {
   const client = useQueryClient();
   const chapters = useQuery({
     queryKey: chaptersKey(bookId),
@@ -131,6 +137,11 @@ export default function StartPanel({ bookId }: { bookId: string }) {
           </label>
         ))}
       </div>
+      {!free && openCount > 0 && (
+        <p className="text-sm text-muted-foreground">
+          Spots that already have an open suggestion keep it: the AI won't re-check or auto-apply them.
+        </p>
+      )}
 
       <p className="text-sm" aria-live="polite">
         {ticked.length === 0 ? "Tick at least one chapter."

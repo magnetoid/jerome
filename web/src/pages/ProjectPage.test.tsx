@@ -12,6 +12,9 @@ afterEach(() => {
 });
 
 const jobCalls = (f: ReturnType<typeof pageApi>) => callsTo(f, "GET", "/v1/jobs/9").length;
+/** The rows of the Jobs table, without its header. */
+const jobRows = () =>
+  within(screen.getByRole("heading", { name: "Jobs" }).closest("section")!).getAllByRole("row").slice(1);
 
 describe("ProjectPage panels by stage", () => {
   it("set_up shows the start panel and no re-run button", async () => {
@@ -39,6 +42,22 @@ describe("ProjectPage panels by stage", () => {
     expect(screen.getByText(/\$0\.40 of \$4\.00/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /^review$/i })).toHaveAttribute("href", "/projects/1/review");
     expect(screen.queryByRole("button", { name: /run proofreading again/i })).not.toBeInTheDocument();
+  });
+
+  it("shows the consistency check's state in words, since it has no chunk count (M4)", async () => {
+    const tasks = [
+      ...(job().tasks as unknown[]),
+      { id: 3, kind: "consistency", chapter_id: null, status: "queued", chunks_done: 0, chunks_total: null, attempts: 0, error: null },
+    ];
+    pageApi(
+      { "GET /v1/jobs/9": () => json(200, job({ tasks })) },
+      project({ stage: "proofreading", active_job: activeJob() }),
+    );
+    renderPage();
+    const item = (await screen.findByText("Consistency check")).closest("li")!;
+    expect(item).toHaveTextContent(/Consistency check\s*Waiting/);
+    expect(item).not.toHaveTextContent("/");
+    expect(within(item).getByRole("progressbar")).toBeInTheDocument();
   });
 
   it("to_review shows the summary, per-chapter counts, Review and a re-run button", async () => {
@@ -107,6 +126,77 @@ describe("needs attention", () => {
     await userEvent.click(screen.getByRole("button", { name: /resume/i }));
     await waitFor(() => expect(callsTo(f, "POST", "/v1/jobs/9/resume")).toHaveLength(1));
     expect(screen.getByRole("button", { name: /run proofreading again/i })).toBeInTheDocument();
+  });
+});
+
+describe("resume after a cancel (F3)", () => {
+  it.each(["to_review", "done", "set_up"])("offers Resume when the newest job was cancelled (%s)", async (stage) => {
+    const f = pageApi({
+      "GET /v1/books/1/jobs": () => json(200, [job({ status: "cancelled" }), job({ id: 8, status: "completed" })]),
+      "POST /v1/jobs/9/resume": () => json(200, job()),
+    }, project({ stage, open_count: stage === "to_review" ? 3 : 0 }));
+    renderPage();
+    expect(await screen.findByText(/proofreading was cancelled/i)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /^resume$/i }));
+    await waitFor(() => expect(callsTo(f, "POST", "/v1/jobs/9/resume")).toHaveLength(1));
+    expect(bodyOf(callsTo(f, "POST", "/v1/jobs/9/resume")[0])).toEqual({});
+  });
+
+  it("offers no Resume when the newest job finished", async () => {
+    pageApi({
+      "GET /v1/books/1/jobs": () => json(200, [job({ status: "completed" }), job({ id: 8, status: "cancelled" })]),
+    }, project({ stage: "to_review", open_count: 3 }));
+    renderPage();
+    await waitFor(() => expect(jobRows()).toHaveLength(2));
+    expect(screen.queryByText(/was cancelled/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^resume$/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /run proofreading again/i })).toBeInTheDocument();
+  });
+});
+
+describe("jobs table while a job runs (S1)", () => {
+  it("refetches the jobs every 3000 ms while the project has a running job", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let cost = "0.10";
+    pageApi({
+      "GET /v1/jobs/9": () => json(200, job()),
+      "GET /v1/books/1/jobs": () => json(200, [job({ cost_actual: cost })]),
+    }, project({ stage: "proofreading", active_job: activeJob() }));
+    renderPage();
+    await waitFor(() => expect(jobRows()[0]).toHaveTextContent("$0.10 of $4.00"));
+    expect(jobRows()[0]).toHaveTextContent("Running");
+    cost = "0.40";
+    await act(() => vi.advanceTimersByTimeAsync(3000));
+    await waitFor(() => expect(jobRows()[0]).toHaveTextContent("$0.40 of $4.00"));
+  });
+
+  it("shows the job's final status and cost once the project has no active job", async () => {
+    // The job's own poll has not noticed yet, so only the projects list reports the end.
+    let ended = false;
+    let reported = false;
+    const f = pageApi({
+      "GET /v1/jobs/9": () => json(200, job({ status: "queued", cost_actual: "0" })),
+      "GET /v1/projects": () => {
+        reported = ended;
+        return json(200, [ended
+          ? project({ stage: "to_review", open_count: 51, auto_applied_count: 25 })
+          : project({ stage: "proofreading", active_job: activeJob({ status: "queued", cost_actual: "0" }) })]);
+      },
+      "GET /v1/books/1/jobs": () => json(200, [reported
+        ? job({ status: "completed", cost_actual: "2.5", stats: { auto_applied: 25 } })
+        : job({ status: "queued", cost_actual: "0" })]),
+    });
+    const { client } = renderPage();
+    await waitFor(() => expect(jobRows()[0]).toHaveTextContent("Queued"));
+    expect(jobRows()[0]).toHaveTextContent("$0.00 of $4.00");
+
+    ended = true;
+    await act(() => client.refetchQueries({ queryKey: ["projects"] }));
+    expect(await screen.findByText(/AI applied 25 · 51 need you/)).toBeInTheDocument();
+    await waitFor(() => expect(jobRows()[0]).toHaveTextContent("Completed"));
+    expect(jobRows()[0]).toHaveTextContent("$2.50 of $4.00");
+    expect(jobRows()[0]).toHaveTextContent("25");
+    expect(callsTo(f, "GET", "/v1/books/1/jobs").length).toBeGreaterThanOrEqual(2);
   });
 });
 
