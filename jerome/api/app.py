@@ -14,6 +14,7 @@ from jerome.api import (
 from jerome.api.auth import LoginThrottle
 from jerome.api.deps import current_principal
 from jerome.api.limits import BodyLimitMiddleware
+from jerome.api.web import mount_web
 from jerome.config import Settings, get_settings
 from jerome.db import make_engine
 from jerome.errors import (
@@ -68,4 +69,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(routes_text.router, prefix="/v1", dependencies=auth)
     app.include_router(routes_users.router, prefix="/v1", dependencies=auth)
     app.include_router(routes_projects.router, prefix="/v1", dependencies=auth)
+    # The catch-all web app goes last, so it never shadows an API route.
+    if settings.web_dir is not None:
+        mount_web(app, settings.web_dir)
     return app
