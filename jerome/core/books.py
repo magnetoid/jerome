@@ -7,6 +7,7 @@ from pathlib import Path
 from sqlalchemy import insert, select
 from sqlalchemy.orm import Session
 
+from jerome.core.auto_apply import DEFAULT_POLICY, AutoApplyPolicy, policy_to_json
 from jerome.documents.docx_reader import read_docx
 from jerome.documents.epub_reader import read_epub
 from jerome.documents.model import BlockKind, ParsedBook
@@ -85,6 +86,7 @@ def import_book(
     variant: Variant,
     title: str | None = None,
     local_only: bool = False,
+    auto_apply: AutoApplyPolicy = DEFAULT_POLICY,
 ) -> Book:
     fmt = _detect_format(filename, data)
     parsed: ParsedBook = read_docx(data) if fmt == "docx" else read_epub(data)
@@ -93,6 +95,7 @@ def import_book(
         format=fmt,
         local_only=local_only,
         original_filename=filename,
+        auto_apply=policy_to_json(auto_apply),
     )
     quotes = detect_quote_style((b.text for c in parsed.chapters for b in c.blocks), variant)
     style = StyleSheet(variant, quotes, {}, [])

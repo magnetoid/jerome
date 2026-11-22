@@ -83,7 +83,8 @@ def test_end_to_end_with_fakes(e2e_client, e2e_auth, session_factory, fake_deps)
         "/v1/books",
         headers=auth,
         files={"file": ("m.docx", make_docx(["# One", "teh cat sat."]))},
-        data={"variant": "en-US"},
+        # auto-apply off: the AI's typo stays open, for the editor to accept in Word
+        data={"variant": "en-US", "auto_apply": "false"},
     )
     assert created.status_code == 201, created.text
     book = created.json()

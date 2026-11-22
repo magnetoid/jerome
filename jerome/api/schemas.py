@@ -1,7 +1,7 @@
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, StringConstraints, field_validator
 
 from jerome.types import Category, Severity, Source, Status, Variant
 
@@ -53,6 +53,7 @@ class SuggestionOut(BaseModel):
     id: int
     book_id: int
     block_id: int
+    chapter_id: int
     start: int
     end: int
     original: str
@@ -63,6 +64,12 @@ class SuggestionOut(BaseModel):
     explanation: str
     status: str
     final_text: str | None
+    agreed: bool
+    disputed: bool
+    alternative: str | None
+    rule: str | None
+    auto_applied: bool
+    decided_by: str | None
     job_id: int | None
     model: str | None
     created_at: datetime
@@ -96,3 +103,48 @@ class BulkBody(BaseModel):
 
 class BulkOut(BaseModel):
     decided: int
+
+
+NonEmptyStr = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+
+
+class UserOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    email: str
+    name: str
+    active: bool
+    must_change_password: bool
+    last_login_at: datetime | None
+    created_at: datetime
+
+
+class UserCreateIn(BaseModel):
+    email: NonEmptyStr
+    name: NonEmptyStr
+
+    @field_validator("email")
+    @classmethod
+    def _looks_like_email(cls, value: str) -> str:
+        if "@" not in value:
+            raise ValueError("email must contain @")
+        return value
+
+
+class UserPatchIn(BaseModel):
+    name: NonEmptyStr | None = None
+    active: bool | None = None
+    reset_password: bool = False
+
+
+class UserWithPasswordOut(BaseModel):
+    user: UserOut
+    temporary_password: str | None
+
+
+class AutoApplyBody(BaseModel):
+    enabled: bool
+    categories: list[Category]
+    min_severity: Severity
+    house_rules: bool

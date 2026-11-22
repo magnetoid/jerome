@@ -50,6 +50,49 @@ docker compose exec api jerome keys create NAME     # one key per person or clie
 - **Updating.** `git pull && docker compose up -d --build`. Migrations run when the API
   starts, and the worker finishes its current chunk before it stops.
 
+## Web interface
+
+Jerome serves a web app from the same container as the API, at `/`. Members sign in with an
+email and password, create a project by uploading a DOCX or EPUB, start a proofreading job,
+watch its progress and review the result in the browser. Clear-cut changes (typos, punctuation
+and house-style rules) can be applied automatically by the AI while proofreading runs; every
+such change is marked as the AI's and can be reverted in one step. Exports (Word with
+comments, Word with tracked changes, clean Word, clean EPUB) are on the project page. The API
+and its bearer keys work as before.
+
+**First login.** There is no sign-up. Create each member once, inside the API container:
+
+```bash
+docker compose exec api jerome users create editor@example.com --name "Editor"
+```
+
+It prints a temporary password. The member must change it at first login, and cannot use
+anything else in the app until they do. On Coolify, add a scheduled task on the `api`
+container with that command, run it once, read the temporary password from the task's
+execution log, then delete the task.
+
+**Behind a reverse proxy.** Put a TLS reverse proxy in front of the container and set
+`JEROME_TRUSTED_PROXIES` to the address the proxy connects from (for example the Docker
+network gateway), as a JSON list: `JEROME_TRUSTED_PROXIES='["172.17.0.1"]'`. Only then is
+`X-Forwarded-For` believed, so that login throttling sees real client addresses.
+
+**Login throttling.** Five failed logins within 15 minutes block that key for 15 minutes; the
+response is 429 with a `Retry-After` header. Failures are counted per email address and, behind
+a trusted proxy, per client IP. Trade-offs: someone who knows a member's email can lock that
+account out for the window; people behind one shared NAT share one per-IP budget; and without
+`JEROME_TRUSTED_PROXIES` every request appears to come from the proxy, so only the per-email
+limit applies. The counters live in memory, in one process.
+
+**Serve at the root of the domain.** Do not mount Jerome under a path prefix (an ASGI
+`root_path`): the password-change gate matches on `request.url.path`, so under a prefix it
+fails closed and members would be locked out of the app.
+
+**Developing the web app.** Run the API with `uv run jerome serve` and, in `web/`,
+`npm run dev`. Open the Vite URL it prints (http://localhost:5173); it proxies `/v1` to the
+API on port 8000. `npm test` runs the unit tests and `npm run build` makes the production
+bundle the API serves. The session cookie is Secure: for plain-http local use set
+`JEROME_COOKIE_SECURE=false`.
+
 ## Local development
 
 ```bash

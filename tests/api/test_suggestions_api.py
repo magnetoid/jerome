@@ -1,10 +1,12 @@
 import pytest
 
+from jerome.core.suggestions import decide
 from jerome.orm import Block, Suggestion
 from tests.fixtures.docx_builders import make_docx
 from tests.fixtures.suggestions import add_one
 
 KEYS = {
+    "chapter_id", "agreed", "disputed", "alternative", "rule", "auto_applied", "decided_by",
     "id", "book_id", "block_id", "start", "end", "original", "replacement", "category",
     "severity", "source", "explanation", "status", "final_text", "job_id", "model", "created_at",
 }  # fmt: skip
@@ -103,3 +105,96 @@ def test_edit_with_tab_and_newline_is_fine(client, auth, session, block):
     s = add_one(session, block, 0, 3, "teh", "the")
     r = client.post(f"/v1/suggestions/{s.id}/edit", headers=auth, json={"replacement": "a\tb\nc"})
     assert r.status_code == 200
+
+
+def _total(client, auth, book_id, **params):
+    return client.get(f"/v1/books/{book_id}/suggestions", headers=auth, params=params)
+
+
+def test_suggestion_out_has_new_fields_and_auto_flag(client, auth, session, block):
+    plain = add_one(session, block, 0, 3, "teh", "the")
+    rich = add_one(
+        session,
+        block,
+        4,
+        7,
+        "cat",
+        "cats",
+        agreed=True,
+        disputed=True,
+        alternative="kitten",
+        rule="house_spelling",
+    )
+    autos = add_one(session, block, 8, 11, "sat", "sits")
+    decide(session, autos.id, "accept", actor="ai", channel="auto")
+    rows = {s["id"]: s for s in _total(client, auth, block.book_id).json()}
+    chapter_id = block.chapter_id
+    assert rows[plain.id]["chapter_id"] == chapter_id
+    assert (rows[plain.id]["agreed"], rows[plain.id]["disputed"]) == (False, False)
+    assert (rows[plain.id]["alternative"], rows[plain.id]["rule"]) == (None, None)
+    assert (rows[plain.id]["auto_applied"], rows[plain.id]["decided_by"]) == (False, None)
+    assert rows[rich.id]["agreed"] and rows[rich.id]["disputed"]
+    assert (rows[rich.id]["alternative"], rows[rich.id]["rule"]) == ("kitten", "house_spelling")
+    assert rows[autos.id]["auto_applied"] is True and rows[autos.id]["decided_by"] == "ai"
+    r = client.get(f"/v1/books/{block.book_id}/blocks/{block.id}", headers=auth)
+    assert {s["id"]: s["auto_applied"] for s in r.json()["suggestions"]}[autos.id] is True
+
+
+def test_decided_by_is_the_latest_person_or_ai(client, auth, session, block):
+    s = add_one(session, block, 0, 3, "teh", "the")
+    decide(session, s.id, "accept", actor="ai", channel="auto")
+    assert (
+        client.get(f"/v1/books/{block.book_id}/suggestions", headers=auth).json()[0]["decided_by"]
+        == "ai"
+    )
+    r = client.post(f"/v1/suggestions/{s.id}/reject", headers=auth)  # a person reverses the AI
+    assert r.json()["decided_by"] == "tester" and r.json()["auto_applied"] is False
+    r = client.post(f"/v1/suggestions/{s.id}/undo", headers=auth)  # undo is a person's decision
+    assert (r.json()["status"], r.json()["decided_by"]) == ("open", "tester")
+    other = add_one(session, block, 4, 7, "cat", "cats")
+    decide(session, other.id, "accept", actor="ai", channel="auto")
+    decide(session, other.id, "undo", actor="x", channel="system")  # bookkeeping is ignored
+    got = {x["id"]: x["decided_by"] for x in _total(client, auth, block.book_id).json()}
+    assert got[other.id] == "ai"
+
+
+def test_suggestion_out_uses_a_fixed_number_of_queries(session, block):
+    from sqlalchemy import event
+
+    from jerome.api.routes_suggestions import suggestion_out
+
+    rows = [add_one(session, block, 0, 1, "t", "T")]
+    more = [add_one(session, block, i, i + 1, block.text[i], "z") for i in range(2, 9)]
+    for r in more:
+        decide(session, r.id, "accept", actor="ai", channel="auto")
+
+    def count(batch):
+        n = []
+
+        def hook(*a):
+            n.append(1)
+
+        engine = session.get_bind()
+        event.listen(engine, "before_cursor_execute", hook)
+        try:
+            out = suggestion_out(session, batch)
+        finally:
+            event.remove(engine, "before_cursor_execute", hook)
+        return len(n), out
+
+    one_n, _ = count(rows)
+    many = list(reversed(rows + more))
+    many_n, out = count(many)
+    assert one_n == many_n and many_n <= 4
+    assert [o["id"] for o in out] == [s.id for s in many]  # input order kept
+
+
+def test_list_sets_total_count_header(client, auth, session, block):
+    add_one(session, block, 0, 3, "teh", "the", severity="low")
+    add_one(session, block, 4, 7, "cat", "cats", severity="high")
+    add_one(session, block, 8, 11, "sat", "sit", severity="high")
+    r = _total(client, auth, block.book_id, limit=1)
+    assert len(r.json()) == 1 and r.headers["X-Total-Count"] == "3"
+    r = _total(client, auth, block.book_id, min_severity="high", limit=1, offset=1)
+    assert len(r.json()) == 1 and r.headers["X-Total-Count"] == "2"
+    assert _total(client, auth, block.book_id, offset=10).headers["X-Total-Count"] == "3"

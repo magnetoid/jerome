@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     text_daily_cost_cap: Decimal = Decimal(5)
     text_rpm: int = 30
     max_upload_mb: int = 50
+    trusted_proxies: list[str] = []  # direct peers whose X-Forwarded-For is believed (JSON list)
+    session_days: int = 30
+    cookie_secure: bool = True
+    web_dir: Path | None = None
     anthropic_api_key: SecretStr | None = Field(default=None, validation_alias="ANTHROPIC_API_KEY")
 
     @field_validator("data_dir")

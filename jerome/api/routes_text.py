@@ -4,9 +4,8 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
 
-from jerome.api.deps import current_actor, get_session, get_settings_dep, get_worker_deps
+from jerome.api.deps import SessionDep, current_actor, get_settings_dep, get_worker_deps
 from jerome.config import Settings
 from jerome.jobs.estimate import PassName
 from jerome.jobs.worker import WorkerDeps
@@ -55,7 +54,7 @@ def _too_many(detail: str, wait: float) -> HTTPException:
 def proofread_short_text(
     body: TextIn,
     request: Request,
-    session: Annotated[Session, Depends(get_session)],
+    session: SessionDep,
     actor: Annotated[str, Depends(current_actor)],
     deps: Annotated[WorkerDeps, Depends(get_worker_deps)],
     settings: Annotated[Settings, Depends(get_settings_dep)],

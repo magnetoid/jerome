@@ -9,13 +9,24 @@ import httpx
 import pytest
 from sqlalchemy import event, func, select, update
 
+from jerome.core.auto_apply import DEFAULT_POLICY, policy_to_json
 from jerome.errors import Conflict
 from jerome.jobs.service import cancel_job, resume_job
 from jerome.jobs.webhooks import send_webhook
 from jerome.jobs.worker import WorkerDeps, claim_task, run_task, work_forever
 from jerome.models import FakeProvider, ModelOutputError, ModelRefusal, Registry, Usage
 from jerome.models.base import CompletionResult
-from jerome.orm import Block, Book, Chapter, Job, JobTask, ModelUsage, StyleSheetRow, Suggestion
+from jerome.orm import (
+    Block,
+    Book,
+    Chapter,
+    Decision,
+    Job,
+    JobTask,
+    ModelUsage,
+    StyleSheetRow,
+    Suggestion,
+)
 from jerome.proofread.languagetool import LanguageToolClient
 
 LT = "http://lt.test"
@@ -53,13 +64,19 @@ def build(
     max_cost=Decimal(5),
     house=None,
     chapter_ids=None,
+    auto_apply=None,
+    variant="en-US",
+    quote_style="“”‘’",
 ):
-    """Committed book + job. `chapters` is a list of lists of block texts."""
+    """Committed book + job. `chapters` is a list of lists of block texts. Without
+    `auto_apply` the book gets the column default, auto-apply off."""
     with sf() as s:
         book = Book(title="B", format="docx", local_only=local_only)
+        if auto_apply is not None:
+            book.auto_apply = policy_to_json(auto_apply)
         book.style_sheet = StyleSheetRow(
-            variant="en-US",
-            quote_style="“”‘’",
+            variant=variant,
+            quote_style=quote_style,
             house_spellings=house or {},
             ignore_words=[],
         )
@@ -469,6 +486,145 @@ def test_consistency_task_produces_suggestions(session_factory, test_settings, l
         assert all(r.job_id == ids.job_id and r.replacement == "color" for r in rows)
     assert task(session_factory, ids.task_ids[2]).status == "done"
     assert job(session_factory, ids.job_id).status == "completed"
+
+
+def ai(block_id, original, replacement, category, severity):
+    return {
+        "block_id": block_id,
+        "original": original,
+        "replacement": replacement,
+        "category": category,
+        "severity": severity,
+        "explanation": f"A {category} fix.",
+        "occurrence": 1,
+    }
+
+
+def decisions(sf):
+    """(original, status, actor, channel) of every non-system decision, in order."""
+    with sf() as s:
+        return s.execute(
+            select(Suggestion.original, Suggestion.status, Decision.actor, Decision.channel)
+            .join(Decision, Decision.suggestion_id == Suggestion.id)
+            .where(Decision.channel != "system")
+            .order_by(Decision.id)
+        ).all()
+
+
+def test_chunk_auto_applies_and_counts_in_stats(session_factory, test_settings, lt_route):
+    ids = build(
+        session_factory,
+        [["teh cat sat. " + BIG, "A dog ran ,away. " + BIG]],  # one block per chunk
+        passes=["languagetool", "ai"],
+        auto_apply=DEFAULT_POLICY,
+    )
+    first, second = ids.block_ids
+    provider = FakeProvider(
+        [
+            reply(
+                ai(first, "teh", "the", "typo", "high"), ai(first, "sat", "sits", "grammar", "high")
+            ),
+            reply(
+                ai(second, "ran ,away", "ran, away", "punctuation", "high"),
+                ai(second, "dog", "dogs", "typo", "medium"),
+            ),
+        ]
+    )
+    run_task(session_factory, ids.task_id, make_deps(test_settings, provider))
+    assert task(session_factory, ids.task_id).status == "done"
+    assert job(session_factory, ids.job_id).stats["auto_applied"] == 2  # summed over chunks
+    assert decisions(session_factory) == [
+        ("teh", "accepted", "ai", "auto"),
+        ("ran ,away", "accepted", "ai", "auto"),
+    ]
+    with session_factory() as s:
+        still_open = s.scalars(select(Suggestion.original).where(Suggestion.status == "open"))
+        assert sorted(still_open) == ["dog", "sat"]
+
+
+def test_languagetool_only_job_applies_nothing(session_factory, test_settings, respx_mock):
+    ids = build(
+        session_factory, [["Mon cœur bat."]], passes=["languagetool"], auto_apply=DEFAULT_POLICY
+    )
+    respx_mock.post(f"{LT}/v2/check").respond(
+        json={
+            "matches": [
+                {
+                    "message": "Possible spelling mistake.",
+                    "offset": 4,
+                    "length": 4,
+                    "replacements": [{"value": "cur"}],
+                    "rule": {"issueType": "misspelling"},
+                }
+            ]
+        }
+    )
+    provider = FakeProvider([])
+    run_task(session_factory, ids.task_id, make_deps(test_settings, provider))
+    assert provider.calls == [] and job(session_factory, ids.job_id).status == "completed"
+    with session_factory() as s:
+        row = s.scalars(select(Suggestion)).one()
+        assert (row.original, row.replacement, row.source) == ("cœur", "cur", "languagetool")
+        assert (row.category, row.severity, row.status) == ("typo", "high", "open")
+    assert decisions(session_factory) == []
+    assert job(session_factory, ids.job_id).stats["auto_applied"] == 0
+
+
+def test_consistency_pass_applies_house_spellings(session_factory, test_settings, lt_route):
+    ids = build(
+        session_factory,
+        [["The colour red."], ["Another colour."]],
+        consistency=True,
+        house={"color": ["colour"]},
+        auto_apply=DEFAULT_POLICY,
+    )
+    deps = make_deps(test_settings, FakeProvider([reply(), reply()]))
+    for tid in ids.task_ids:
+        run_task(session_factory, tid, deps)
+    assert job(session_factory, ids.job_id).status == "completed"
+    assert decisions(session_factory) == [
+        ("colour", "accepted", "ai", "auto"),
+        ("colour", "accepted", "ai", "auto"),
+    ]
+    assert job(session_factory, ids.job_id).stats["auto_applied"] == 2
+
+
+def test_consistency_pass_applies_straight_quotes_but_leaves_curly_ones_open(
+    session_factory, test_settings, lt_route
+):
+    """In de-DE, “Hallo” would become “Hallo“: a curly quote of another style waits for a
+    person, while straight quotes still get the house style."""
+    ids = build(
+        session_factory,
+        [['Er sagte “Hallo”. Sie sagte "Tschüss".']],
+        consistency=True,
+        variant="de-DE",
+        quote_style="„“‚‘",
+        auto_apply=DEFAULT_POLICY,
+    )
+    deps = make_deps(test_settings, FakeProvider([reply()]))
+    for tid in ids.task_ids:
+        run_task(session_factory, tid, deps)
+    assert job(session_factory, ids.job_id).status == "completed"
+    assert decisions(session_factory) == [('"', "accepted", "ai", "auto")] * 2
+    with session_factory() as s:
+        rows = s.execute(
+            select(Suggestion.original, Suggestion.replacement, Suggestion.status)
+            .where(Suggestion.rule == "quote_style")
+            .order_by(Suggestion.start)
+        ).all()
+    assert rows == [("”", "“", "open"), ('"', "„", "accepted"), ('"', "“", "accepted")]
+    assert job(session_factory, ids.job_id).stats["auto_applied"] == 2
+
+
+def test_auto_apply_off_by_default_for_books_without_a_policy(
+    session_factory, test_settings, lt_route
+):
+    ids = build(session_factory, [["teh cat."]], passes=["ai"])  # the column default: off
+    provider = FakeProvider([reply(ai(ids.block_ids[0], "teh", "the", "typo", "high"))])
+    run_task(session_factory, ids.task_id, make_deps(test_settings, provider))
+    assert count(session_factory, Suggestion) == 1 and decisions(session_factory) == []
+    assert job(session_factory, ids.job_id).stats["auto_applied"] == 0
 
 
 def test_job_completes_only_when_every_task_done(session_factory, job_two_chapters, test_settings):

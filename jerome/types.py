@@ -65,6 +65,10 @@ class Candidate:
     severity: Severity
     source: Source
     explanation: str
+    agreed: bool = False  # the model and another checker proposed this same fix
+    disputed: bool = False  # another checker proposed a different fix for this span
+    alternative: str | None = None  # that other fix's replacement
+    rule: str | None = None  # which house-style rule a consistency candidate came from
 
 
 @dataclass(frozen=True)

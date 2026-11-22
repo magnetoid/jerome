@@ -1,8 +1,8 @@
-from collections.abc import Sequence
-from dataclasses import dataclass
-from typing import Literal
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass, field
+from typing import Literal, NamedTuple
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from jerome.documents.changes import Change, apply_changes, check_replacement_text
@@ -12,6 +12,9 @@ from jerome.orm import Block, Chapter, Decision, Suggestion
 from jerome.types import Candidate, Severity
 
 DECIDED = ("accepted", "edited")
+# Who made a decision: an API client, a Word review import, a person in the browser, or AI
+# auto-apply. ("system" is internal: supersede/reopen bookkeeping.)
+Channel = Literal["api", "word", "web", "auto"]
 EDITOR_EXPLANATION = "Change made by the editor in Word"
 
 
@@ -22,6 +25,7 @@ class AddResult:
     dropped_rejected_repeat: int
     dropped_open_overlap: int
     dropped_invalid: int = 0  # replacement the documents cannot carry (placeholder, control)
+    rows: list[Suggestion] = field(default_factory=list)  # created by this call, in order
 
 
 @dataclass
@@ -156,9 +160,14 @@ def add_candidates(
                 explanation=c.explanation,
                 status="open",
                 model=model,
+                agreed=c.agreed,
+                disputed=c.disputed,
+                alternative=c.alternative,
+                rule=c.rule,
             )
             session.add(row)
             known.append(row)
+            result.rows.append(row)
             result.created += 1
     session.flush()
     return result
@@ -200,13 +209,32 @@ def _reopen_superseded(session: Session, s: Suggestion, *, actor: str) -> None:
         _log(session, other, "reopen", "superseded", actor=actor, channel="system")
 
 
+def is_auto_applied(session: Session, suggestion_ids: Iterable[int]) -> set[int]:
+    """The suggestions that stand as the AI applied them: accepted, and the latest decision
+    on them that is not system bookkeeping (supersede, reopen) came from auto-apply."""
+    ids = set(suggestion_ids)
+    if not ids:
+        return set()
+    latest = (
+        select(func.max(Decision.id))
+        .where(Decision.suggestion_id.in_(ids), Decision.channel != "system")
+        .group_by(Decision.suggestion_id)
+    )
+    stmt = (
+        select(Decision.suggestion_id)
+        .join(Suggestion, Suggestion.id == Decision.suggestion_id)
+        .where(Decision.id.in_(latest), Decision.channel == "auto", Suggestion.status == "accepted")
+    )
+    return set(session.scalars(stmt))
+
+
 def decide(
     session: Session,
     suggestion_id: int,
     action: Literal["accept", "reject", "edit", "undo"],
     *,
     actor: str,
-    channel: Literal["api", "word"] = "api",
+    channel: Channel = "api",
     replacement: str | None = None,
     review_import_id: int | None = None,
 ) -> Suggestion:
@@ -217,10 +245,17 @@ def decide(
     session.refresh(s)
 
     previous = s.status
+    # A person may reject or edit a change the AI applied in one step. A person's accept
+    # still needs an undo first, so one click cannot overturn a decision someone made.
+    reversing = (
+        action in ("reject", "edit")
+        and previous == "accepted"
+        and s.id in is_auto_applied(session, [s.id])
+    )
     if action == "undo":
         if previous not in ("accepted", "rejected", "edited"):
             raise Conflict(f"cannot undo a {previous} suggestion")
-    elif previous != "open":
+    elif previous != "open" and not reversing:
         raise Conflict(f"cannot {action} a {previous} suggestion")
     if action == "edit" and replacement is None:
         raise InvalidChangeError("edit requires a replacement")
@@ -256,7 +291,7 @@ def decide(
     )
     if action in ("accept", "edit"):
         _supersede_overlapping(session, s, actor=actor)
-    elif action == "undo":
+    elif action == "undo" or reversing:  # the change is gone: what it displaced comes back
         _reopen_superseded(session, s, actor=actor)
     session.flush()
     return s
@@ -315,35 +350,42 @@ def record_editor_change(
     return row
 
 
+class SuggestionPage(NamedTuple):
+    rows: list[Suggestion]
+    total: int  # rows matching the filter, ignoring limit and offset
+
+
 def list_suggestions(
     session: Session, book_id: int, f: SuggestionFilter, limit: int = 100, offset: int = 0
-) -> list[Suggestion]:
-    stmt = (
+) -> SuggestionPage:
+    conditions = [Suggestion.book_id == book_id]
+    if f.chapter_id is not None:
+        conditions.append(Block.chapter_id == f.chapter_id)
+    if f.category is not None:
+        conditions.append(Suggestion.category == f.category)
+    if f.severity is not None:
+        conditions.append(Suggestion.severity == f.severity)
+    if f.min_severity is not None:
+        floor = Severity(f.min_severity).rank
+        conditions.append(Suggestion.severity.in_([s.value for s in Severity if s.rank >= floor]))
+    if f.source is not None:
+        conditions.append(Suggestion.source == f.source)
+    if f.status is not None:
+        conditions.append(Suggestion.status == f.status)
+    joined = (
         select(Suggestion)
         .join(Block, Block.id == Suggestion.block_id)
         .join(Chapter, Chapter.id == Block.chapter_id)
-        .where(Suggestion.book_id == book_id)
+        .where(*conditions)
     )
-    if f.chapter_id is not None:
-        stmt = stmt.where(Block.chapter_id == f.chapter_id)
-    if f.category is not None:
-        stmt = stmt.where(Suggestion.category == f.category)
-    if f.severity is not None:
-        stmt = stmt.where(Suggestion.severity == f.severity)
-    if f.min_severity is not None:
-        floor = Severity(f.min_severity).rank
-        stmt = stmt.where(Suggestion.severity.in_([s.value for s in Severity if s.rank >= floor]))
-    if f.source is not None:
-        stmt = stmt.where(Suggestion.source == f.source)
-    if f.status is not None:
-        stmt = stmt.where(Suggestion.status == f.status)
+    total = session.scalar(select(func.count()).select_from(joined.subquery())) or 0
     stmt = (
-        stmt.order_by(Chapter.ordinal, Block.ordinal, Suggestion.start, Suggestion.id)
+        joined.order_by(Chapter.ordinal, Block.ordinal, Suggestion.start, Suggestion.id)
         .limit(limit)
         .offset(offset)
         .execution_options(populate_existing=True)
     )
-    return list(session.scalars(stmt))
+    return SuggestionPage(list(session.scalars(stmt)), total)
 
 
 def bulk_decide(
@@ -354,6 +396,7 @@ def bulk_decide(
     f: SuggestionFilter | None,
     action: Literal["accept", "reject"],
     actor: str,
+    channel: Channel = "api",
 ) -> int:
     if (ids is None) == (f is None):
         raise InvalidChangeError("give exactly one of ids or filter")
@@ -361,7 +404,7 @@ def bulk_decide(
         wanted = set(ids)
         found = {
             s.id: s
-            for s in list_suggestions(session, book_id, SuggestionFilter(), limit=2**31 - 1)
+            for s in list_suggestions(session, book_id, SuggestionFilter(), limit=2**31 - 1).rows
             if s.id in wanted
         }
         if wanted - found.keys():
@@ -372,7 +415,7 @@ def bulk_decide(
         if f.status not in (None, "open"):
             return 0
         scoped = SuggestionFilter(**{**f.__dict__, "status": "open"})
-        targets = list_suggestions(session, book_id, scoped, limit=2**31 - 1)
+        targets = list_suggestions(session, book_id, scoped, limit=2**31 - 1).rows
     decided = 0
     for s in targets:
         session.refresh(s)  # an earlier accept in this bulk may have superseded it
@@ -380,7 +423,7 @@ def bulk_decide(
             continue
         try:
             with session.begin_nested():
-                decide(session, s.id, action, actor=actor)
+                decide(session, s.id, action, actor=actor, channel=channel)
         except Conflict:
             continue
         decided += 1
@@ -394,13 +437,19 @@ def get_block(session: Session, book_id: int, block_id: int) -> Block:
     return block
 
 
+def text_with_changes(text: str, suggestions: Iterable[Suggestion]) -> str:
+    """The block text with its accepted and edited suggestions applied; others are ignored."""
+    changes = [
+        Change(s.start, s.end, s.final_text if s.status == "edited" else s.replacement)
+        for s in suggestions
+        if s.status in DECIDED
+    ]
+    return apply_changes(text, changes)
+
+
 def current_text(session: Session, block_id: int) -> str:
     block = session.get(Block, block_id)
     if block is None:
         raise NotFound(f"block {block_id} not found")
     stmt = select(Suggestion).where(Suggestion.block_id == block_id, Suggestion.status.in_(DECIDED))
-    changes = [
-        Change(s.start, s.end, s.final_text if s.status == "edited" else s.replacement)
-        for s in session.scalars(stmt)
-    ]
-    return apply_changes(block.text, changes)
+    return text_with_changes(block.text, session.scalars(stmt))

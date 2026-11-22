@@ -124,6 +124,13 @@ def client(session, tmp_storage, test_settings):
 
 
 @pytest.fixture
+def web_client(client):
+    """The API client over https, so the Secure session cookie is sent back like a browser."""
+    client.base_url = "https://testserver"
+    return client
+
+
+@pytest.fixture
 def auth(session):
     from jerome.core.keys import create_api_key
 

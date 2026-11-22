@@ -1,9 +1,20 @@
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from jerome.api import routes_books, routes_exports, routes_jobs, routes_suggestions, routes_text
-from jerome.api.deps import current_actor
+from jerome.api import (
+    routes_auth,
+    routes_books,
+    routes_exports,
+    routes_jobs,
+    routes_projects,
+    routes_suggestions,
+    routes_text,
+    routes_users,
+)
+from jerome.api.auth import LoginThrottle
+from jerome.api.deps import current_principal
 from jerome.api.limits import BodyLimitMiddleware
+from jerome.api.web import mount_web
 from jerome.config import Settings, get_settings
 from jerome.db import make_engine
 from jerome.errors import (
@@ -41,14 +52,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.lt_client = LanguageToolClient(settings.languagetool_url)
     app.state.text_limits = TextLimits(settings.text_rpm)
     app.state.engine = make_engine(settings.database_url)
+    app.state.login_throttle = LoginThrottle()
     app.add_middleware(BodyLimitMiddleware)
     for exc_type, status in _ERROR_STATUS.items():
         app.add_exception_handler(exc_type, _handler(status))
 
-    auth = [Depends(current_actor)]
+    # Every /v1 route needs an API key or a session cookie. The auth router is the exception:
+    # login is open, and its other routes depend on current_principal themselves.
+    # current_principal also declares the Bearer scheme, so /docs shows Authorize.
+    app.include_router(routes_auth.router, prefix="/v1")
+    auth = [Depends(current_principal)]
     app.include_router(routes_books.router, prefix="/v1", dependencies=auth)
     app.include_router(routes_suggestions.router, prefix="/v1", dependencies=auth)
     app.include_router(routes_exports.router, prefix="/v1", dependencies=auth)
     app.include_router(routes_jobs.router, prefix="/v1", dependencies=auth)
     app.include_router(routes_text.router, prefix="/v1", dependencies=auth)
+    app.include_router(routes_users.router, prefix="/v1", dependencies=auth)
+    app.include_router(routes_projects.router, prefix="/v1", dependencies=auth)
+    # The catch-all web app goes last, so it never shadows an API route.
+    if settings.web_dir is not None:
+        mount_web(app, settings.web_dir)
     return app

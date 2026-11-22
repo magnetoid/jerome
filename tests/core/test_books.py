@@ -5,6 +5,7 @@ from io import BytesIO
 
 import pytest
 
+from jerome.core.auto_apply import DEFAULT_POLICY, OFF_POLICY, get_policy, policy_to_json
 from jerome.core.books import (
     block_texts,
     delete_book,
@@ -164,6 +165,23 @@ def test_local_only_stored(session, tmp_storage):
         local_only=True,
     )
     assert book.local_only is True
+
+
+def test_new_books_default_to_auto_apply_on(session, tmp_storage):
+    on = import_book(
+        session, tmp_storage, filename="a.docx", data=make_docx(["x"]), variant="en-US"
+    )
+    off = import_book(
+        session,
+        tmp_storage,
+        filename="b.docx",
+        data=make_docx(["y"]),
+        variant="en-US",
+        auto_apply=OFF_POLICY,
+    )
+    assert get_policy(session, on.id) == DEFAULT_POLICY and DEFAULT_POLICY.enabled
+    assert on.auto_apply == policy_to_json(DEFAULT_POLICY)
+    assert get_policy(session, off.id) == OFF_POLICY
 
 
 def test_epub_non_proofread_chapters_stored(session, tmp_storage):

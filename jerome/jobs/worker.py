@@ -24,6 +24,7 @@ from typing import Any
 from sqlalchemy import exists, func, select, update
 from sqlalchemy.orm import Session, aliased, sessionmaker
 
+from jerome.core.auto_apply import AutoApplyPolicy, apply_clear_cut, get_policy
 from jerome.core.books import block_texts
 from jerome.core.style_sheets import get_style_sheet
 from jerome.core.suggestions import add_candidates
@@ -146,6 +147,7 @@ class _Plan:
     passes: list[str]
     local_only: bool
     style: StyleSheet
+    policy: AutoApplyPolicy
     chunks: list[Chunk] = field(default_factory=list)
 
 
@@ -208,6 +210,7 @@ def _start(sf: SessionFactory, task_id: int, deps: WorkerDeps) -> _Plan | None:
             passes=list(job.passes),
             local_only=book.local_only,
             style=get_style_sheet(s, job.book_id),
+            policy=get_policy(s, job.book_id),
         )
         if task.kind == "chapter":
             plan.chunks = chunk_blocks(block_texts(s, job.book_id, task.chapter_id))
@@ -388,13 +391,14 @@ def _run_chunk(
             return False
         model = paid.result.result.model if paid.result is not None else None
         added = add_candidates(s, plan.book_id, job.id, merged, model=model)
+        applied = apply_clear_cut(s, added.rows, plan.policy)
         dropped += (
             added.dropped_decided_overlap
             + added.dropped_rejected_repeat
             + added.dropped_open_overlap
             + added.dropped_invalid
         )
-        deltas = {"dropped": dropped}
+        deltas = {"dropped": dropped, "auto_applied": applied}
         if refusals:
             deltas["refusals"] = refusals
         if skipped:
@@ -451,6 +455,7 @@ def _run_consistency(sf: SessionFactory, task_id: int, plan: _Plan, deps: Worker
             + added.dropped_rejected_repeat
             + added.dropped_open_overlap
             + added.dropped_invalid,
+            auto_applied=apply_clear_cut(s, added.rows, plan.policy),
         )
         note = _complete_task(s, job, task, deps)
         s.commit()

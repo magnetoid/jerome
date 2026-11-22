@@ -4,9 +4,10 @@ from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy.orm import Session
+from sqlalchemy import select
 
-from jerome.api.deps import current_actor, get_registry, get_session
+from jerome.api.deps import SessionDep, current_actor, get_registry
+from jerome.core import books
 from jerome.jobs import service
 from jerome.jobs.estimate import ALL_PASSES, PassName, estimate_job
 from jerome.models import Registry
@@ -14,7 +15,6 @@ from jerome.orm import Job
 
 router = APIRouter()
 
-SessionDep = Annotated[Session, Depends(get_session)]
 RegistryDep = Annotated[Registry, Depends(get_registry)]
 Passes = Annotated[list[PassName], Field(min_length=1)]
 MaxCost = Annotated[Decimal, Field(gt=0, max_digits=12, decimal_places=4)]
@@ -82,6 +82,13 @@ def estimate(book_id: int, body: EstimateIn, session: SessionDep, registry: Regi
     return estimate_job(
         session, registry, book_id, passes=body.passes, chapter_ids=body.chapters
     ).to_json()
+
+
+@router.get("/books/{book_id}/jobs")
+def list_for_book(book_id: int, session: SessionDep):
+    books.get_book(session, book_id)
+    stmt = select(Job).where(Job.book_id == book_id).order_by(Job.created_at.desc(), Job.id.desc())
+    return [_job_json(j) for j in session.scalars(stmt)]
 
 
 @router.post("/books/{book_id}/jobs", status_code=201)

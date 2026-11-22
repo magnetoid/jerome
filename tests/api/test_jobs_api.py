@@ -122,3 +122,22 @@ def test_create_job_with_empty_chapter_list_422(client, auth, book):
         headers=auth,
     )
     assert r.status_code == 422
+
+
+def test_book_jobs_listed_newest_first(client, auth, book, session):
+    from jerome.orm import Job
+
+    url = f"/v1/books/{book.id}/jobs"
+    assert client.get(url, headers=auth).json() == []
+    ids = []
+    for _ in range(3):
+        j = Job(book_id=book.id, type="proofread", status="completed", passes=[], max_cost=1)
+        session.add(j)
+        session.flush()
+        ids.append(j.id)
+    r = client.get(url, headers=auth)
+    assert r.status_code == 200
+    assert [j["id"] for j in r.json()] == ids[::-1]
+    assert {"status", "tasks", "cost_actual"} <= set(r.json()[0])
+    assert client.get("/v1/books/999999/jobs", headers=auth).status_code == 404
+    assert client.get(url).status_code == 401

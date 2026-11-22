@@ -1,15 +1,20 @@
 from datetime import UTC, datetime
 
 import pytest
+from lxml import etree
 
+from jerome.core.auto_apply import DEFAULT_POLICY, apply_clear_cut
+from jerome.core.books import import_book
 from jerome.core.exports import export_book, recorded_changes
-from jerome.core.suggestions import decide
+from jerome.core.suggestions import add_candidates, decide
 from jerome.documents.changes import Change
+from jerome.documents.docx_xml import qn
 from jerome.documents.epub_reader import read_epub
 from jerome.errors import UnsupportedDocumentError
 from jerome.orm import Block
-from tests.fixtures.docx_builders import all_blocks, part_xml
-from tests.fixtures.suggestions import add_one
+from jerome.types import Category, Severity, Source
+from tests.fixtures.docx_builders import all_blocks, make_docx, part_xml
+from tests.fixtures.suggestions import add_one, cand
 
 NOW = datetime(2026, 11, 21, tzinfo=UTC)
 
@@ -25,6 +30,44 @@ def test_docx_tracked_has_revisions_for_recorded(session, tmp_storage, docx_book
     doc = part_xml(f.data, "word/document.xml")
     assert doc.count("<w:ins ") == 2
     assert 'w:author="Jerome"' in doc and "<w:comment" not in doc
+
+
+def test_tracked_export_marks_auto_changes_as_jerome_ai(session, tmp_storage):
+    book = import_book(
+        session,
+        tmp_storage,
+        filename="ai.docx",
+        data=make_docx(["teh cat sat", "a dog ran"]),
+        variant="en-US",
+    )
+    first, second = session.query(Block).filter_by(book_id=book.id).order_by(Block.id).all()
+    typo = cand(
+        first,
+        0,
+        3,
+        "teh",
+        "the",
+        source=Source.MODEL,
+        category=Category.TYPO,
+        severity=Severity.HIGH,
+    )
+    rows = add_candidates(session, book.id, None, [typo]).rows
+    assert apply_clear_cut(session, rows, DEFAULT_POLICY) == 1
+    person = add_one(session, second, 2, 5, "dog", "hound")
+    decide(session, person.id, "accept", actor="ed@example.com", channel="web")
+
+    f = export_book(session, tmp_storage, book.id, "docx-tracked", now=NOW)
+    doc = etree.fromstring(part_xml(f.data, "word/document.xml").encode())
+    revisions = sorted(
+        (el.get(qn("w:author")), el.tag.split("}")[1], "".join(el.itertext()))
+        for el in doc.iter(qn("w:ins"), qn("w:del"))
+    )
+    assert revisions == [
+        ("Jerome", "del", "dog"),
+        ("Jerome", "ins", "hound"),
+        ("Jerome AI", "del", "teh"),
+        ("Jerome AI", "ins", "the"),
+    ]
 
 
 def test_epub_clean(session, tmp_storage, epub_book_with_decisions):

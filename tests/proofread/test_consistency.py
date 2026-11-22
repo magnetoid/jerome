@@ -229,3 +229,19 @@ def test_web_addresses_and_emails_are_not_prose():
 def test_plural_is_not_a_near_duplicate_name():
     blocks = _many("We met the Ushers and Usher again. Then Usher left.", 3)
     assert [x for x in consistency_candidates(blocks, STYLE_EN) if x.original == "Ushers"] == []
+
+
+def test_consistency_candidates_carry_their_rule():
+    house = replace(STYLE_EN, house_spellings={"OK": ["okay"]})
+    (h,) = consistency_candidates([BlockText(1, "It was okay.")], house)
+    assert h.rule == "house_spelling"
+    quotes = consistency_candidates([BlockText(1, 'He said "hi".')], STYLE_EN)
+    assert {x.rule for x in quotes} == {"quote_style"}
+    variants = [BlockText(i, "Send an e-mail.") for i in range(4)] + [
+        BlockText(9, "Send an email.")
+    ]
+    assert [x.rule for x in consistency_candidates(variants, STYLE_EN)] == ["variant"]
+    names = [BlockText(i, "Then Katharina laughed.") for i in range(5)] + [
+        BlockText(9, "Then Katarina laughed.")
+    ]
+    assert [x.rule for x in consistency_candidates(names, STYLE_EN)] == ["name"]
