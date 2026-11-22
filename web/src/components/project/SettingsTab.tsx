@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { apiFetch } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -32,7 +32,11 @@ const CATEGORIES = [
   { value: "style", label: "Style" },
 ];
 
+const STYLE_KEY = (id: string) => ["style-sheet", id] as const;
+const AUTO_KEY = (id: string) => ["auto-apply", id] as const;
+
 function StyleForm({ bookId, sheet }: { bookId: string; sheet: StyleSheet }) {
+  const client = useQueryClient();
   const defaultQuote = DEFAULT_QUOTES[sheet.variant] ?? "“”‘’";
   const [value, setValue] = useState<HouseStyleValue>({
     quote: sheet.quote_style,
@@ -44,7 +48,7 @@ function StyleForm({ bookId, sheet }: { bookId: string; sheet: StyleSheet }) {
 
   const save = useMutation({
     mutationFn: () =>
-      apiFetch(`/v1/books/${bookId}/style-sheet`, {
+      apiFetch<StyleSheet>(`/v1/books/${bookId}/style-sheet`, {
         method: "PUT",
         json: {
           quote_style: value.quote ?? defaultQuote,
@@ -52,7 +56,10 @@ function StyleForm({ bookId, sheet }: { bookId: string; sheet: StyleSheet }) {
           ignore_words: parseIgnore(value.ignore),
         },
       }),
-    onSuccess: () => toast.success("House style saved"),
+    onSuccess: (saved) => {
+      client.setQueryData(STYLE_KEY(bookId), saved);
+      toast.success("House style saved");
+    },
   });
 
   return (
@@ -67,6 +74,7 @@ function StyleForm({ bookId, sheet }: { bookId: string; sheet: StyleSheet }) {
 }
 
 function AutoApplyForm({ bookId, initial }: { bookId: string; initial: AutoApply }) {
+  const client = useQueryClient();
   const [policy, setPolicy] = useState<AutoApply>(initial);
   const save = useMutation({
     mutationFn: () =>
@@ -74,7 +82,10 @@ function AutoApplyForm({ bookId, initial }: { bookId: string; initial: AutoApply
         method: "PUT",
         json: { ...policy, categories: [...policy.categories].sort() },
       }),
-    onSuccess: () => toast.success("Auto-apply saved"),
+    onSuccess: (saved) => {
+      client.setQueryData(AUTO_KEY(bookId), saved);
+      toast.success("Auto-apply saved");
+    },
   });
   const toggleCat = (c: string, on: boolean) =>
     setPolicy({
@@ -134,14 +145,12 @@ function AutoApplyForm({ bookId, initial }: { bookId: string; initial: AutoApply
 
 export default function SettingsTab({ bookId }: { bookId: string }) {
   const sheet = useQuery({
-    queryKey: ["style-sheet", bookId],
+    queryKey: STYLE_KEY(bookId),
     queryFn: () => apiFetch<StyleSheet>(`/v1/books/${bookId}/style-sheet`),
-    staleTime: Infinity,
   });
   const auto = useQuery({
-    queryKey: ["auto-apply", bookId],
+    queryKey: AUTO_KEY(bookId),
     queryFn: () => apiFetch<AutoApply>(`/v1/books/${bookId}/auto-apply`),
-    staleTime: Infinity,
   });
 
   return (

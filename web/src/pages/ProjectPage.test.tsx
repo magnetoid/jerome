@@ -3,7 +3,7 @@ import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { json } from "@/test-utils";
 import {
-  activeJob, bodyOf, BOOK, callsTo, job, pageApi, project, renderPage,
+  activeJob, bodyOf, BOOK, callsTo, job, pageApi, project, renderPage, STYLE,
 } from "@/components/project/fixtures";
 
 afterEach(() => {
@@ -207,5 +207,38 @@ describe("always-available parts", () => {
     await userEvent.click(within(dialog).getByRole("button", { name: /^delete$/i }));
     await waitFor(() => expect(screen.getByTestId("where")).toHaveTextContent(/^\/$/));
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ["projects"] });
+  });
+
+  async function backToSettings() {
+    await userEvent.click(screen.getByRole("tab", { name: "Overview" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Settings" }));
+  }
+
+  it("keeps saved auto-apply values after leaving and re-entering Settings", async () => {
+    pageApi({ "PUT /v1/books/1/auto-apply": (init) => json(200, JSON.parse(init.body as string)) });
+    renderPage();
+    await userEvent.click(await screen.findByRole("tab", { name: "Settings" }));
+    await userEvent.selectOptions(await screen.findByLabelText(/minimum severity/i), "low");
+    await userEvent.click(screen.getByRole("button", { name: /save auto-apply/i }));
+    await waitFor(() => expect(screen.getByRole("button", { name: /save auto-apply/i })).toBeEnabled());
+    await backToSettings();
+    await waitFor(() => expect(screen.getByLabelText(/minimum severity/i)).toHaveValue("low"));
+  });
+
+  it("keeps the saved house style after leaving and re-entering Settings", async () => {
+    const f = pageApi({
+      "PUT /v1/books/1/style-sheet": (init) =>
+        json(200, { ...STYLE, ...JSON.parse(init.body as string) }),
+    });
+    renderPage();
+    await userEvent.click(await screen.findByRole("tab", { name: "Settings" }));
+    await userEvent.click(await screen.findByRole("button", { name: /^house style$/i }));
+    await userEvent.type(await screen.findByLabelText(/words to ignore/i), "Aberdeen");
+    await userEvent.click(screen.getByRole("button", { name: /save house style/i }));
+    await waitFor(() => expect(screen.getByRole("button", { name: /save house style/i })).toBeEnabled());
+    await waitFor(() => expect(callsTo(f, "PUT", "/v1/books/1/style-sheet")).toHaveLength(1));
+    await backToSettings();
+    await userEvent.click(await screen.findByRole("button", { name: /^house style$/i }));
+    expect(await screen.findByLabelText(/words to ignore/i)).toHaveValue("Aberdeen");
   });
 });
