@@ -7,8 +7,9 @@ from sqlalchemy.orm import Session
 
 from jerome.api.app import create_app
 from jerome.api.deps import get_session
+from jerome.core.auto_apply import DEFAULT_POLICY, OFF_POLICY, policy_to_json
 from jerome.core.keys import create_api_key, verify_api_key
-from jerome.orm import ApiKey
+from jerome.orm import ApiKey, Book
 from tests.fixtures.docx_builders import make_docx
 
 
@@ -61,6 +62,22 @@ def test_upload_and_get_book(client, auth):
     chapters = client.get(f"/v1/books/{body['id']}/chapters", headers=auth).json()
     assert chapters[0]["title"] == "One"
     assert set(chapters[0]) == {"id", "ordinal", "title", "proofread", "source_ref"}
+
+
+def test_upload_with_auto_apply_false_stores_off_policy(client, auth, session):
+    def upload(**form):
+        r = client.post(
+            "/v1/books",
+            headers=auth,
+            files={"file": ("m.docx", make_docx(["# One", "x"]))},
+            data={"variant": "en-US", **form},
+        )
+        assert r.status_code == 201, r.text
+        return session.get(Book, r.json()["id"])
+
+    assert upload(auto_apply="false").auto_apply == policy_to_json(OFF_POLICY)
+    assert upload(auto_apply="true").auto_apply == policy_to_json(DEFAULT_POLICY)
+    assert upload().auto_apply == policy_to_json(DEFAULT_POLICY)  # on unless asked
 
 
 def test_upload_too_large_413(client, auth, test_settings):

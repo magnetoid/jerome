@@ -4,7 +4,7 @@ Only blocks with accepted or edited suggestions are touched.
 """
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import PurePath
 from typing import Literal
@@ -13,7 +13,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from jerome.core.books import get_book
-from jerome.core.suggestions import spans_overlap
+from jerome.core.suggestions import is_auto_applied, spans_overlap
 from jerome.documents.changes import Change
 from jerome.documents.docx_writer import DocxWriteOptions, write_docx
 from jerome.documents.epub_writer import write_epub
@@ -26,6 +26,10 @@ ExportFormat = Literal["docx-review", "docx-tracked", "docx-clean", "epub-clean"
 
 DOCX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 EPUB_MEDIA_TYPE = "application/epub+zip"
+# Author of a tracked change the AI applied; a person's keep Change's default, "Jerome". The
+# review copy keeps "Jerome" on all of its revisions: the review import relies on that author
+# to tell Jerome's revisions from the editor's.
+AI_AUTHOR = "Jerome AI"
 
 
 @dataclass
@@ -43,17 +47,22 @@ class ReviewFilters:
 
 
 def recorded_changes(session: Session, book_id: int) -> dict[str, list[Change]]:
-    """Accepted and edited suggestions as changes, keyed by block key, ordered by start."""
+    """Accepted and edited suggestions as changes, keyed by block key, ordered by start.
+    A change the AI applied (and no person has decided since) is authored "Jerome AI"."""
     rows = session.execute(
         select(Suggestion, Block.source_ref)
         .join(Block, Block.id == Suggestion.block_id)
         .where(Suggestion.book_id == book_id, Suggestion.status.in_(("accepted", "edited")))
         .order_by(Suggestion.start, Suggestion.end, Suggestion.id)
     ).all()
+    by_ai = is_auto_applied(session, [s.id for s, _ in rows])
     changes: dict[str, list[Change]] = {}
     for s, key in rows:
         text = s.final_text if s.status == "edited" else s.replacement
-        changes.setdefault(key, []).append(Change(s.start, s.end, text, ref=str(s.id)))
+        change = Change(s.start, s.end, text, ref=str(s.id))
+        changes.setdefault(key, []).append(
+            replace(change, author=AI_AUTHOR) if s.id in by_ai else change
+        )
     return changes
 
 

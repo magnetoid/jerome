@@ -1,8 +1,8 @@
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import Literal
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from jerome.documents.changes import Change, apply_changes, check_replacement_text
@@ -209,6 +209,25 @@ def _reopen_superseded(session: Session, s: Suggestion, *, actor: str) -> None:
         _log(session, other, "reopen", "superseded", actor=actor, channel="system")
 
 
+def is_auto_applied(session: Session, suggestion_ids: Iterable[int]) -> set[int]:
+    """The suggestions that stand as the AI applied them: accepted, and the latest decision
+    on them that is not system bookkeeping (supersede, reopen) came from auto-apply."""
+    ids = set(suggestion_ids)
+    if not ids:
+        return set()
+    latest = (
+        select(func.max(Decision.id))
+        .where(Decision.suggestion_id.in_(ids), Decision.channel != "system")
+        .group_by(Decision.suggestion_id)
+    )
+    stmt = (
+        select(Decision.suggestion_id)
+        .join(Suggestion, Suggestion.id == Decision.suggestion_id)
+        .where(Decision.id.in_(latest), Decision.channel == "auto", Suggestion.status == "accepted")
+    )
+    return set(session.scalars(stmt))
+
+
 def decide(
     session: Session,
     suggestion_id: int,
@@ -226,10 +245,17 @@ def decide(
     session.refresh(s)
 
     previous = s.status
+    # A person may reject or edit a change the AI applied in one step. A person's accept
+    # still needs an undo first, so one click cannot overturn a decision someone made.
+    reversing = (
+        action in ("reject", "edit")
+        and previous == "accepted"
+        and s.id in is_auto_applied(session, [s.id])
+    )
     if action == "undo":
         if previous not in ("accepted", "rejected", "edited"):
             raise Conflict(f"cannot undo a {previous} suggestion")
-    elif previous != "open":
+    elif previous != "open" and not reversing:
         raise Conflict(f"cannot {action} a {previous} suggestion")
     if action == "edit" and replacement is None:
         raise InvalidChangeError("edit requires a replacement")
@@ -265,7 +291,7 @@ def decide(
     )
     if action in ("accept", "edit"):
         _supersede_overlapping(session, s, actor=actor)
-    elif action == "undo":
+    elif action == "undo" or reversing:  # the change is gone: what it displaced comes back
         _reopen_superseded(session, s, actor=actor)
     session.flush()
     return s

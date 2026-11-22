@@ -13,6 +13,7 @@ from jerome.api.schemas import (
 )
 from jerome.config import Settings
 from jerome.core import books, style_sheets
+from jerome.core.auto_apply import DEFAULT_POLICY, OFF_POLICY
 from jerome.storage import Storage
 from jerome.types import Variant
 
@@ -31,6 +32,7 @@ def upload_book(
     variant: Annotated[Variant, Form()],
     title: Annotated[str | None, Form()] = None,
     local_only: Annotated[bool, Form()] = False,
+    auto_apply: Annotated[bool, Form()] = True,
 ):
     data = read_limited(file, settings.max_upload_mb * 1024 * 1024)
     return books.import_book(
@@ -41,6 +43,7 @@ def upload_book(
         variant=variant,
         title=title,
         local_only=local_only,
+        auto_apply=DEFAULT_POLICY if auto_apply else OFF_POLICY,
     )
 
 

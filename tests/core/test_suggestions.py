@@ -455,3 +455,81 @@ def test_add_candidates_stores_flags_and_returns_rows(session, block):
         None,
         None,
     )
+
+
+def _auto_applied(session, block, start=0, end=3, original="teh", replacement="the"):
+    s = add_one(session, block, start, end, original, replacement, source="model")
+    decide(session, s.id, "accept", actor="ai", channel="auto")
+    return s
+
+
+def _decisions(session, s):
+    return session.query(Decision).filter_by(suggestion_id=s.id).order_by(Decision.id).all()
+
+
+def test_reject_reverts_an_auto_applied_change_in_one_step(session, block):
+    s = _auto_applied(session, block)
+    assert current_text(session, block.id) == "the cat sat"
+    decide(session, s.id, "reject", actor="ed@example.com", channel="web")
+    assert session.get(Suggestion, s.id).status == "rejected"
+    auto, person = _decisions(session, s)  # exactly one new decision
+    assert (auto.actor, auto.channel) == ("ai", "auto")
+    assert (
+        person.action,
+        person.previous_status,
+        person.new_status,
+        person.actor,
+        person.channel,
+    ) == ("reject", "accepted", "rejected", "ed@example.com", "web")
+    assert current_text(session, block.id) == "teh cat sat"
+
+
+def test_reject_of_an_auto_applied_change_reopens_what_it_superseded(session, block):
+    s = add_one(session, block, 0, 3, "teh", "the", source="model")
+    wide = insert_raw_open(session, block, 0, 7, "teh cat", "the dog")
+    decide(session, s.id, "accept", actor="ai", channel="auto")
+    assert session.get(Suggestion, wide.id).status == "superseded"
+    decide(session, s.id, "reject", actor="ed@example.com", channel="web")
+    wide = session.get(Suggestion, wide.id)
+    assert (wide.status, wide.superseded_by) == ("open", None)
+    assert len(_decisions(session, s)) == 2
+
+
+def test_edit_an_auto_applied_change(session, block):
+    s = _auto_applied(session, block)
+    decide(session, s.id, "edit", actor="ed@example.com", channel="web", replacement="The")
+    s = session.get(Suggestion, s.id)
+    assert (s.status, s.final_text) == ("edited", "The")
+    _, edit = _decisions(session, s)
+    assert (edit.action, edit.previous_status, edit.new_status, edit.final_text) == (
+        "edit",
+        "accepted",
+        "edited",
+        "The",
+    )
+    assert (edit.actor, edit.channel) == ("ed@example.com", "web")
+    assert current_text(session, block.id) == "The cat sat"
+
+
+def test_reject_after_a_persons_accept_is_still_409(session, block):
+    s = add_one(session, block, 0, 3, "teh", "the", source="model")
+    decide(session, s.id, "accept", actor="ed@example.com", channel="web")
+    for action in ("reject", "edit"):
+        with pytest.raises(Conflict):
+            decide(session, s.id, action, actor="ed@example.com", channel="web", replacement="x")
+    # an AI change that a person undid and accepted again is now that person's change
+    t = _auto_applied(session, block, 4, 7, "cat", "cats")
+    decide(session, t.id, "undo", actor="ed@example.com", channel="web")
+    decide(session, t.id, "accept", actor="ed@example.com", channel="web")
+    with pytest.raises(Conflict):
+        decide(session, t.id, "reject", actor="ed@example.com", channel="web")
+    assert session.get(Suggestion, t.id).status == "accepted"
+
+
+def test_undo_and_accept_of_an_auto_applied_change_work_as_before(session, block):
+    s = _auto_applied(session, block)
+    with pytest.raises(Conflict):
+        decide(session, s.id, "accept", actor="ed@example.com", channel="web")
+    decide(session, s.id, "undo", actor="ed@example.com", channel="web")
+    assert session.get(Suggestion, s.id).status == "open"
+    assert [d.action for d in _decisions(session, s)] == ["accept", "undo"]
