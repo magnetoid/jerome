@@ -2,6 +2,7 @@ import secrets
 import threading
 from datetime import UTC, datetime
 from functools import cache
+from typing import get_args
 
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError
@@ -12,6 +13,7 @@ from sqlalchemy.orm import Session
 from jerome.core.sessions import revoke_user_sessions
 from jerome.errors import Conflict, InvalidChangeError, NotFound
 from jerome.orm import User
+from jerome.types import Role
 
 MIN_PASSWORD_LENGTH = 10
 _hasher = PasswordHasher()
@@ -45,20 +47,69 @@ def _get(session: Session, user_id: int) -> User:
     return user
 
 
+def get_user_by_email(session: Session, email: str) -> User:
+    user = session.scalar(select(User).where(User.email == normalize_email(email)))
+    if user is None:
+        raise NotFound(f"no user with email {normalize_email(email)}")
+    return user
+
+
+def _check_role(role: str) -> None:
+    if role not in get_args(Role):
+        raise InvalidChangeError(f"unknown role {role!r}")
+
+
+def _guard_last_super_admin(session: Session, user: User) -> None:
+    """Refuse to remove the only active super admin. All active super admins, the target
+    included, are selected FOR UPDATE in id order, so concurrent demotions queue up in a
+    fixed order (no deadlock) and cannot both pass."""
+    active_ids = session.scalars(
+        select(User.id)
+        .where(User.role == "super_admin", User.active)
+        .order_by(User.id)
+        .with_for_update()
+    ).all()
+    if not any(uid != user.id for uid in active_ids):
+        raise Conflict("cannot remove the last active super admin")
+
+
+def set_role(session: Session, user_id: int, role: str) -> User:
+    _check_role(role)
+    user = _get(session, user_id)
+    if user.role == "super_admin" and user.active and role != "super_admin":
+        _guard_last_super_admin(session, user)
+    user.role = role
+    session.flush()
+    return user
+
+
 def create_user(
-    session: Session, email: str, name: str, password: str | None = None
+    session: Session,
+    email: str,
+    name: str,
+    password: str | None = None,
+    role: Role | None = None,
 ) -> tuple[User, str | None]:
-    """Create a user. Without a password, a temporary one is generated and returned."""
+    """Create a user. Without a password, a temporary one is generated and returned.
+    Without a role, the user becomes super admin if none is active, else a member."""
     email = normalize_email(email)
+    if role is not None:
+        _check_role(role)
     temporary = password is None
     if password is None:
         password = _temporary_password()
     _check_length(password)
     if session.scalar(select(User).where(User.email == email)) is not None:
         raise Conflict(f"a user with email {email} already exists")
+    if role is None:
+        has_super_admin = session.scalar(
+            select(func.count()).select_from(User).where(User.role == "super_admin", User.active)
+        )
+        role = "member" if has_super_admin else "super_admin"
     user = User(
         email=email,
         name=name,
+        role=role,
         password_hash=_hash(password),
         must_change_password=temporary,
     )
@@ -143,6 +194,8 @@ def update_user(
             )
             if not others:
                 raise Conflict("cannot deactivate the last active member")
+            if user.role == "super_admin":
+                _guard_last_super_admin(session, user)
         user.active = active
         if not active:
             revoke_user_sessions(session, user.id)  # their open browsers are logged out now

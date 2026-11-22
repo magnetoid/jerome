@@ -3,7 +3,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, StringConstraints, field_validator
 
-from jerome.types import Category, Severity, Source, Status, Variant
+from jerome.types import Category, Role, Severity, Source, Status, Variant
 
 
 class BookOut(BaseModel):
@@ -115,6 +115,7 @@ class UserOut(BaseModel):
     email: str
     name: str
     active: bool
+    role: Role
     must_change_password: bool
     last_login_at: datetime | None
     created_at: datetime
@@ -123,6 +124,7 @@ class UserOut(BaseModel):
 class UserCreateIn(BaseModel):
     email: NonEmptyStr
     name: NonEmptyStr
+    role: Role | None = None
 
     @field_validator("email")
     @classmethod
@@ -135,6 +137,7 @@ class UserCreateIn(BaseModel):
 class UserPatchIn(BaseModel):
     name: NonEmptyStr | None = None
     active: bool | None = None
+    role: Role | None = None
     reset_password: bool = False
 
 

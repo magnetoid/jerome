@@ -8,6 +8,7 @@ import ProjectsPage from "@/pages/ProjectsPage";
 import NewProjectPage from "@/pages/NewProjectPage";
 import ProjectPage from "@/pages/ProjectPage";
 import ReviewPage from "@/pages/ReviewPage";
+import ThemeProvider from "@/components/ThemeProvider";
 import { Toaster } from "@/components/ui/sonner";
 
 const queryClient = new QueryClient({
@@ -24,6 +25,7 @@ function Placeholder({ title }: { title: string }) {
 
 export default function App() {
   return (
+    <ThemeProvider>
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
         <Routes>
@@ -41,5 +43,6 @@ export default function App() {
       </BrowserRouter>
       <Toaster />
     </QueryClientProvider>
+    </ThemeProvider>
   );
 }

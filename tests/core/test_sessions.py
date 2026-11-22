@@ -83,7 +83,7 @@ def test_revoke_one_session_or_all_of_a_users_sessions(session):
 
 def test_deactivating_a_user_revokes_their_sessions(session):
     ana, _ = create_user(session, "ana@x.org", "Ana")
-    create_user(session, "bo@x.org", "Bo")
+    create_user(session, "bo@x.org", "Bo", role="super_admin")
     create_session(session, ana, days=30, now=NOW)
     update_user(session, ana.id, active=False)
     assert session.scalar(select(UserSession).where(UserSession.user_id == ana.id)) is None

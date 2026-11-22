@@ -1,3 +1,4 @@
+import enum
 import signal
 import threading
 from decimal import Decimal, InvalidOperation
@@ -10,7 +11,7 @@ import uvicorn
 import jerome
 from jerome.config import get_settings
 from jerome.core.keys import create_api_key
-from jerome.core.users import create_user
+from jerome.core.users import create_user, get_user_by_email, set_role
 from jerome.db import make_engine, session_scope
 from jerome.errors import JeromeError, UnsupportedDocumentError
 
@@ -19,6 +20,11 @@ keys_app = typer.Typer(help="Manage API keys", no_args_is_help=True)
 app.add_typer(keys_app, name="keys")
 users_app = typer.Typer(help="Manage team users", no_args_is_help=True)
 app.add_typer(users_app, name="users")
+
+
+class RoleChoice(enum.StrEnum):
+    super_admin = "super_admin"
+    member = "member"
 
 
 @keys_app.command("create")
@@ -34,15 +40,40 @@ def keys_create(name: str) -> None:
 
 
 @users_app.command("create")
-def users_create(email: str, name: Annotated[str, typer.Option("--name")]) -> None:
+def users_create(
+    email: str,
+    name: Annotated[str, typer.Option("--name")],
+    role: Annotated[RoleChoice | None, typer.Option("--role", help="The new user's role")] = None,
+) -> None:
     """Create a user and print the temporary password (shown once)."""
     engine = make_engine(get_settings().database_url)
     try:
         with session_scope(engine) as session:
-            _, password = create_user(session, email, name)
+            _, password = create_user(session, email, name, role=role.value if role else None)
+    except JeromeError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(2) from exc
     finally:
         engine.dispose()
     typer.echo(password)
+
+
+@users_app.command("set-role")
+def users_set_role(email: str, role: RoleChoice) -> None:
+    """Make a user a super_admin or a member."""
+    engine = make_engine(get_settings().database_url)
+    try:
+        with session_scope(engine) as session:
+            user = set_role(session, get_user_by_email(session, email).id, role.value)
+            address, new_role, active = user.email, user.role, user.active
+    except JeromeError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(2) from exc
+    finally:
+        engine.dispose()
+    typer.echo(f"{address} is now {new_role}")
+    if not active:
+        typer.echo(f"Warning: {address} is deactivated and cannot sign in", err=True)
 
 
 @app.command()

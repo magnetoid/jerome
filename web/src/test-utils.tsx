@@ -3,6 +3,7 @@ import { render } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { vi } from "vitest";
+import ThemeProvider from "@/components/ThemeProvider";
 
 export function Where() {
   const loc = useLocation();
@@ -14,9 +15,11 @@ export function renderApp(ui: ReactElement, entry = "/") {
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   const view = render(
-    <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={[entry]}>{ui}</MemoryRouter>
-    </QueryClientProvider>,
+    <ThemeProvider>
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={[entry]}>{ui}</MemoryRouter>
+      </QueryClientProvider>
+    </ThemeProvider>,
   );
   return { client, ...view };
 }
@@ -39,4 +42,5 @@ export function mockApi(routes: Record<string, Handler | Response>) {
   return fn;
 }
 
-export const ME = { id: 1, email: "ann@example.com", name: "Ann", must_change_password: false };
+export const ME = { id: 1, email: "ann@example.com", name: "Ann", must_change_password: false, role: "super_admin" as const };
+export const MEMBER = { ...ME, role: "member" as const };

@@ -78,6 +78,7 @@ class Principal:
     channel: Literal["api", "web"]
     user_id: int | None
     must_change_password: bool
+    role: str | None = None  # the user's role for a web session; None for an API key
 
 
 def _unauthorized(detail: str) -> HTTPException:
@@ -133,7 +134,15 @@ def current_principal(
         channel="web",
         user_id=user.id,
         must_change_password=user.must_change_password,
+        role=user.role,
     )
+
+
+def require_super_admin(principal: Annotated[Principal, Depends(current_principal)]) -> Principal:
+    """Team management is for super admins signed in on the web; API keys never qualify."""
+    if principal.channel != "web" or principal.role != "super_admin":
+        raise HTTPException(status_code=403, detail="super admin only")
+    return principal
 
 
 def current_actor(principal: Annotated[Principal, Depends(current_principal)]) -> str:

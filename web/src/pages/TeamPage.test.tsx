@@ -4,16 +4,16 @@ import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import type { QueryClient } from "@tanstack/react-query";
 import TeamPage from "./TeamPage";
-import { ME, json, mockApi, renderApp } from "@/test-utils";
+import { ME, MEMBER, json, mockApi, renderApp } from "@/test-utils";
 
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 
 const ann = {
-  id: 1, email: "ann@example.com", name: "Ann", active: true,
+  id: 1, email: "ann@example.com", name: "Ann", active: true, role: "super_admin",
   must_change_password: false, last_login_at: "2026-11-20T10:00:00Z", created_at: "2026-11-01T10:00:00Z",
 };
 const bob = {
-  id: 2, email: "bob@example.com", name: "Bob", active: true,
+  id: 2, email: "bob@example.com", name: "Bob", active: true, role: "member",
   must_change_password: true, last_login_at: null, created_at: "2026-11-02T10:00:00Z",
 };
 
@@ -72,7 +72,7 @@ describe("TeamPage", () => {
     const dialog = await screen.findByRole("dialog", { name: "Temporary password" });
     expect(within(dialog).getByText("tmp-Secret-123")).toBeInTheDocument();
     const post = f.mock.calls.find(([p, i]) => p === "/v1/users" && i?.method === "POST")!;
-    expect(JSON.parse(post[1]!.body as string)).toEqual({ email: "cy@example.com", name: "Cy" });
+    expect(JSON.parse(post[1]!.body as string)).toEqual({ email: "cy@example.com", name: "Cy", role: "member" });
 
     await user.click(within(dialog).getByRole("button", { name: /copy/i }));
     expect(writeText).toHaveBeenCalledWith("tmp-Secret-123");
@@ -187,5 +187,131 @@ describe("TeamPage", () => {
       const patch = f.mock.calls.find(([p]) => p === "/v1/users/2")!;
       expect(JSON.parse(patch[1]!.body as string)).toEqual({ active: true });
     });
+  });
+});
+
+describe("TeamPage roles", () => {
+  it("shows members only the super-admin message and never loads users", async () => {
+    const { f } = setup({ "GET /v1/auth/me": json(200, MEMBER) });
+    expect(await screen.findByText(/only a super admin can manage the team/i)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Team" })).toBeInTheDocument();
+    expect(f.mock.calls.some(([p]) => p === "/v1/users")).toBe(false);
+    expect(screen.queryByRole("form", { name: "Add member" })).not.toBeInTheDocument();
+  });
+
+  it("has a Role column with a badge per member", async () => {
+    setup();
+    await screen.findByText("ann@example.com");
+    expect(screen.getByRole("columnheader", { name: "Role" })).toBeInTheDocument();
+    const annRow = screen.getByText("ann@example.com").closest("tr")!;
+    const bobRow = screen.getByText("bob@example.com").closest("tr")!;
+    expect(within(annRow).getByText("Super admin")).toBeInTheDocument();
+    expect(within(bobRow).getByText("Member")).toBeInTheDocument();
+  });
+
+  it("adds a member with the chosen role and resets the select", async () => {
+    const created = { ...bob, id: 3, email: "cy@example.com", name: "Cy", role: "super_admin" };
+    const { f } = setup({
+      "POST /v1/users": () => json(201, { user: created, temporary_password: "tmp-Secret-123" }),
+    });
+    const user = userEvent.setup();
+    const role = await screen.findByLabelText("Role");
+    expect(role).toHaveValue("member");
+    await user.type(screen.getByLabelText("Email"), "cy@example.com");
+    await user.type(screen.getByLabelText("Name"), "Cy");
+    await user.selectOptions(role, "super_admin");
+    await user.click(screen.getByRole("button", { name: "Add member" }));
+    const dialog = await screen.findByRole("dialog", { name: "Temporary password" });
+    const post = f.mock.calls.find(([p, i]) => p === "/v1/users" && i?.method === "POST")!;
+    expect(JSON.parse(post[1]!.body as string)).toEqual({
+      email: "cy@example.com", name: "Cy", role: "super_admin",
+    });
+    await user.click(within(dialog).getByRole("button", { name: "Done" }));
+    expect(screen.getByLabelText("Role")).toHaveValue("member");
+  });
+
+  it("promotes only after confirming, and sends nothing on cancel", async () => {
+    const { f } = setup({
+      "PATCH /v1/users/2": () =>
+        json(200, { user: { ...bob, role: "super_admin" }, temporary_password: null }),
+    });
+    const user = userEvent.setup();
+    await screen.findByText("bob@example.com");
+    await user.click(screen.getByRole("button", { name: "Make super admin: Bob" }));
+    let confirm = await screen.findByRole("alertdialog");
+    await user.click(within(confirm).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+    expect(f.mock.calls.filter(([p]) => p === "/v1/users/2")).toHaveLength(0);
+
+    await user.click(screen.getByRole("button", { name: "Make super admin: Bob" }));
+    confirm = await screen.findByRole("alertdialog");
+    await user.click(within(confirm).getByRole("button", { name: "Make super admin" }));
+    await waitFor(() => {
+      const patch = f.mock.calls.find(([p]) => p === "/v1/users/2")!;
+      expect(JSON.parse(patch[1]!.body as string)).toEqual({ role: "super_admin" });
+    });
+  });
+
+  it("shows the 409 as a toast when demoting the last super admin", async () => {
+    setup({
+      "PATCH /v1/users/1": json(409, { detail: "cannot remove the last active super admin" }),
+    });
+    const user = userEvent.setup();
+    await screen.findByText("ann@example.com");
+    await user.click(screen.getByRole("button", { name: "Make member: Ann" }));
+    const confirm = await screen.findByRole("alertdialog");
+    expect(confirm).toHaveTextContent(/no longer be able to manage the team/i);
+    await user.click(within(confirm).getByRole("button", { name: "Make member" }));
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith("cannot remove the last active super admin"));
+  });
+
+  it("refreshes your own role after demoting yourself and then shows the member message", async () => {
+    let meCalls = 0;
+    const { f } = setup({
+      "GET /v1/auth/me": () => json(200, meCalls++ === 0 ? ME : MEMBER),
+      "PATCH /v1/users/1": () =>
+        json(200, { user: { ...ann, role: "member" }, temporary_password: null }),
+    });
+    const user = userEvent.setup();
+    await screen.findByText("ann@example.com");
+    await user.click(screen.getByRole("button", { name: "Make member: Ann" }));
+    const confirm = await screen.findByRole("alertdialog");
+    await user.click(within(confirm).getByRole("button", { name: "Make member" }));
+    expect(await screen.findByText(/only a super admin can manage the team/i)).toBeInTheDocument();
+    expect(f.mock.calls.filter(([p]) => p === "/v1/auth/me").length).toBeGreaterThanOrEqual(2);
+    // the list is not refetched, so "Could not load the team." never flashes
+    expect(f.mock.calls.filter(([p]) => p === "/v1/users")).toHaveLength(1);
+    expect(screen.queryByText(/could not load the team/i)).not.toBeInTheDocument();
+  });
+
+  it("switches to the member message when the users list is refused as super admin only", async () => {
+    let meCalls = 0;
+    setup({
+      "GET /v1/auth/me": () => json(200, meCalls++ === 0 ? ME : MEMBER),
+      "GET /v1/users": json(403, { detail: "super admin only" }),
+    });
+    expect(await screen.findByText(/only a super admin can manage the team/i)).toBeInTheDocument();
+  });
+
+  it("keeps the dialog wording of the chosen member while it closes", async () => {
+    setup();
+    const user = userEvent.setup();
+    await screen.findByText("ann@example.com");
+    await user.click(screen.getByRole("button", { name: "Make member: Ann" }));
+    const confirm = await screen.findByRole("alertdialog");
+    expect(confirm).toHaveTextContent("Make Ann a member?");
+    await user.click(within(confirm).getByRole("button", { name: "Cancel" }));
+    expect(document.body).not.toHaveTextContent(/undefined|Make Ann a super admin/);
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+  });
+
+  it("gives role buttons an accessible name that starts with the visible text", async () => {
+    setup();
+    await screen.findByText("ann@example.com");
+    expect(screen.getByRole("button", { name: "Make member: Ann" })).toHaveTextContent("Make member");
+    expect(screen.getByRole("button", { name: "Make super admin: Bob" })).toHaveTextContent(
+      "Make super admin",
+    );
   });
 });

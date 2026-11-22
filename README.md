@@ -58,7 +58,8 @@ watch its progress and review the result in the browser. Clear-cut changes (typo
 and house-style rules) can be applied automatically by the AI while proofreading runs; every
 such change is marked as the AI's and can be reverted in one step. Exports (Word with
 comments, Word with tracked changes, clean Word, clean EPUB) are on the project page. The API
-and its bearer keys work as before.
+and its bearer keys work as before, except team management (`/v1/users`), which needs a
+super admin signed in to the web interface.
 
 **First login.** There is no sign-up. Create each member once, inside the API container:
 
@@ -70,6 +71,11 @@ It prints a temporary password. The member must change it at first login, and ca
 anything else in the app until they do. On Coolify, add a scheduled task on the `api`
 container with that command, run it once, read the temporary password from the task's
 execution log, then delete the task.
+
+The first account becomes the super admin. Only super admins manage the team, in the web
+Team page or with `--role` (`super_admin` or `member`). If no one can reach the Team page,
+`jerome users set-role EMAIL super_admin` restores access. If the only super admin lost
+their password, create a new account with `jerome users create … --role super_admin`.
 
 **Behind a reverse proxy.** Put a TLS reverse proxy in front of the container and set
 `JEROME_TRUSTED_PROXIES` to the address the proxy connects from (for example the Docker

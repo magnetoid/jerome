@@ -2,7 +2,7 @@ from collections.abc import Iterable
 from datetime import datetime
 from decimal import Decimal
 from enum import Enum
-from typing import Any
+from typing import Any, get_args
 
 from sqlalchemy import (
     BigInteger,
@@ -23,7 +23,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
-from jerome.types import Category, Severity, Source, Status
+from jerome.types import Category, Role, Severity, Source, Status
 
 JOB_STATUSES = ("queued", "running", "paused_cost_cap", "cancelled", "failed", "completed")
 ACTIVE_JOB_STATUSES = ("queued", "running", "paused_cost_cap")
@@ -308,6 +308,7 @@ class ApiKey(Base):
 
 class User(Base):
     __tablename__ = "users"
+    __table_args__ = (CheckConstraint(_in("role", get_args(Role)), name="ck_users_role"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     email: Mapped[str] = mapped_column(String, unique=True)
@@ -315,6 +316,7 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String)
     active: Mapped[bool] = mapped_column(Boolean, server_default=sql_text("true"))
     must_change_password: Mapped[bool] = mapped_column(Boolean, server_default=sql_text("false"))
+    role: Mapped[str] = mapped_column(String, server_default=sql_text("'member'"))
     created_at: Mapped[datetime] = _ts()
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 

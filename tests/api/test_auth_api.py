@@ -31,6 +31,7 @@ def test_login_sets_secure_httponly_cookie(web_client, session, test_settings):
         "id": user.id,
         "email": "ana@x.org",
         "name": "Ana",
+        "role": "super_admin",
         "must_change_password": False,
     }
     cookie = r.headers["set-cookie"]
@@ -86,6 +87,7 @@ def test_bearer_key_still_works_and_records_api_channel(client, auth, session, b
         "id": None,
         "email": None,
         "name": "tester",
+        "role": None,
         "must_change_password": False,
     }
     body = {"current": "whatever-123", "new": "whatever-456"}
@@ -211,7 +213,7 @@ def test_changing_own_password_keeps_this_session_and_ends_others(web_client, se
 
 def test_deactivating_a_user_ends_their_sessions(web_client, session):
     ana = login(web_client, session)
-    create_user(session, "bo@x.org", "Bo")
+    create_user(session, "bo@x.org", "Bo", role="super_admin")
     assert web_client.get("/v1/books").status_code == 200
     update_user(session, ana.id, active=False)
     assert web_client.get("/v1/books").status_code == 401

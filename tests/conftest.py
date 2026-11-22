@@ -15,6 +15,13 @@ TEST_DB_URL = os.environ.get(
 )
 
 
+def alembic_config() -> Config:
+    cfg = Config(str(ROOT / "alembic.ini"))
+    cfg.set_main_option("script_location", str(ROOT / "migrations"))
+    cfg.set_main_option("sqlalchemy.url", TEST_DB_URL.replace("%", "%%"))
+    return cfg
+
+
 @pytest.fixture(scope="session")
 def engine():
     name = make_url(TEST_DB_URL).database or ""
@@ -32,10 +39,7 @@ def engine():
     except Exception as exc:  # database unreachable: skip DB-backed tests only
         eng.dispose()
         pytest.skip(f"test database unavailable: {type(exc).__name__}")
-    cfg = Config(str(ROOT / "alembic.ini"))
-    cfg.set_main_option("script_location", str(ROOT / "migrations"))
-    cfg.set_main_option("sqlalchemy.url", TEST_DB_URL.replace("%", "%%"))
-    command.upgrade(cfg, "head")
+    command.upgrade(alembic_config(), "head")
     yield eng
     eng.dispose()
 
