@@ -34,6 +34,7 @@ describe("AppShell", () => {
     expect(screen.getByText("Jerome")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Projects" })).toHaveAttribute("href", "/");
     expect(screen.getByRole("link", { name: "Team" })).toHaveAttribute("href", "/team");
+    expect(screen.getByRole("link", { name: "+ New project" })).toHaveAttribute("href", "/projects/new");
   });
 
   it("redirects to /change-password when a change is forced", async () => {

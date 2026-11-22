@@ -48,7 +48,10 @@ export default function AppShell() {
               Team
             </NavLink>
           </nav>
-          <div className="ml-auto">
+          <div className="ml-auto flex items-center gap-3">
+            <Button asChild size="sm">
+              <Link to="/projects/new">+ New project</Link>
+            </Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" size="sm">
