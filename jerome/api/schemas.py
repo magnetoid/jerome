@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, StringConstraints, field_validator
 
@@ -151,3 +151,19 @@ class AutoApplyBody(BaseModel):
     categories: list[Category]
     min_severity: Severity
     house_rules: bool
+
+
+class AgentActionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    at: datetime
+    actor: str
+    channel: str
+    tool: str
+    book_id: int | None
+    chapter_id: int | None
+    job_id: int | None
+    summary: str
+    before: Any
+    after: Any

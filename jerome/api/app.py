@@ -5,6 +5,7 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from jerome.api import (
+    routes_agent_actions,
     routes_auth,
     routes_books,
     routes_exports,
@@ -80,6 +81,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(routes_text.router, prefix="/v1", dependencies=auth)
     app.include_router(routes_users.router, prefix="/v1", dependencies=auth)
     app.include_router(routes_projects.router, prefix="/v1", dependencies=auth)
+    app.include_router(routes_agent_actions.router, prefix="/v1", dependencies=auth)
     mount_mcp(app)  # /mcp, outside /v1, with its own Bearer-only auth
     # The catch-all web app goes last, so it never shadows an API route.
     if settings.web_dir is not None:
