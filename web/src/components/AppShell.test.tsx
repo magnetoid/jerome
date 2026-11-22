@@ -60,3 +60,21 @@ describe("AppShell", () => {
     expect(client.getQueryData(["me"])).toBeUndefined();
   });
 });
+
+describe("AppShell theme", () => {
+  it("offers System, Light and Dark and remembers the choice", async () => {
+    setup();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: /Ann/ }));
+    expect(await screen.findByText("Theme")).toBeInTheDocument();
+    expect(screen.getByRole("menuitemradio", { name: "System" })).toBeChecked();
+    expect(screen.getByRole("menuitemradio", { name: "Light" })).not.toBeChecked();
+
+    await user.click(screen.getByRole("menuitemradio", { name: "Dark" }));
+    expect(document.documentElement).toHaveClass("dark");
+    expect(localStorage.getItem("jerome-theme")).toBe("dark");
+
+    await user.click(await screen.findByRole("button", { name: /Ann/ }));
+    expect(await screen.findByRole("menuitemradio", { name: "Dark" })).toBeChecked();
+  });
+});

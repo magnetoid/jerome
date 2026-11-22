@@ -3,6 +3,7 @@ import { render } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { vi } from "vitest";
+import ThemeProvider from "@/components/ThemeProvider";
 
 export function Where() {
   const loc = useLocation();
@@ -14,9 +15,11 @@ export function renderApp(ui: ReactElement, entry = "/") {
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   const view = render(
-    <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={[entry]}>{ui}</MemoryRouter>
-    </QueryClientProvider>,
+    <ThemeProvider>
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={[entry]}>{ui}</MemoryRouter>
+      </QueryClientProvider>
+    </ThemeProvider>,
   );
   return { client, ...view };
 }

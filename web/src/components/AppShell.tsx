@@ -1,5 +1,6 @@
 import { Link, Navigate, NavLink, Outlet } from "react-router-dom";
 import { ChevronDownIcon } from "lucide-react";
+import { useTheme } from "next-themes";
 import { useLogout, useMe } from "@/hooks/useMe";
 import { Button } from "@/components/ui/button";
 import {
@@ -7,6 +8,8 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -21,6 +24,7 @@ const link = ({ isActive }: { isActive: boolean }) =>
 export default function AppShell() {
   const me = useMe();
   const logout = useLogout();
+  const { theme, setTheme } = useTheme();
 
   if (me.isError) {
     // A 401 is already redirecting to /login; anything else needs to be visible.
@@ -65,6 +69,14 @@ export default function AppShell() {
                 <DropdownMenuItem asChild>
                   <Link to="/change-password">Change password</Link>
                 </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuLabel>Theme</DropdownMenuLabel>
+                <DropdownMenuRadioGroup value={theme ?? "system"} onValueChange={setTheme}>
+                  <DropdownMenuRadioItem value="system">System</DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="light">Light</DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="dark">Dark</DropdownMenuRadioItem>
+                </DropdownMenuRadioGroup>
+                <DropdownMenuSeparator />
                 <DropdownMenuItem onSelect={() => void logout()}>Log out</DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
