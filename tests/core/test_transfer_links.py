@@ -8,6 +8,7 @@ from jerome.core.transfer_links import (
     consume_upload,
     create_download,
     create_upload,
+    discard_upload,
     purge_expired,
     receive_upload,
     serve_download,
@@ -62,9 +63,45 @@ def test_upload_is_single_use(session, tmp_storage):
         receive_upload(session, tmp_storage, token, b"other", 10, NOW)
     assert consume_upload(session, tmp_storage, link.id, "k", NOW) == b"abc"
     assert link.used_at == NOW
-    assert _files(tmp_storage) == []  # consumed: the file is gone
-    with pytest.raises(NotFound):
+    with pytest.raises(NotFound, match="already used"):
         consume_upload(session, tmp_storage, link.id, "k", NOW)
+
+
+def test_consume_keeps_the_file_until_discarded(session, tmp_storage):
+    link, token = create_upload(session, tmp_storage, "k", NOW)
+    receive_upload(session, tmp_storage, token, b"abc", 10, NOW)
+    consume_upload(session, tmp_storage, link.id, "k", NOW)
+    assert len(_files(tmp_storage)) == 1  # still there: the import may yet roll back
+    discard_upload(session, tmp_storage, link.id)
+    assert _files(tmp_storage) == [] and link.path is None
+    assert link.used_at == NOW
+    discard_upload(session, tmp_storage, link.id)  # twice is harmless
+
+
+def test_rolled_back_consume_leaves_the_upload_usable(session, tmp_storage):
+    link, token = create_upload(session, tmp_storage, "k", NOW)
+    receive_upload(session, tmp_storage, token, b"abc", 10, NOW)
+    attempt = session.begin_nested()
+    consume_upload(session, tmp_storage, link.id, "k", NOW)
+    attempt.rollback()  # the import that used the bytes failed
+    assert consume_upload(session, tmp_storage, link.id, "k", NOW) == b"abc"
+
+
+def test_missing_file_says_to_upload_again(session, tmp_storage):
+    link, token = create_upload(session, tmp_storage, "k", NOW)
+    receive_upload(session, tmp_storage, token, b"abc", 10, NOW)
+    (tmp_storage.root / link.path).unlink()
+    with pytest.raises(NotFound, match="call request_upload again"):
+        consume_upload(session, tmp_storage, link.id, "k", NOW)
+    assert link.used_at is None
+
+
+def test_purge_removes_the_file_of_a_used_upload(session, tmp_storage):
+    link, token = create_upload(session, tmp_storage, "k", NOW)
+    receive_upload(session, tmp_storage, token, b"abc", 10, NOW)
+    consume_upload(session, tmp_storage, link.id, "k", NOW)  # never discarded (a crash)
+    assert purge_expired(session, tmp_storage, EXPIRED) == 1
+    assert _files(tmp_storage) == []
 
 
 def test_another_actor_cannot_consume(session, tmp_storage):

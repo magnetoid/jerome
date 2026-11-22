@@ -8,7 +8,8 @@ transfer, so the agent never puts its API key into a shell command.
 - Only the token's sha256 is stored; the raw token is returned once, to the caller.
 - A link expires :data:`LINK_TTL` after it is made and works once.
 - An upload is received by one PUT, then consumed by one tool call of the key that asked
-  for it. A download is served by one GET.
+  for it; its file is deleted only once that call's work has succeeded. A download is
+  served by one GET.
 - Any link that is unknown, of the other kind, expired or used is :class:`NotFound`.
 - Files wait under ``<data_dir>/transfers/<link id>``. Expired rows and their files are
   purged whenever a new link is made.
@@ -107,8 +108,13 @@ def receive_upload(
 def consume_upload(
     session: Session, storage: Storage, upload_id: int, actor: str, now: datetime
 ) -> bytes:
-    """The bytes of a received upload, once, for the key that asked for it. The file is
-    deleted; the row stays (used) until it expires."""
+    """The bytes of a received upload, once, for the key that asked for it.
+
+    The row is marked used but the file is kept: if the work that uses the bytes fails,
+    the rollback makes the upload usable again with the same id. Call
+    :func:`discard_upload` as the last step once that work has succeeded; an expired
+    row's file is purged anyway.
+    """
     link = session.get(TransferLink, upload_id, with_for_update=True, populate_existing=True)
     if link is None or link.kind != "upload" or link.actor != actor:
         raise NotFound(f"upload {upload_id} not found")
@@ -116,17 +122,27 @@ def consume_upload(
         raise NotFound(f"upload {upload_id} has expired; call request_upload again")
     if link.used_at is not None:
         raise NotFound(f"upload {upload_id} was already used; call request_upload again")
-    if link.received_at is None or link.path is None:
+    if link.received_at is None:
         raise NotFound(f"upload {upload_id} has not been received; PUT the file first")
     try:
-        data = storage.read_transfer(link.path)
-    except NotFound:
-        raise NotFound(f"upload {upload_id} not found") from None
-    storage.delete_transfer(link.path)
+        data = storage.read_transfer(link.path or "")
+    except (NotFound, ValueError):
+        raise NotFound(
+            f"upload {upload_id} is no longer available; call request_upload again"
+        ) from None
     link.used_at = now
-    link.path = None
     session.flush()
     return data
+
+
+def discard_upload(session: Session, storage: Storage, upload_id: int) -> None:
+    """Delete a consumed upload's file. Call it only after the work using it succeeded."""
+    link = session.get(TransferLink, upload_id)
+    if link is None or link.kind != "upload" or link.used_at is None or link.path is None:
+        return
+    storage.delete_transfer(link.path)
+    link.path = None
+    session.flush()
 
 
 def create_download(

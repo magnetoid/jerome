@@ -314,3 +314,50 @@ def test_links_with_real_transactions(session_factory, test_settings):
         assert c.get(_path(out["download_url"])).status_code == 200
         assert c.get(_path(out["download_url"])).status_code == 404
     assert _transfer_files(test_settings) == []
+
+
+def test_failed_import_book_leaves_the_upload_for_a_retry(client, mcp_auth, session, test_settings):
+    up = _upload(client, mcp_auth, make_docx(["# One", "Hello."]))
+    bad = {"upload_id": up["upload_id"], "filename": "book.txt", "variant": "en-US"}
+    assert tool_error(mcp_call(client, mcp_auth, "import_book", bad)).startswith("invalid: ")
+    assert len(_transfer_files(test_settings)) == 1
+    assert actions(session) == []
+
+    good = {**bad, "filename": "book.docx"}
+    book = tool_json(mcp_call(client, mcp_auth, "import_book", good))
+    assert book["original_filename"] == "book.docx"
+    assert _transfer_files(test_settings) == []  # used: the file is gone
+    assert [a.summary for a in actions(session)] == [f'Imported "{book["title"]}"']
+    again = tool_error(mcp_call(client, mcp_auth, "import_book", good))
+    assert (
+        again == f"not_found: upload {up['upload_id']} was already used; call request_upload again"
+    )
+
+
+def test_failed_review_import_leaves_the_upload_for_a_retry(
+    client, mcp_auth, session, test_settings, docx_book_with_decisions
+):
+    book_id = docx_book_with_decisions.id
+    junk = _upload(client, mcp_auth, b"not a docx at all")
+    args = {"book_id": book_id, "upload_id": junk["upload_id"]}
+    assert tool_error(mcp_call(client, mcp_auth, "import_review_copy", args)).startswith(
+        "invalid: "
+    )
+    assert tool_error(mcp_call(client, mcp_auth, "import_review_copy", args)).startswith(
+        "invalid: "
+    )
+    assert actions(session) == []
+
+    out = tool_json(
+        mcp_call(client, mcp_auth, "export_book", {"book_id": book_id, "format": "docx-review"})
+    )
+    copy = client.get(_path(out["download_url"])).content
+    up = _upload(client, mcp_auth, simulate_word_review(copy, accept=["the"]))
+    args = {"book_id": book_id, "upload_id": up["upload_id"]}
+    wrong_book = mcp_call(client, mcp_auth, "import_review_copy", {**args, "book_id": 999999})
+    assert tool_error(wrong_book).startswith("not_found: ")
+    report = tool_json(mcp_call(client, mcp_auth, "import_review_copy", args))
+    assert report["review_import_id"]
+    assert [a.summary for a in actions(session)] == ["Imported a review copy"]
+    left = {f.name for f in _transfer_files(test_settings)}
+    assert str(up["upload_id"]) not in left and str(junk["upload_id"]) in left

@@ -105,6 +105,7 @@ def import_book(
             summary=f'Imported "{out["title"]}"',
             book_id=book.id,
         )
+        transfer_links.discard_upload(c.session, c.storage, upload_id)  # last: all went well
         return out
 
     return call(body)
@@ -130,6 +131,7 @@ def import_review_copy(book_id: int, upload_id: int) -> dict[str, Any]:
             summary="Imported a review copy",
             book_id=book_id,
         )
+        transfer_links.discard_upload(c.session, c.storage, upload_id)  # last: all went well
         return report
 
     return call(body)
