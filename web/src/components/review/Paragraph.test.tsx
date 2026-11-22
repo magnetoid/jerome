@@ -72,6 +72,19 @@ describe("Paragraph", () => {
     expect(container.querySelector("p")).toHaveTextContent(/^𝔄 teh dog$/);
   });
 
+  it("marks an open suggestion ahead of an earlier rejected one it overlaps (R29)", () => {
+    const rejected = sug({ id: 1, start: 2, end: 5, status: "rejected", decided_by: "bob@example.com" });
+    const open = sug({ id: 2, start: 4, end: 9, original: "h cat", replacement: "h dog" });
+    const { container } = render(
+      <Paragraph block={block(100, 1, "𝔄 teh cat", [rejected, open])} isActive={(s) => s.status === "open"} />,
+    );
+    expect(marks(container)).toEqual(["2"]);
+    const mark = screen.getByRole("button", { name: /^Needs you/ });
+    expect(mark).toHaveTextContent(/^h cat$/);
+    expect(mark.className).toMatch(/underline/);
+    expect(container.querySelector("p")).toHaveTextContent(/^𝔄 teh cat$/);
+  });
+
   it("team decisions are subtle and say who decided on hover", () => {
     const text = "teh cat sat on teh mat";
     const accepted = sug({ id: 1, start: 0, end: 3, status: "accepted", decided_by: "bob@example.com" });

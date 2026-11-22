@@ -5,13 +5,14 @@ import FocusCard from "@/components/review/FocusCard";
 import ReviewToolbar from "@/components/review/ReviewToolbar";
 import BulkAccept from "@/components/review/BulkAccept";
 import NextChapterPrompt from "@/components/review/NextChapterPrompt";
+import { Button } from "@/components/ui/button";
 import { useChapterReview, useChapterSummary, useOnVisible } from "@/hooks/useChapterReview";
 import { useDecide, type Action } from "@/hooks/useDecide";
 import { useReviewFocus } from "@/hooks/useReviewFocus";
 import { useReviewKeys } from "@/hooks/useReviewKeys";
 import { detailOf, type ChapterSummary } from "@/lib/jobs";
 import {
-  canAccept, canEdit, canReject, defaultChapter, inView, isDecided, layoutMarks, viewItems,
+  canAccept, canEdit, canReject, defaultChapter, hiddenBy, inView, isDecided, viewItems,
   type Filters, type Suggestion, type View,
 } from "@/lib/review";
 
@@ -88,6 +89,9 @@ function ChapterReview({ bookId, chapterId, chapters }: {
     },
   });
 
+  // A failed next page waits for "Try again" rather than being asked for again on its own.
+  const canLoadMore = query.hasNextPage && !query.isFetchingNextPage && !query.isFetchNextPageError;
+
   const run = (id: number, action: Action, replacement?: string) => {
     if (!decide.isPending) decide.mutate({ id, action, replacement });
   };
@@ -107,7 +111,7 @@ function ChapterReview({ bookId, chapterId, chapters }: {
       if (next()) followKeys.current = true;
       else {
         if (current) focusMark(current.id);
-        if (query.hasNextPage && !query.isFetchingNextPage) void query.fetchNextPage();
+        if (canLoadMore) void query.fetchNextPage();
       }
     },
     prev: () => {
@@ -134,7 +138,7 @@ function ChapterReview({ bookId, chapterId, chapters }: {
     },
     [items, focus],
   );
-  const loadMore = useOnVisible(() => void query.fetchNextPage(), query.hasNextPage && !query.isFetchingNextPage);
+  const loadMore = useOnVisible(() => void query.fetchNextPage(), canLoadMore);
 
   const here = chapters.find((c) => String(c.chapter_id) === chapterId);
   const finished = decidedIn === chapterId && here?.open === 0;
@@ -158,7 +162,9 @@ function ChapterReview({ bookId, chapterId, chapters }: {
           <BulkAccept bookId={bookId} chapterId={chapterId} category={filters.category} onDone={() => setDecidedIn(chapterId)} />
         )}
         {finished && <NextChapterPrompt bookId={bookId} chapters={chapters} chapterId={chapterId} />}
-        {query.isError && <p role="alert" className="text-sm text-destructive">{detailOf(query.error)}</p>}
+        {query.isError && !query.isFetchNextPageError && (
+          <p role="alert" className="text-sm text-destructive">{detailOf(query.error)}</p>
+        )}
         {done && items.length === 0 && !query.isError && (
           <p role="status" className="text-sm text-muted-foreground">
             {filters.category || filters.severity ? "Nothing in this view matches the filters." : EMPTY[view]}
@@ -178,7 +184,7 @@ function ChapterReview({ bookId, chapterId, chapters }: {
             {current?.block_id === b.id && (
               <FocusCard
                 s={current}
-                inline={layoutMarks(b.suggestions).some((m) => m.id === current.id)}
+                hiddenBy={hiddenBy(b.suggestions, current)}
                 editing={editing === current.id}
                 busy={decide.isPending}
                 canUndo={canUndo}
@@ -197,6 +203,12 @@ function ChapterReview({ bookId, chapterId, chapters }: {
         ))}
       </div>
       {query.isFetchingNextPage && <p className="py-4 text-sm text-muted-foreground">Loading more…</p>}
+      {query.isFetchNextPageError && !query.isFetchingNextPage && (
+        <div role="alert" className="flex flex-wrap items-center gap-3 py-4 text-sm text-destructive">
+          <span>{`Could not load more paragraphs: ${detailOf(query.error)}`}</span>
+          <Button size="sm" variant="outline" onClick={() => void query.fetchNextPage()}>Try again</Button>
+        </div>
+      )}
     </main>
   );
 }

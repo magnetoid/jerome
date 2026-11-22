@@ -11,8 +11,8 @@ import { cn } from "@/lib/utils";
 
 interface Props {
   s: Suggestion;
-  /** False when an overlapping change took its place in the text. */
-  inline: boolean;
+  /** The mark that took its place in the text; null when it is marked itself. */
+  hiddenBy: Suggestion | null;
   editing: boolean;
   busy: boolean;
   canUndo: boolean;
@@ -79,6 +79,17 @@ function EditField({ initial, busy, onSave, onCancel }: {
   );
 }
 
+/** Why a suggestion is not marked, naming what is shown there instead. */
+function hiddenNote(by: Suggestion): string {
+  const what =
+    by.status === "accepted" || by.status === "edited"
+      ? "a change already applied there"
+      : by.status === "open"
+        ? "another open suggestion marked there"
+        : "a rejected suggestion shown there";
+  return `Not marked in the text: it overlaps ${what}.`;
+}
+
 function Key({ k }: { k: string }) {
   return <span className="text-muted-foreground">({k})</span>;
 }
@@ -113,11 +124,7 @@ export default function FocusCard(p: Props) {
       )}
       {s.rule && <p className="text-sm">{RULE_LABELS[s.rule] ?? s.rule}</p>}
       <p className={cn("text-sm text-muted-foreground", s.auto_applied && "text-ai")}>{stateLabel(s)}</p>
-      {!p.inline && (
-        <p className="text-sm text-muted-foreground">
-          Not marked in the text: it overlaps another change shown there.
-        </p>
-      )}
+      {p.hiddenBy && <p className="text-sm text-muted-foreground">{hiddenNote(p.hiddenBy)}</p>}
       {p.editing ? (
         <EditField initial={resultText(s)} busy={p.busy} onSave={p.onSave} onCancel={p.onCancelEdit} />
       ) : (

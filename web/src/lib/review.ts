@@ -112,22 +112,32 @@ export function spansOverlap(a: { start: number; end: number }, b: { start: numb
   return a.start < b.end && b.start < a.end;
 }
 
+/** Placement tiers (R29): changes in the text, then what needs a person, then the rest. */
+const tier = (s: Suggestion) => (s.status === "accepted" || s.status === "edited" ? 0 : s.status === "open" ? 1 : 2);
+
 /**
  * The suggestions marked inline in a block, in start order. Superseded ones are never
- * marked. Accepted and edited ones are placed first, so the text always reads as it now
- * stands; the rest follow in start order, and one that overlaps a mark already placed is
- * left out (it stays reachable with j/k and the focus card).
+ * marked. Marks are placed tier by tier: accepted and edited first, so the text always reads
+ * as it now stands; then open ones, so nothing that needs a person hides behind a rejected
+ * one; then the rest (rejected). Within a tier they go in start order, and one that overlaps
+ * a mark already placed is left out (it stays reachable with j/k and the focus card).
  */
 export function layoutMarks(suggestions: Suggestion[]): Suggestion[] {
   const live = suggestions
     .filter((s) => s.status !== "superseded")
-    .sort((a, b) => a.start - b.start || a.id - b.id);
-  const inText = (s: Suggestion) => s.status === "accepted" || s.status === "edited";
+    .sort((a, b) => tier(a) - tier(b) || a.start - b.start || a.id - b.id);
   const placed: Suggestion[] = [];
-  for (const s of [...live.filter(inText), ...live.filter((s) => !inText(s))]) {
+  for (const s of live) {
     if (!placed.some((p) => spansOverlap(p, s))) placed.push(s);
   }
   return placed.sort((a, b) => a.start - b.start || a.end - b.end || a.id - b.id);
+}
+
+/** The mark that took a suggestion's place in the text, or null when it is marked itself. */
+export function hiddenBy(suggestions: Suggestion[], s: Suggestion): Suggestion | null {
+  const marks = layoutMarks(suggestions);
+  if (marks.some((m) => m.id === s.id)) return null;
+  return marks.find((m) => spansOverlap(m, s)) ?? null;
 }
 
 export const SOURCE_LABELS: Record<string, string> = {

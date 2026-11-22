@@ -84,11 +84,52 @@ describe("review keys and focus", () => {
     expect(document.querySelector('[data-sid="7"]')).toBeNull();
     await userEvent.keyboard("jj");
     expect(within(card()).getByText("h dog")).toBeInTheDocument();
-    expect(within(card()).getByText(/not marked in the text/i)).toBeInTheDocument();
+    expect(within(card()).getByText(
+      "Not marked in the text: it overlaps another open suggestion marked there.",
+    )).toBeInTheDocument();
     await userEvent.keyboard("j");
     expect(within(card()).getByText("dgo")).toBeInTheDocument();
     await userEvent.keyboard("k");
     expect(within(card()).getByText("h dog")).toBeInTheDocument();
+  });
+
+  it("an open suggestion is marked over an earlier rejected one it overlaps (R29)", async () => {
+    const rejected = sug({ id: 5, block_id: 100, start: 2, end: 5, status: "rejected", decided_by: "bob@example.com" });
+    const open = sug({ id: 7, block_id: 100, start: 4, end: 9, original: "h cat", replacement: "h dog" });
+    reviewServer([block(100, 1, "𝔄 teh cat sat.", [rejected, open]), BLOCKS[1]], SUMMARY);
+    renderReview();
+    await screen.findByText("2 left");
+    const mark = screen.getByRole("button", { name: /^Needs you: “h cat”/ });
+    expect(mark).toHaveTextContent(/^h cat$/);
+    expect(mark.className).toMatch(/decoration-amber-500/);
+    expect(document.querySelector('[data-sid="5"]')).toBeNull();
+    await userEvent.keyboard("j");
+    expect(within(card()).getByText("h dog")).toBeInTheDocument();
+    expect(within(card()).queryByText(/not marked in the text/i)).not.toBeInTheDocument();
+    // In All, the rejected one is reachable, and the card says what took its place.
+    await userEvent.click(screen.getByRole("button", { name: "All" }));
+    await userEvent.keyboard("k");
+    expect(within(card()).getByText("Rejected by bob@example.com")).toBeInTheDocument();
+    expect(within(card()).getByText(
+      "Not marked in the text: it overlaps another open suggestion marked there.",
+    )).toBeInTheDocument();
+  });
+
+  it("a suggestion hidden by an applied change says so on its card", async () => {
+    const rejected = sug({ id: 5, block_id: 100, start: 2, end: 5, status: "rejected", decided_by: "bob@example.com" });
+    const accepted = sug({
+      id: 7, block_id: 100, start: 4, end: 9, original: "h cat", replacement: "h dog",
+      status: "accepted", decided_by: "bob@example.com",
+    });
+    reviewServer([block(100, 1, "𝔄 teh cat sat.", [rejected, accepted]), BLOCKS[1]], SUMMARY);
+    renderReview();
+    await screen.findByText("2 left");
+    await userEvent.click(screen.getByRole("button", { name: "All" }));
+    await userEvent.keyboard("j");
+    expect(within(card()).getByText("Rejected by bob@example.com")).toBeInTheDocument();
+    expect(within(card()).getByText(
+      "Not marked in the text: it overlaps a change already applied there.",
+    )).toBeInTheDocument();
   });
 
   it("keyboard focus follows j/k onto the mark, but stays on a view toggle that was clicked", async () => {
@@ -204,6 +245,55 @@ describe("review paging", () => {
     expect(await screen.findByRole("button", { name: /^Needs you: “teh”/ })).toBeInTheDocument();
     // Nothing more to load after the last page.
     const end = document.querySelector('[data-block-id="1050"]')!;
-    expect(observers.some((o) => o.targets.includes(end))).toBe(false);
+    const endWatcher = observers.find((o) => o.targets.includes(end));
+    act(() => endWatcher?.callback([{ isIntersecting: true, target: end }]));
+    expect(fetchMock.mock.calls.filter(([p]) => String(p).startsWith("/v1/chapters/11/review"))).toHaveLength(2);
+  });
+});
+
+describe("review paging when the next page fails", () => {
+  beforeEach(() => {
+    // Like a real IntersectionObserver for an element already in view: observe() reports it
+    // at once, and each new observer reports again.
+    vi.stubGlobal("IntersectionObserver", class {
+      connected = true;
+      callback: (entries: Array<{ isIntersecting: boolean; target: Element }>) => void;
+      constructor(callback: (entries: Array<{ isIntersecting: boolean; target: Element }>) => void) {
+        this.callback = callback;
+      }
+      observe(el: Element) {
+        queueMicrotask(() => this.connected && this.callback([{ isIntersecting: true, target: el }]));
+      }
+      unobserve() {}
+      disconnect() { this.connected = false; }
+    });
+  });
+
+  it("asks once, then waits for Try again instead of retrying in a loop", async () => {
+    const blocks = Array.from({ length: 50 }, (_, i) => block(1000 + i, i + 1, `Plain line ${i + 1}.`));
+    const tail = block(1050, 51, "Last line.");
+    let fail = true;
+    const slow = (res: Response) => new Promise<Response>((r) => setTimeout(() => r(res), 50));
+    const { fetchMock } = reviewServer(blocks, [summaryRow(11, 1, "Arrival", 0)], {
+      [firstPage(11)]: () => json(200, page(blocks, 51)),
+      "GET /v1/chapters/11/review?offset=50&limit=50": () =>
+        slow(fail ? json(500, { detail: "boom" }) : json(200, page([tail], 51, 50))),
+    });
+    const nextPage = () => callsTo(fetchMock, "GET", "/v1/chapters/11/review?offset=50&limit=50").length;
+    renderReview();
+    await screen.findByText("Plain line 50.");
+
+    const retry = await screen.findByRole("button", { name: "Try again" });
+    expect(screen.getByRole("alert")).toHaveTextContent("boom");
+    await act(() => new Promise((r) => setTimeout(r, 400)));
+    expect(nextPage()).toBe(1);
+
+    fail = false;
+    await userEvent.click(retry);
+    expect(await screen.findByText("Last line.")).toBeInTheDocument();
+    expect(nextPage()).toBe(2);
+    expect(screen.queryByRole("button", { name: "Try again" })).not.toBeInTheDocument();
+    await act(() => new Promise((r) => setTimeout(r, 200)));
+    expect(nextPage()).toBe(2);
   });
 });

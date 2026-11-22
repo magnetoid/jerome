@@ -30,23 +30,34 @@ export function useChapterReview(bookId: string, chapterId: string) {
 }
 
 /**
- * A callback ref that calls `onVisible` when its element scrolls into view, while `enabled`.
- * Without IntersectionObserver (old browsers) nothing loads on scroll.
+ * A callback ref that calls `onVisible` while its element is in view and `enabled` is true.
+ * One observer stays attached per element; `enabled` is read from a ref, so turning it off
+ * and on (a fetch starting, failing) never re-creates the observer, whose first report on
+ * a visible element would otherwise ask again at once. When `enabled` comes back on while
+ * the element is still in view, it asks once. Without IntersectionObserver nothing loads
+ * on scroll.
  */
 export function useOnVisible(onVisible: () => void, enabled: boolean) {
   const latest = useRef(onVisible);
+  const on = useRef(enabled);
+  const visible = useRef(false);
   useEffect(() => {
     latest.current = onVisible;
+    on.current = enabled;
   });
-  return useCallback(
-    (el: Element | null) => {
-      if (!el || !enabled || typeof IntersectionObserver === "undefined") return;
-      const observer = new IntersectionObserver((entries) => {
-        if (entries.some((e) => e.isIntersecting)) latest.current();
-      });
-      observer.observe(el);
-      return () => observer.disconnect();
-    },
-    [enabled],
-  );
+  useEffect(() => {
+    if (enabled && visible.current) latest.current();
+  }, [enabled]);
+  return useCallback((el: Element | null) => {
+    if (!el || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver((entries) => {
+      visible.current = entries.some((e) => e.isIntersecting);
+      if (visible.current && on.current) latest.current();
+    });
+    observer.observe(el);
+    return () => {
+      observer.disconnect();
+      visible.current = false;
+    };
+  }, []);
 }
