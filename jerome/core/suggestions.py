@@ -14,7 +14,7 @@ from jerome.types import Candidate, Severity
 DECIDED = ("accepted", "edited")
 # Who made a decision: an API client, a Word review import, a person in the browser, or AI
 # auto-apply. ("system" is internal: supersede/reopen bookkeeping.)
-Channel = Literal["api", "word", "web", "auto"]
+Channel = Literal["api", "word", "web", "auto", "mcp"]
 EDITOR_EXPLANATION = "Change made by the editor in Word"
 
 

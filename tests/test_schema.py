@@ -346,3 +346,88 @@ def test_migration_0005_makes_existing_users_super_admins(engine):
         command.upgrade(cfg, "head")
         with engine.begin() as c:
             c.execute(text("DELETE FROM users WHERE email IN ('old@x.org', 'new@x.org')"))
+
+
+def _committed_suggestion(session_factory) -> int:
+    with session_factory() as s, s.begin():
+        b = Book(title="T", format="docx")
+        b.style_sheet = StyleSheetRow(
+            variant="en-US", quote_style="“”‘’", house_spellings={}, ignore_words=[]
+        )
+        s.add(b)
+        s.flush()
+        _, blk = _block(s, b)
+        sug = Suggestion(
+            book_id=b.id,
+            block_id=blk.id,
+            start=0,
+            end=1,
+            original="H",
+            replacement="h",
+            category="typo",
+            severity="low",
+            source="model",
+            explanation="x",
+        )
+        s.add(sug)
+        s.flush()
+        return sug.id
+
+
+_INSERT_DECISION = (
+    "INSERT INTO decisions (suggestion_id, action, previous_status, new_status, actor, channel) "
+    "VALUES (:sid, 'accept', 'open', 'accepted', 'a', :channel)"
+)
+_INSERT_ACTION = (
+    "INSERT INTO agent_actions (actor, channel, tool, summary) "
+    "VALUES ('janus', 'mcp', 'list_books', 'listed')"
+)
+
+
+def test_migration_0006_adds_mcp_channel_and_tables(engine, session_factory):
+    sid = _committed_suggestion(session_factory)
+    with engine.begin() as c:
+        c.execute(text(_INSERT_DECISION), {"sid": sid, "channel": "mcp"})
+        c.execute(text(_INSERT_ACTION))
+        c.execute(
+            text(
+                "INSERT INTO transfer_links (token_hash, kind, actor, expires_at) "
+                "VALUES ('abc', 'upload', 'janus', now())"
+            )
+        )
+    with pytest.raises(IntegrityError), engine.begin() as c:
+        c.execute(text(_INSERT_DECISION), {"sid": sid, "channel": "bogus"})
+    with pytest.raises(IntegrityError), engine.begin() as c:
+        c.execute(
+            text(
+                "INSERT INTO transfer_links (token_hash, kind, actor, expires_at) "
+                "VALUES ('def', 'sideways', 'janus', now())"
+            )
+        )
+
+
+def test_migration_0006_downgrade_refuses_with_mcp_data(engine, session_factory):
+    from alembic import command
+
+    from tests.conftest import alembic_config
+
+    sid = _committed_suggestion(session_factory)
+    cfg = alembic_config()
+    try:
+        with engine.begin() as c:
+            c.execute(text(_INSERT_DECISION), {"sid": sid, "channel": "mcp"})
+        with pytest.raises(Exception, match="mcp"):
+            command.downgrade(cfg, "0005")
+        with engine.begin() as c:
+            c.execute(text("DELETE FROM decisions WHERE channel = 'mcp'"))
+            c.execute(text(_INSERT_ACTION))
+        with pytest.raises(Exception, match="mcp"):
+            command.downgrade(cfg, "0005")
+        with engine.begin() as c:
+            c.execute(text("DELETE FROM agent_actions"))
+        command.downgrade(cfg, "0005")
+        tables = set(inspect(engine).get_table_names())
+        assert "agent_actions" not in tables
+        assert "transfer_links" not in tables
+    finally:
+        command.upgrade(cfg, "head")

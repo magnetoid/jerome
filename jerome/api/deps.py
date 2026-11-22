@@ -75,7 +75,7 @@ bearer_scheme = HTTPBearer(auto_error=False)
 @dataclass(frozen=True)
 class Principal:
     actor: str
-    channel: Literal["api", "web"]
+    channel: Literal["api", "web", "mcp"]
     user_id: int | None
     must_change_password: bool
     role: str | None = None  # the user's role for a web session; None for an API key
