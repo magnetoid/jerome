@@ -20,10 +20,14 @@ const KEYS: Record<string, keyof ReviewKeyHandlers> = {
   escape: "escape",
 };
 
-/** Keys typed into a field, a select, an editable region or a dialog are not shortcuts. */
+/** Where keys belong to something else: a field, a dialog, an open menu or list. */
+export const NOT_REVIEW_KEYS =
+  "input, textarea, select, [role=dialog], [role=alertdialog], [role=menu], [role=listbox]";
+
+/** Keys typed into a field, an editable region, a dialog or an open menu are not shortcuts. */
 function typing(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) return false;
-  if (target.closest("input, textarea, select, [role=dialog], [role=alertdialog]")) return true;
+  if (target.closest(NOT_REVIEW_KEYS)) return true;
   const editable = target.closest("[contenteditable]");
   return editable !== null && editable.getAttribute("contenteditable") !== "false";
 }

@@ -18,6 +18,8 @@ interface Props {
   onFilters: (f: Filters) => void;
   /** Open suggestions in this chapter, from the chapter summary. */
   left: number | undefined;
+  /** The bulk action for the category filter, kept in view with the other controls. */
+  bulk?: ReactNode;
 }
 
 function Field({ id, label, children }: { id: string; label: string; children: ReactNode }) {
@@ -31,7 +33,7 @@ function Field({ id, label, children }: { id: string; label: string; children: R
 
 export default function ReviewToolbar(p: Props) {
   return (
-    <div className="sticky top-0 z-10 -mx-4 border-b bg-background/95 px-4 py-3 backdrop-blur sm:-mx-6 sm:px-6">
+    <div data-review-toolbar className="sticky top-0 z-10 -mx-4 border-b bg-background/95 px-4 py-3 backdrop-blur sm:-mx-6 sm:px-6">
       <div className="flex flex-wrap items-end gap-3">
         <Field id="review-chapter" label="Chapter">
           <select
@@ -83,6 +85,7 @@ export default function ReviewToolbar(p: Props) {
             </Button>
           ))}
         </div>
+        {p.bulk}
         <p aria-live="polite" className="ml-auto text-lg font-semibold tabular-nums">
           {p.left === undefined ? "" : `${p.left} left`}
         </p>

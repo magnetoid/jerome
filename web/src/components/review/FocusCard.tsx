@@ -94,6 +94,11 @@ function Key({ k }: { k: string }) {
   return <span className="text-muted-foreground">({k})</span>;
 }
 
+/**
+ * The focused suggestion's details and actions. It is sticky inside its paragraph's container:
+ * while a long paragraph is on screen it stays pinned to the bottom of the screen, so what
+ * `a` will accept is always in view, then it settles under the paragraph.
+ */
 export default function FocusCard(p: Props) {
   const { s } = p;
   return (
@@ -101,7 +106,7 @@ export default function FocusCard(p: Props) {
       aria-label="Focused suggestion"
       data-focus-card
       tabIndex={-1}
-      className="mt-2 mb-2 space-y-3 rounded-lg border bg-card p-4 shadow-sm outline-none md:mr-[15.5rem]"
+      className="sticky bottom-4 z-[5] mt-2 mb-2 space-y-3 rounded-lg border bg-card p-4 shadow-md outline-none md:mr-[15.5rem]"
     >
       <Change s={s} />
       <div className="flex flex-wrap gap-1.5">

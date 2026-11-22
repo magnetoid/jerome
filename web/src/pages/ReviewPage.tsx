@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { useChapterReview, useChapterSummary, useOnVisible } from "@/hooks/useChapterReview";
 import { useDecide, type Action } from "@/hooks/useDecide";
 import { useReviewFocus } from "@/hooks/useReviewFocus";
-import { useReviewKeys } from "@/hooks/useReviewKeys";
+import { NOT_REVIEW_KEYS, useReviewKeys } from "@/hooks/useReviewKeys";
 import { detailOf, type ChapterSummary } from "@/lib/jobs";
 import {
   canAccept, canEdit, canReject, defaultChapter, hiddenBy, inView, isDecided, viewItems,
@@ -32,10 +32,10 @@ function inText(): boolean {
   return !active || active === document.body || active.hasAttribute("data-sid") || active.closest("[data-focus-card]") !== null;
 }
 
-/** Move keyboard focus to the focused mark (or its card) unless the person is in a field. */
+/** Move keyboard focus to the focused mark (or its card) unless the person is in a field or menu. */
 function focusMark(id: number) {
   const active = document.activeElement;
-  if (active?.closest("input, textarea, select, [role=dialog], [role=alertdialog]")) return;
+  if (active?.closest(NOT_REVIEW_KEYS)) return;
   const el =
     document.querySelector<HTMLElement>(`button[data-sid="${id}"]`) ??
     document.querySelector<HTMLElement>("[data-focus-card]");
@@ -50,8 +50,13 @@ function ChapterReview({ bookId, chapterId, chapters }: {
   const [view, setView] = useState<View>("needs");
   const [filters, setFilters] = useState<Filters>({ category: "", severity: "" });
   const [editing, setEditing] = useState<number | null>(null);
-  // This page session's decisions, newest last, for `u` with nothing decided in focus.
+  // This page session's decisions, newest last, for `u` when nothing decided is in focus
+  // or the focus moved on by itself.
   const [history, setHistory] = useState<{ id: number; chapterId: string }[]>([]);
+  // After a decision the focus moves on by itself, to a suggestion the person did not pick.
+  // Until they move it themselves (j/k, a click, Tab), `u` steps back through their own
+  // decisions rather than undoing whatever decided suggestion the focus landed on.
+  const [movedOn, setMovedOn] = useState(false);
   // The chapter in which this session last decided something (for the next-chapter prompt).
   const [decidedIn, setDecidedIn] = useState<string | null>(null);
   // Keyboard focus follows j/k, and follows the focus after a decision while the reader is
@@ -68,6 +73,7 @@ function ChapterReview({ bookId, chapterId, chapters }: {
     setShownChapter(chapterId);
     focus(null);
     setEditing(null);
+    setMovedOn(false);
   }
 
   const decide = useDecide(bookId, {
@@ -77,6 +83,7 @@ function ChapterReview({ bookId, chapterId, chapters }: {
         return vars.action === "undo" ? rest : [...rest, { id: row.id, chapterId: String(row.chapter_id) }].slice(-UNDO_DEPTH);
       });
       setDecidedIn(String(row.chapter_id));
+      setMovedOn(true);
       if (vars.action === "edit") setEditing(null);
       if (vars.action === "undo") {
         const ordinal = blocks.find((b) => b.id === row.block_id)?.ordinal;
@@ -96,18 +103,19 @@ function ChapterReview({ bookId, chapterId, chapters }: {
     if (!decide.isPending) decide.mutate({ id, action, replacement });
   };
   const lastHere = history.findLast((h) => h.chapterId === chapterId);
-  const canUndo = (current !== null && isDecided(current)) || lastHere !== undefined;
+  const undoId = !movedOn && current && isDecided(current) ? current.id : lastHere?.id;
+  const canUndo = undoId !== undefined;
 
   const actions = {
     accept: () => current && canAccept(current) && run(current.id, "accept"),
     reject: () => current && canReject(current) && run(current.id, "reject"),
     edit: () => current && canEdit(current) && setEditing(current.id),
     undo: () => {
-      if (current && isDecided(current)) run(current.id, "undo");
-      else if (lastHere) run(lastHere.id, "undo");
+      if (undoId !== undefined) run(undoId, "undo");
     },
     next: () => {
       setEditing(null);
+      setMovedOn(false);
       if (next()) followKeys.current = true;
       else {
         if (current) focusMark(current.id);
@@ -116,12 +124,21 @@ function ChapterReview({ bookId, chapterId, chapters }: {
     },
     prev: () => {
       setEditing(null);
+      setMovedOn(false);
       if (prev()) followKeys.current = true;
       else if (current) focusMark(current.id);
     },
     escape: () => setEditing(null),
   };
   useReviewKeys(actions);
+  useEffect(() => {
+    // Tab moves keyboard focus by hand, so `u` follows the focus again.
+    const onTab = (e: KeyboardEvent) => {
+      if (e.key === "Tab") setMovedOn(false);
+    };
+    window.addEventListener("keydown", onTab);
+    return () => window.removeEventListener("keydown", onTab);
+  }, []);
 
   const currentId = current?.id;
   useEffect(() => {
@@ -135,6 +152,7 @@ function ChapterReview({ bookId, chapterId, chapters }: {
       const it = items.find((x) => x.s.id === id);
       if (it) focus(it);
       setEditing(null);
+      setMovedOn(false);
     },
     [items, focus],
   );
@@ -156,11 +174,11 @@ function ChapterReview({ bookId, chapterId, chapters }: {
         filters={filters}
         onFilters={setFilters}
         left={here?.open}
+        bulk={filters.category ? (
+          <BulkAccept bookId={bookId} chapterId={chapterId} category={filters.category} onDone={() => setDecidedIn(chapterId)} />
+        ) : null}
       />
       <div className="space-y-3 py-4">
-        {filters.category && (
-          <BulkAccept bookId={bookId} chapterId={chapterId} category={filters.category} onDone={() => setDecidedIn(chapterId)} />
-        )}
         {finished && <NextChapterPrompt bookId={bookId} chapters={chapters} chapterId={chapterId} />}
         {query.isError && !query.isFetchNextPageError && (
           <p role="alert" className="text-sm text-destructive">{detailOf(query.error)}</p>
@@ -174,6 +192,7 @@ function ChapterReview({ bookId, chapterId, chapters }: {
       {query.isPending && <p className="text-sm text-muted-foreground">Loading chapter…</p>}
       <div className="space-y-4">
         {blocks.map((b, i) => (
+          // One container per paragraph and its card: the sticky card's limits.
           <div key={b.id} data-block-id={b.id} ref={i === blocks.length - 1 ? loadMore : undefined}>
             <MemoParagraph
               block={b}

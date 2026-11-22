@@ -181,6 +181,10 @@ describe("ReviewPage", () => {
     expect(screen.queryByRole("button", { name: /accept all/i })).not.toBeInTheDocument();
     await userEvent.selectOptions(screen.getByLabelText("Category"), "typo");
     const bulk = await screen.findByRole("button", { name: "Accept all 2 remaining typo in this chapter" });
+    // It sits in the sticky toolbar, so it does not scroll away with the text.
+    const toolbar = bulk.closest("[data-review-toolbar]");
+    expect(toolbar).not.toBeNull();
+    expect(toolbar).toHaveClass("sticky", "top-0");
     await userEvent.click(bulk);
     const dialog = await screen.findByRole("alertdialog");
     expect(posts(fetchMock, "/v1/suggestions/bulk")).toHaveLength(0);
@@ -217,5 +221,77 @@ describe("ReviewPage", () => {
     await waitFor(() => expect(posts(fetchMock, "/v1/suggestions/1/accept")).toHaveLength(1));
     expect(await screen.findByText(/nothing left to review in this book/i)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /back to project/i })).toHaveAttribute("href", "/projects/1");
+  });
+});
+
+describe("u after the focus moved on by itself (F2)", () => {
+  // A third AI change, so the focus can be moved on by hand after a decision.
+  const s8 = aiSug({
+    id: 8, block_id: 102, start: 9, end: 11, original: "hi", replacement: "hello",
+    explanation: "Friendlier.",
+  });
+  const WITH_S8 = [BLOCKS[0], BLOCKS[1], block(102, 3, "Bob said hi.", [s4, s8])];
+
+  async function rejectFirstAiChange(fetchMock: ReturnType<typeof reviewServer>["fetchMock"]) {
+    await screen.findByText("2 left");
+    await userEvent.click(screen.getByRole("button", { name: "Applied by AI" }));
+    await userEvent.keyboard("j");
+    expect(within(card()).getByText("Stronger ending.")).toBeInTheDocument();
+    await userEvent.keyboard("r");
+    await waitFor(() => expect(posts(fetchMock, "/v1/suggestions/6/reject")).toHaveLength(1));
+    // The rejected change leaves the view and the focus moves on to the next AI change.
+    await waitFor(() => expect(within(card()).getByText("Present tense.")).toBeInTheDocument());
+  }
+
+  it("in Applied by AI, u undoes the change just rejected, not the one focus moved on to", async () => {
+    const { fetchMock } = reviewServer(BLOCKS, SUMMARY);
+    renderReview();
+    await rejectFirstAiChange(fetchMock);
+    await userEvent.keyboard("u");
+    await waitFor(() => expect(posts(fetchMock, "/v1/suggestions/6/undo")).toHaveLength(1));
+    expect(posts(fetchMock, "/v1/suggestions/3/undo")).toHaveLength(0);
+    // With nothing left of this session's decisions, u does not reach for the focused change.
+    await waitFor(() => expect(within(card()).getByRole("button", { name: "Undo (u)" })).toBeDisabled());
+    await userEvent.keyboard("u");
+    expect(posts(fetchMock, "/v1/suggestions/3/undo")).toHaveLength(0);
+  });
+
+  it("after the person moves on with j, u undoes the decided suggestion in focus", async () => {
+    const { fetchMock } = reviewServer(WITH_S8, SUMMARY);
+    renderReview();
+    await rejectFirstAiChange(fetchMock);
+    await userEvent.keyboard("j");
+    expect(within(card()).getByText("Friendlier.")).toBeInTheDocument();
+    await userEvent.keyboard("u");
+    await waitFor(() => expect(posts(fetchMock, "/v1/suggestions/8/undo")).toHaveLength(1));
+    expect(posts(fetchMock, "/v1/suggestions/6/undo")).toHaveLength(0);
+  });
+
+  it("after the person clicks a mark, u undoes that one", async () => {
+    const { fetchMock } = reviewServer(BLOCKS, SUMMARY);
+    renderReview();
+    await rejectFirstAiChange(fetchMock);
+    await userEvent.click(screen.getByRole("button", { name: /^Applied by AI: “barked”/ }));
+    await userEvent.keyboard("u");
+    await waitFor(() => expect(posts(fetchMock, "/v1/suggestions/3/undo")).toHaveLength(1));
+    expect(posts(fetchMock, "/v1/suggestions/6/undo")).toHaveLength(0);
+  });
+});
+
+describe("focus card placement (S2)", () => {
+  it("shares one container with its paragraph and sticks to the bottom of the screen", async () => {
+    reviewServer(BLOCKS, SUMMARY);
+    renderReview();
+    await screen.findByText("2 left");
+    await userEvent.keyboard("jj");
+    expect(within(card()).getByText("dgo")).toBeInTheDocument();
+    // The container is the sticky card's limit: it pins to the bottom of the screen while its
+    // paragraph is in view, then settles under the paragraph. (Layout itself is not checked
+    // in jsdom.)
+    const box = card().parentElement!;
+    expect(box).toHaveAttribute("data-block-id", "101");
+    expect(within(box).getByRole("button", { name: /^Needs you: “dgo”/ })).toBeInTheDocument();
+    expect(box.lastElementChild).toBe(card());
+    expect(card()).toHaveClass("sticky", "bottom-4", "bg-card");
   });
 });

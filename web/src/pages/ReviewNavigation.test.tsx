@@ -206,6 +206,30 @@ describe("review keys and focus", () => {
   });
 });
 
+describe("review keys inside a menu or list (M5)", () => {
+  it.each([["menu", "menuitem"], ["listbox", "option"]])(
+    "keys pressed in an open %s are not shortcuts and focus stays there",
+    async (role, itemRole) => {
+      const { fetchMock } = reviewServer(BLOCKS, SUMMARY);
+      renderReview();
+      await screen.findByText("2 left");
+      await userEvent.keyboard("j");
+      expect(within(card()).getByText("teh")).toBeInTheDocument();
+
+      const menu = document.body.appendChild(document.createElement("div"));
+      menu.setAttribute("role", role);
+      const item = menu.appendChild(document.createElement("button"));
+      item.setAttribute("role", itemRole);
+      item.focus();
+      await userEvent.keyboard("jkaru");
+      expect(item).toHaveFocus();
+      expect(within(card()).getByText("teh")).toBeInTheDocument();
+      expect(fetchMock.mock.calls.filter(([, i]) => (i as RequestInit | undefined)?.method === "POST")).toHaveLength(0);
+      menu.remove();
+    },
+  );
+});
+
 describe("review paging", () => {
   type Callback = (entries: Array<{ isIntersecting: boolean; target: Element }>) => void;
   const observers: Array<{ callback: Callback; targets: Element[] }> = [];
