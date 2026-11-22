@@ -55,7 +55,7 @@ docker compose exec api jerome keys create NAME     # one key per person or clie
 Jerome serves a web app from the same container as the API, at `/`. Members sign in with an
 email and password, create a project by uploading a DOCX or EPUB, start a proofreading job,
 watch its progress and review the result in the browser. Clear-cut changes (typos, punctuation
-and house-style rules) can be applied automatically by the AI when the book is uploaded; every
+and house-style rules) can be applied automatically by the AI while proofreading runs; every
 such change is marked as the AI's and can be reverted in one step. Exports (Word with
 comments, Word with tracked changes, clean Word, clean EPUB) are on the project page. The API
 and its bearer keys work as before.
