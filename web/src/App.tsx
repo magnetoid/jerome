@@ -6,6 +6,7 @@ import ChangePasswordPage from "@/pages/ChangePasswordPage";
 import TeamPage from "@/pages/TeamPage";
 import ProjectsPage from "@/pages/ProjectsPage";
 import NewProjectPage from "@/pages/NewProjectPage";
+import ProjectPage from "@/pages/ProjectPage";
 import { Toaster } from "@/components/ui/sonner";
 
 const queryClient = new QueryClient({
@@ -30,7 +31,7 @@ export default function App() {
           <Route element={<AppShell />}>
             <Route path="/" element={<ProjectsPage />} />
             <Route path="/projects/new" element={<NewProjectPage />} />
-            <Route path="/projects/:id" element={<Placeholder title="Project" />} />
+            <Route path="/projects/:id" element={<ProjectPage />} />
             <Route path="/projects/:id/review" element={<Placeholder title="Review" />} />
             <Route path="/team" element={<TeamPage />} />
             <Route path="*" element={<Placeholder title="Page not found" />} />
