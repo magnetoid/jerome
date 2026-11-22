@@ -70,6 +70,7 @@ class SuggestionOut(BaseModel):
     rule: str | None
     auto_applied: bool
     decided_by: str | None
+    decided_channel: str | None
     job_id: int | None
     model: str | None
     created_at: datetime

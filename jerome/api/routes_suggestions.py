@@ -46,9 +46,9 @@ def suggestion_out(session: Session, rows: Sequence[Suggestion]) -> list[dict]:
     }
     auto = suggestions.is_auto_applied(session, ids)
     deciders = {
-        sid: actor
-        for sid, actor in session.execute(
-            select(Decision.suggestion_id, Decision.actor)
+        sid: (actor, channel)
+        for sid, actor, channel in session.execute(
+            select(Decision.suggestion_id, Decision.actor, Decision.channel)
             .where(Decision.suggestion_id.in_(ids), Decision.channel != "system")
             .ext(distinct_on(Decision.suggestion_id))
             .order_by(Decision.suggestion_id, Decision.id.desc())
@@ -59,7 +59,8 @@ def suggestion_out(session: Session, rows: Sequence[Suggestion]) -> list[dict]:
             **{name: getattr(s, name) for name in _PLAIN_FIELDS},
             "chapter_id": chapters[s.id],
             "auto_applied": s.id in auto,
-            "decided_by": deciders.get(s.id),
+            "decided_by": deciders.get(s.id, (None, None))[0],
+            "decided_channel": deciders.get(s.id, (None, None))[1],
         }
         for s in rows
     ]
