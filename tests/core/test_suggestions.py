@@ -233,17 +233,18 @@ def test_current_text_applies_accepted_and_edited(session, block):
 
 def test_list_filters_and_bulk(session, book_with_mixed_suggestions):
     book_id = book_with_mixed_suggestions
-    allv = list_suggestions(session, book_id, SuggestionFilter())
+    allv = list_suggestions(session, book_id, SuggestionFilter()).rows
     assert [s.start for s in allv] == [0, 4, 8]
-    med = list_suggestions(session, book_id, SuggestionFilter(min_severity="medium"))
+    med = list_suggestions(session, book_id, SuggestionFilter(min_severity="medium")).rows
     assert [s.severity for s in med] == ["medium", "high"]
     assert [
-        s.start for s in list_suggestions(session, book_id, SuggestionFilter(severity="low"))
+        s.start for s in list_suggestions(session, book_id, SuggestionFilter(severity="low")).rows
     ] == [0]
-    assert len(list_suggestions(session, book_id, SuggestionFilter(category="grammar"))) == 1
-    assert len(list_suggestions(session, book_id, SuggestionFilter(source="model"))) == 1
+    assert len(list_suggestions(session, book_id, SuggestionFilter(category="grammar")).rows) == 1
+    assert len(list_suggestions(session, book_id, SuggestionFilter(source="model")).rows) == 1
     assert [
-        s.start for s in list_suggestions(session, book_id, SuggestionFilter(), limit=1, offset=1)
+        s.start
+        for s in list_suggestions(session, book_id, SuggestionFilter(), limit=1, offset=1).rows
     ] == [4]
     n = bulk_decide(
         session,
@@ -254,8 +255,8 @@ def test_list_filters_and_bulk(session, book_with_mixed_suggestions):
         actor="a",
     )
     assert n == 2
-    assert len(list_suggestions(session, book_id, SuggestionFilter(status="rejected"))) == 2
-    assert len(list_suggestions(session, book_id, SuggestionFilter(status="open"))) == 1
+    assert len(list_suggestions(session, book_id, SuggestionFilter(status="rejected")).rows) == 2
+    assert len(list_suggestions(session, book_id, SuggestionFilter(status="open")).rows) == 1
 
 
 def test_list_filters_by_chapter_and_orders_by_document(session, tmp_storage):
@@ -270,11 +271,11 @@ def test_list_filters_by_chapter_and_orders_by_document(session, tmp_storage):
     texts = {b.text: b for b in blocks}
     add_one(session, texts["teh two"], 0, 3, "teh", "the")
     add_one(session, texts["teh one"], 0, 3, "teh", "the")
-    got = list_suggestions(session, book.id, SuggestionFilter())
+    got = list_suggestions(session, book.id, SuggestionFilter()).rows
     assert [s.block_id for s in got] == [texts["teh one"].id, texts["teh two"].id]
     only = list_suggestions(
         session, book.id, SuggestionFilter(chapter_id=texts["teh two"].chapter_id)
-    )
+    ).rows
     assert [s.block_id for s in only] == [texts["teh two"].id]
 
 

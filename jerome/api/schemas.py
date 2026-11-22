@@ -53,6 +53,7 @@ class SuggestionOut(BaseModel):
     id: int
     book_id: int
     block_id: int
+    chapter_id: int
     start: int
     end: int
     original: str
@@ -63,6 +64,12 @@ class SuggestionOut(BaseModel):
     explanation: str
     status: str
     final_text: str | None
+    agreed: bool
+    disputed: bool
+    alternative: str | None
+    rule: str | None
+    auto_applied: bool
+    decided_by: str | None
     job_id: int | None
     model: str | None
     created_at: datetime
@@ -134,3 +141,10 @@ class UserPatchIn(BaseModel):
 class UserWithPasswordOut(BaseModel):
     user: UserOut
     temporary_password: str | None
+
+
+class AutoApplyBody(BaseModel):
+    enabled: bool
+    categories: list[Category]
+    min_severity: Severity
+    house_rules: bool

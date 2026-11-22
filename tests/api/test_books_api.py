@@ -240,3 +240,31 @@ def test_style_sheet_quote_style_must_be_four_characters(client, auth, book_id, 
     r = client.put(url, headers=auth, json={"quote_style": bad, "variant": "de-DE"})
     assert r.status_code == 422
     assert client.get(url, headers=auth).json() == before
+
+
+def test_auto_apply_settings_get_put_round_trip(client, auth, book):
+    url = f"/v1/books/{book.id}/auto-apply"
+    assert client.get(url, headers=auth).json() == policy_to_json(OFF_POLICY)
+    body = {
+        "enabled": True,
+        "categories": ["punctuation", "grammar", "typo"],
+        "min_severity": "medium",
+        "house_rules": False,
+    }
+    r = client.put(url, headers=auth, json=body)
+    assert r.status_code == 200
+    assert r.json() == {**body, "categories": ["grammar", "punctuation", "typo"]}
+    assert client.get(url, headers=auth).json() == r.json()
+    empty = {**body, "categories": []}
+    assert client.put(url, headers=auth, json=empty).json()["categories"] == []
+    assert client.put("/v1/books/999999/auto-apply", headers=auth, json=body).status_code == 404
+    assert client.get("/v1/books/999999/auto-apply", headers=auth).status_code == 404
+    assert client.get(url).status_code == 401
+
+
+def test_auto_apply_put_rejects_unknown_category_422(client, auth, book):
+    url = f"/v1/books/{book.id}/auto-apply"
+    good = {"enabled": True, "categories": ["typo"], "min_severity": "high", "house_rules": True}
+    assert client.put(url, headers=auth, json={**good, "categories": ["bogus"]}).status_code == 422
+    assert client.put(url, headers=auth, json={**good, "min_severity": "huge"}).status_code == 422
+    assert client.get(url, headers=auth).json() == policy_to_json(OFF_POLICY)

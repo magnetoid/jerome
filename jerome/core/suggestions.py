@@ -1,6 +1,6 @@
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Literal, NamedTuple
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -350,35 +350,42 @@ def record_editor_change(
     return row
 
 
+class SuggestionPage(NamedTuple):
+    rows: list[Suggestion]
+    total: int  # rows matching the filter, ignoring limit and offset
+
+
 def list_suggestions(
     session: Session, book_id: int, f: SuggestionFilter, limit: int = 100, offset: int = 0
-) -> list[Suggestion]:
-    stmt = (
+) -> SuggestionPage:
+    conditions = [Suggestion.book_id == book_id]
+    if f.chapter_id is not None:
+        conditions.append(Block.chapter_id == f.chapter_id)
+    if f.category is not None:
+        conditions.append(Suggestion.category == f.category)
+    if f.severity is not None:
+        conditions.append(Suggestion.severity == f.severity)
+    if f.min_severity is not None:
+        floor = Severity(f.min_severity).rank
+        conditions.append(Suggestion.severity.in_([s.value for s in Severity if s.rank >= floor]))
+    if f.source is not None:
+        conditions.append(Suggestion.source == f.source)
+    if f.status is not None:
+        conditions.append(Suggestion.status == f.status)
+    joined = (
         select(Suggestion)
         .join(Block, Block.id == Suggestion.block_id)
         .join(Chapter, Chapter.id == Block.chapter_id)
-        .where(Suggestion.book_id == book_id)
+        .where(*conditions)
     )
-    if f.chapter_id is not None:
-        stmt = stmt.where(Block.chapter_id == f.chapter_id)
-    if f.category is not None:
-        stmt = stmt.where(Suggestion.category == f.category)
-    if f.severity is not None:
-        stmt = stmt.where(Suggestion.severity == f.severity)
-    if f.min_severity is not None:
-        floor = Severity(f.min_severity).rank
-        stmt = stmt.where(Suggestion.severity.in_([s.value for s in Severity if s.rank >= floor]))
-    if f.source is not None:
-        stmt = stmt.where(Suggestion.source == f.source)
-    if f.status is not None:
-        stmt = stmt.where(Suggestion.status == f.status)
+    total = session.scalar(select(func.count()).select_from(joined.subquery())) or 0
     stmt = (
-        stmt.order_by(Chapter.ordinal, Block.ordinal, Suggestion.start, Suggestion.id)
+        joined.order_by(Chapter.ordinal, Block.ordinal, Suggestion.start, Suggestion.id)
         .limit(limit)
         .offset(offset)
         .execution_options(populate_existing=True)
     )
-    return list(session.scalars(stmt))
+    return SuggestionPage(list(session.scalars(stmt)), total)
 
 
 def bulk_decide(
@@ -397,7 +404,7 @@ def bulk_decide(
         wanted = set(ids)
         found = {
             s.id: s
-            for s in list_suggestions(session, book_id, SuggestionFilter(), limit=2**31 - 1)
+            for s in list_suggestions(session, book_id, SuggestionFilter(), limit=2**31 - 1).rows
             if s.id in wanted
         }
         if wanted - found.keys():
@@ -408,7 +415,7 @@ def bulk_decide(
         if f.status not in (None, "open"):
             return 0
         scoped = SuggestionFilter(**{**f.__dict__, "status": "open"})
-        targets = list_suggestions(session, book_id, scoped, limit=2**31 - 1)
+        targets = list_suggestions(session, book_id, scoped, limit=2**31 - 1).rows
     decided = 0
     for s in targets:
         session.refresh(s)  # an earlier accept in this bulk may have superseded it

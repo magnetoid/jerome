@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, File, Form, Response, UploadFile
 
 from jerome.api.deps import SessionDep, get_settings_dep, get_storage, read_limited
 from jerome.api.schemas import (
+    AutoApplyBody,
     BookOut,
     ChapterOut,
     ChapterPatch,
@@ -13,7 +14,14 @@ from jerome.api.schemas import (
 )
 from jerome.config import Settings
 from jerome.core import books, style_sheets
-from jerome.core.auto_apply import DEFAULT_POLICY, OFF_POLICY
+from jerome.core.auto_apply import (
+    DEFAULT_POLICY,
+    OFF_POLICY,
+    AutoApplyPolicy,
+    get_policy,
+    policy_to_json,
+    set_policy,
+)
 from jerome.storage import Storage
 from jerome.types import Variant
 
@@ -81,3 +89,23 @@ def put_style_sheet(book_id: int, body: StyleSheetUpdate, session: SessionDep):
 def delete_book(book_id: int, session: SessionDep, storage: StorageDep):
     books.delete_book(session, storage, book_id)
     return Response(status_code=204)
+
+
+@router.get("/books/{book_id}/auto-apply", response_model=AutoApplyBody)
+def get_auto_apply(book_id: int, session: SessionDep):
+    return policy_to_json(get_policy(session, book_id))
+
+
+@router.put("/books/{book_id}/auto-apply", response_model=AutoApplyBody)
+def put_auto_apply(book_id: int, body: AutoApplyBody, session: SessionDep):
+    set_policy(
+        session,
+        book_id,
+        AutoApplyPolicy(
+            enabled=body.enabled,
+            categories=frozenset(body.categories),
+            min_severity=body.min_severity,
+            house_rules=body.house_rules,
+        ),
+    )
+    return policy_to_json(get_policy(session, book_id))
