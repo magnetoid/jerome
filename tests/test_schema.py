@@ -306,3 +306,43 @@ def test_decision_channel_allows_web_and_auto(session, book_factory):
             )
         )
         session.flush()
+
+
+def test_migration_0005_makes_existing_users_super_admins(engine):
+    from alembic import command
+
+    from tests.conftest import alembic_config
+
+    cfg = alembic_config()
+    command.downgrade(cfg, "0004")
+    try:
+        with engine.begin() as c:
+            c.execute(
+                text(
+                    "INSERT INTO users (email, name, password_hash) "
+                    "VALUES ('old@x.org', 'Old', 'h')"
+                )
+            )
+        command.upgrade(cfg, "head")
+        with engine.begin() as c:
+            assert c.scalar(text("SELECT role FROM users WHERE email = 'old@x.org'")) == (
+                "super_admin"
+            )
+            c.execute(
+                text(
+                    "INSERT INTO users (email, name, password_hash) "
+                    "VALUES ('new@x.org', 'New', 'h')"
+                )
+            )
+            assert c.scalar(text("SELECT role FROM users WHERE email = 'new@x.org'")) == "member"
+        with pytest.raises(IntegrityError), engine.begin() as c:
+            c.execute(
+                text(
+                    "INSERT INTO users (email, name, password_hash, role) "
+                    "VALUES ('bad@x.org', 'Bad', 'h', 'owner')"
+                )
+            )
+    finally:
+        command.upgrade(cfg, "head")
+        with engine.begin() as c:
+            c.execute(text("DELETE FROM users WHERE email IN ('old@x.org', 'new@x.org')"))

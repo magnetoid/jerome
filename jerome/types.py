@@ -3,6 +3,7 @@ from enum import StrEnum
 from typing import Literal
 
 Variant = Literal["en-US", "en-GB", "de-DE", "de-AT", "de-CH"]
+Role = Literal["super_admin", "member"]
 
 
 class Category(StrEnum):

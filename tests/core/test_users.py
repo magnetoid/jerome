@@ -4,11 +4,13 @@ from jerome.core.users import (
     authenticate,
     change_password,
     create_user,
+    get_user_by_email,
     list_users,
     reset_password,
+    set_role,
     update_user,
 )
-from jerome.errors import Conflict, InvalidChangeError
+from jerome.errors import Conflict, InvalidChangeError, NotFound
 
 
 def test_create_user_with_generated_password_must_change_it(session):
@@ -28,7 +30,7 @@ def test_duplicate_email_conflicts(session):
 
 def test_authenticate_rejects_wrong_password_and_inactive_user(session):
     user, pw = create_user(session, "ana@x.org", "Ana")
-    create_user(session, "bo@x.org", "Bo")
+    create_user(session, "bo@x.org", "Bo", role="super_admin")
     assert authenticate(session, "ana@x.org", "wrong-password-1") is None
     assert authenticate(session, "nobody@x.org", pw) is None
     update_user(session, user.id, active=False)
@@ -69,8 +71,8 @@ def test_list_users_ordered_by_name(session):
 
 
 def test_cannot_deactivate_last_active_member(session):
-    a, _ = create_user(session, "a@x.org", "A")
-    b, _ = create_user(session, "b@x.org", "B")
+    a, _ = create_user(session, "a@x.org", "A", role="super_admin")
+    b, _ = create_user(session, "b@x.org", "B", role="super_admin")
     update_user(session, a.id, active=False)
     with pytest.raises(Conflict, match="last active member"):
         update_user(session, b.id, active=False)
@@ -89,7 +91,7 @@ def test_unknown_or_inactive_email_still_runs_a_password_verify(session, monkeyp
         return real_verify(self, hash, password)
 
     user, pw = create_user(session, "ana@x.org", "Ana")
-    create_user(session, "bo@x.org", "Bo")
+    create_user(session, "bo@x.org", "Bo", role="super_admin")
     monkeypatch.setattr(PasswordHasher, "verify", spy)
 
     assert authenticate(session, "nobody@x.org", "a-guess-123") is None
@@ -135,3 +137,40 @@ def test_argon2_work_is_bounded_to_a_few_at_a_time(monkeypatch):
     for t in threads:
         t.join()
     assert peak == 4
+
+
+def test_first_user_is_super_admin_and_later_ones_are_members(session):
+    a, _ = create_user(session, "a@x.org", "A")
+    b, _ = create_user(session, "b@x.org", "B")
+    c, _ = create_user(session, "c@x.org", "C", role="super_admin")
+    assert (a.role, b.role, c.role) == ("super_admin", "member", "super_admin")
+
+
+def test_set_role_promotes_and_demotes(session):
+    a, _ = create_user(session, "a@x.org", "A")
+    b, _ = create_user(session, "b@x.org", "B")
+    assert set_role(session, b.id, "super_admin").role == "super_admin"
+    assert set_role(session, a.id, "member").role == "member"
+
+
+def test_cannot_demote_or_deactivate_the_last_active_super_admin(session):
+    a, _ = create_user(session, "a@x.org", "A")
+    create_user(session, "b@x.org", "B")  # an active member keeps the member guard quiet
+    create_user(session, "z@x.org", "Z", role="super_admin")
+    update_user(session, get_user_by_email(session, "z@x.org").id, active=False)
+    # an inactive super admin does not count
+    with pytest.raises(Conflict, match="cannot remove the last active super admin"):
+        set_role(session, a.id, "member")
+    with pytest.raises(Conflict, match="cannot remove the last active super admin"):
+        update_user(session, a.id, active=False)
+
+
+def test_unknown_role_and_unknown_email_are_refused(session):
+    a, _ = create_user(session, "a@x.org", "A")
+    with pytest.raises(InvalidChangeError):
+        set_role(session, a.id, "owner")
+    with pytest.raises(InvalidChangeError):
+        create_user(session, "b@x.org", "B", role="owner")
+    with pytest.raises(NotFound):
+        get_user_by_email(session, "nobody@x.org")
+    assert get_user_by_email(session, " A@X.org ").id == a.id
