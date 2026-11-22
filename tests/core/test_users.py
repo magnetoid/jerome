@@ -8,6 +8,7 @@ from jerome.core.users import (
     list_users,
     reset_password,
     set_role,
+    update_member,
     update_user,
 )
 from jerome.errors import Conflict, InvalidChangeError, NotFound
@@ -207,3 +208,49 @@ def test_crossing_super_admin_demotions_do_not_deadlock(engine, session_factory)
     assert outcomes.count("ok") == 1, outcomes
     conflicts = [o for o in outcomes if isinstance(o, Conflict)]
     assert len(conflicts) == 1, outcomes
+
+
+@pytest.mark.parametrize(
+    "change",
+    [{"role": "member"}, {"active": False}],
+    ids=["demote", "deactivate"],
+)
+def test_crossing_edits_that_rename_and_remove_super_admins_do_not_deadlock(
+    engine, session_factory, change
+):
+    """A team-page edit renames and removes a super admin in one request. Two admins doing
+    that to themselves at once: one succeeds, the other gets the Conflict, never a deadlock.
+    Several rounds, because the deadlock depends on how the two transactions interleave."""
+    import threading
+
+    with session_factory() as s, s.begin():
+        a, _ = create_user(s, "a@x.org", "A", role="super_admin")
+        b, _ = create_user(s, "b@x.org", "B", role="super_admin")
+        create_user(s, "m@x.org", "M", role="member")  # so deactivating stays allowed
+        ids = (a.id, b.id)
+
+    for round_ in range(6):
+        with session_factory() as s, s.begin():
+            for uid in ids:
+                update_member(s, uid, active=True, role="super_admin")
+
+        barrier = threading.Barrier(2)
+        outcomes: list[object] = []
+
+        def edit(user_id: int, barrier: threading.Barrier, outcomes: list[object]) -> None:
+            try:
+                with session_factory() as s, s.begin():
+                    barrier.wait(timeout=10)
+                    update_member(s, user_id, name="Renamed", **change)
+                outcomes.append("ok")
+            except Exception as exc:  # noqa: BLE001 - the test inspects the type
+                outcomes.append(exc)
+
+        threads = [threading.Thread(target=edit, args=(i, barrier, outcomes)) for i in ids]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=30)
+
+        assert outcomes.count("ok") == 1, (round_, outcomes)
+        assert sum(isinstance(o, Conflict) for o in outcomes) == 1, (round_, outcomes)
