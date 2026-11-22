@@ -144,4 +144,23 @@ describe("apiFetch", () => {
     expect(err.detail).toBe("admin only");
     expect(assign).not.toHaveBeenCalled();
   });
+
+  it("parses Retry-After seconds into retryAfter", async () => {
+    const res = new Response(JSON.stringify({ detail: "slow down" }), {
+      status: 429,
+      headers: { "Retry-After": "900" },
+    });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(res));
+    const err = await failure(apiFetch("/v1/auth/login", { method: "POST", json: {} }));
+    expect(err.status).toBe(429);
+    expect(err.retryAfter).toBe(900);
+  });
+
+  it("leaves retryAfter undefined when the header is missing or not a number", async () => {
+    vi.stubGlobal("fetch", reply(429, { detail: "slow down" }));
+    expect((await failure(apiFetch("/v1/x"))).retryAfter).toBeUndefined();
+    const res = new Response(null, { status: 429, headers: { "Retry-After": "soon" } });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(res));
+    expect((await failure(apiFetch("/v1/x"))).retryAfter).toBeUndefined();
+  });
 });

@@ -1,12 +1,15 @@
 export class ApiError extends Error {
   status: number;
   detail: string;
+  /** Seconds from a Retry-After header, when the server sent one. */
+  retryAfter?: number;
 
-  constructor(status: number, detail: string) {
+  constructor(status: number, detail: string, retryAfter?: number) {
     super(detail);
     this.name = "ApiError";
     this.status = status;
     this.detail = detail;
+    this.retryAfter = retryAfter;
   }
 }
 
@@ -37,7 +40,9 @@ async function errorFor(res: Response): Promise<ApiError> {
   } catch {
     detail = undefined;
   }
-  return new ApiError(res.status, describe(detail, res.statusText));
+  const header = res.headers.get("Retry-After");
+  const seconds = header !== null && /^\d+$/.test(header.trim()) ? Number(header) : undefined;
+  return new ApiError(res.status, describe(detail, res.statusText), seconds);
 }
 
 function redirectFor(path: string, err: ApiError) {
