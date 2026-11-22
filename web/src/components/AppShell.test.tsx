@@ -44,6 +44,14 @@ describe("AppShell", () => {
     expect(screen.queryByRole("link", { name: "Team" })).not.toBeInTheDocument();
   });
 
+  it("shows the Janus activity link to every member", async () => {
+    const { unmount } = setup();
+    expect(await screen.findByRole("link", { name: "Janus activity" })).toHaveAttribute("href", "/activity");
+    unmount();
+    setup(MEMBER);
+    expect(await screen.findByRole("link", { name: "Janus activity" })).toHaveAttribute("href", "/activity");
+  });
+
   it("redirects to /change-password when a change is forced", async () => {
     setup({ ...ME, must_change_password: true });
     await waitFor(() => expect(screen.getByTestId("where")).toHaveTextContent("/change-password"));

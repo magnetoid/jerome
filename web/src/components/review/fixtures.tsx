@@ -10,7 +10,7 @@ export function sug(over: Partial<Suggestion> = {}): Suggestion {
     original: "teh", replacement: "the", category: "typo", severity: "high",
     source: "model", explanation: "Misspelling of the.", status: "open", final_text: null,
     job_id: 9, model: "m-1", created_at: "2026-11-02T09:00:00Z", agreed: false,
-    disputed: false, alternative: null, rule: null, auto_applied: false, decided_by: null,
+    disputed: false, alternative: null, rule: null, auto_applied: false, decided_by: null, decided_channel: null,
     ...over,
   };
 }

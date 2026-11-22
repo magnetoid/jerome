@@ -30,6 +30,8 @@ export interface Suggestion {
   rule: "house_spelling" | "quote_style" | "variant" | "name" | string | null;
   auto_applied: boolean;
   decided_by: string | null;
+  /** Where the decision came from: "web", "api", "auto" or "mcp" (Janus). */
+  decided_channel: string | null;
 }
 
 export interface ReviewBlock {
@@ -160,7 +162,9 @@ export function stateLabel(s: Suggestion): string {
   if (s.auto_applied) return "Applied by AI";
   const verb = { accepted: "Accepted", edited: "Edited", rejected: "Rejected", superseded: "Superseded" }[s.status];
   // decided_by is only meaningful on a decided row (an undone row carries the undoer).
-  return isDecided(s) && s.decided_by ? `${verb} by ${s.decided_by}` : verb;
+  if (!isDecided(s) || !s.decided_by) return verb;
+  // The API key's name, for a decision Janus made through the MCP server.
+  return s.decided_channel === "mcp" ? `${verb} by Janus (${s.decided_by})` : `${verb} by ${s.decided_by}`;
 }
 
 const quoted = (t: string) => (t ? `“${t}”` : "nothing");

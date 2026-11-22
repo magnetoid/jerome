@@ -7,6 +7,7 @@ import TeamPage from "@/pages/TeamPage";
 import ProjectsPage from "@/pages/ProjectsPage";
 import NewProjectPage from "@/pages/NewProjectPage";
 import ProjectPage from "@/pages/ProjectPage";
+import ActivityPage from "@/pages/ActivityPage";
 import ReviewPage from "@/pages/ReviewPage";
 import ThemeProvider from "@/components/ThemeProvider";
 import { Toaster } from "@/components/ui/sonner";
@@ -36,6 +37,7 @@ export default function App() {
             <Route path="/projects/new" element={<NewProjectPage />} />
             <Route path="/projects/:id" element={<ProjectPage />} />
             <Route path="/projects/:id/review/:chapterId?" element={<ReviewPage />} />
+            <Route path="/activity" element={<ActivityPage />} />
             <Route path="/team" element={<TeamPage />} />
             <Route path="*" element={<Placeholder title="Page not found" />} />
           </Route>

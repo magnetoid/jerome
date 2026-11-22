@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -85,6 +85,9 @@ export default function ProjectPage() {
       <header className="flex flex-wrap items-center gap-3">
         <h1 className="text-2xl font-semibold">{project.title}</h1>
         <StageBadge stage={project.stage} />
+        <Link to={`/activity?book=${id}`} className="ml-auto text-sm text-muted-foreground underline underline-offset-4">
+          Janus activity for this book
+        </Link>
       </header>
 
       <Tabs defaultValue="overview">
