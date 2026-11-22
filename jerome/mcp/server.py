@@ -4,9 +4,9 @@ Tool modules register on :data:`mcp` with ``@mcp.tool(...)`` and run their bodie
 ``jerome.mcp.context.call``. The SDK (``mcp`` 2.x) calls its server class ``MCPServer``;
 it was ``FastMCP`` in 1.x.
 
-``mount_mcp`` serves everything under ``/mcp`` (the endpoint itself, and the
-``/mcp/files/`` links routes added to this server's Starlette app) behind
-``McpAuthMiddleware``. The transport is streamable HTTP, stateless, with JSON responses.
+``mount_mcp`` serves the endpoint ``/mcp`` behind ``McpAuthMiddleware``, and registers
+the ``/mcp/files/`` link routes (``jerome.mcp.files``) on the main app ahead of it. The
+transport is streamable HTTP, stateless, with JSON responses.
 """
 
 import logging
@@ -20,6 +20,7 @@ from mcp.types import CallToolResult, InputRequiredResult, TextContent
 from pydantic import ValidationError
 from starlette.routing import Route
 
+from jerome.mcp import files
 from jerome.mcp.auth import McpAuthMiddleware
 from jerome.mcp.context import current_mcp_context
 from jerome.mcp.errors import INTERNAL, to_tool_error
@@ -71,7 +72,13 @@ class JeromeMCP(MCPServer):
 mcp = JeromeMCP("jerome", log_level="WARNING")
 
 # The tool modules register on `mcp` when imported.
-from jerome.mcp import tools_books, tools_jobs, tools_review, tools_text  # noqa: E402, F401
+from jerome.mcp import (  # noqa: E402, F401
+    tools_books,
+    tools_files,
+    tools_jobs,
+    tools_review,
+    tools_text,
+)
 
 
 def mount_mcp(app: FastAPI) -> None:
@@ -90,6 +97,9 @@ def mount_mcp(app: FastAPI) -> None:
         transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
     )
     app.state.mcp_session_manager = mcp.session_manager
+    # The file links first: they match before the /mcp/{path} route below, take no API
+    # key, and get their session and storage from the app's own dependencies.
+    app.include_router(files.router)
     handler = McpAuthMiddleware(sdk_app, main_app=app)
     # Route (not Mount) so "/mcp" itself matches without a slash redirect; the SDK app
     # routes on the full path.

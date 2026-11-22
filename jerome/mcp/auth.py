@@ -2,8 +2,11 @@
 
 Every request needs ``Authorization: Bearer <API key>``; a session cookie is never looked
 at. A missing, unknown or revoked key gets 401. Stateless mode means this runs on every
-request, so a key revoked mid-conversation is refused on the next call. ``/mcp/files/``
-links carry their own single-use token and pass through untouched.
+request, so a key revoked mid-conversation is refused on the next call.
+
+``/mcp/files/`` links carry their own single-use token and are served by their own routes
+(``jerome.mcp.files``), matched before this one. A request under that prefix that still
+lands here (another method, a nested path) is a plain 404: it never reaches the MCP app.
 """
 
 import json
@@ -29,20 +32,24 @@ def _bearer_token(scope: Scope) -> str | None:
     return None
 
 
-async def _unauthorized(send: Send) -> None:
-    body = json.dumps({"detail": "Missing or invalid API key"}).encode()
+async def _reply(send: Send, status: int, detail: str, *extra: tuple[bytes, bytes]) -> None:
+    body = json.dumps({"detail": detail}).encode()
     await send(
         {
             "type": "http.response.start",
-            "status": 401,
+            "status": status,
             "headers": [
                 (b"content-type", b"application/json"),
                 (b"content-length", str(len(body)).encode()),
-                (b"www-authenticate", b"Bearer"),
+                *extra,
             ],
         }
     )
     await send({"type": "http.response.body", "body": body})
+
+
+async def _unauthorized(send: Send) -> None:
+    await _reply(send, 401, "Missing or invalid API key", (b"www-authenticate", b"Bearer"))
 
 
 class McpAuthMiddleware:
@@ -57,8 +64,11 @@ class McpAuthMiddleware:
             return verify_api_key(session, token)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http" or scope["path"].startswith(FILES_PREFIX):
+        if scope["type"] != "http":
             await self.app(scope, receive, send)
+            return
+        if scope["path"].startswith(FILES_PREFIX):
+            await _reply(send, 404, "Not Found")
             return
         token = _bearer_token(scope)
         name = await anyio.to_thread.run_sync(self._key_name, token) if token else None
