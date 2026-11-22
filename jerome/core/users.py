@@ -59,17 +59,24 @@ def _check_role(role: str) -> None:
         raise InvalidChangeError(f"unknown role {role!r}")
 
 
+def _lock_active_super_admins(session: Session) -> list[int]:
+    """Select every active super admin FOR UPDATE in id order and return their ids.
+    Concurrent removals then queue up in one fixed order, so they cannot deadlock, as long
+    as each takes these locks before writing to any super admin row."""
+    return list(
+        session.scalars(
+            select(User.id)
+            .where(User.role == "super_admin", User.active)
+            .order_by(User.id)
+            .with_for_update()
+        ).all()
+    )
+
+
 def _guard_last_super_admin(session: Session, user: User) -> None:
-    """Refuse to remove the only active super admin. All active super admins, the target
-    included, are selected FOR UPDATE in id order, so concurrent demotions queue up in a
-    fixed order (no deadlock) and cannot both pass."""
-    active_ids = session.scalars(
-        select(User.id)
-        .where(User.role == "super_admin", User.active)
-        .order_by(User.id)
-        .with_for_update()
-    ).all()
-    if not any(uid != user.id for uid in active_ids):
+    """Refuse to remove the only active super admin. Concurrent removals cannot both pass,
+    because each locks all active super admins first."""
+    if not any(uid != user.id for uid in _lock_active_super_admins(session)):
         raise Conflict("cannot remove the last active super admin")
 
 
@@ -200,4 +207,27 @@ def update_user(
         if not active:
             revoke_user_sessions(session, user.id)  # their open browsers are logged out now
     session.flush()
+    return user
+
+
+def update_member(
+    session: Session,
+    user_id: int,
+    *,
+    name: str | None = None,
+    active: bool | None = None,
+    role: str | None = None,
+) -> User:
+    """Apply one team-page edit: name, active flag and role together. When the edit may
+    remove a super admin, the super admin locks are taken before anything is written:
+    a rename flushed first would lock the target row out of order and could deadlock."""
+    if role is not None:
+        _check_role(role)
+    target = _get(session, user_id)
+    removes = active is False or (role is not None and role != "super_admin")
+    if removes and target.active and target.role == "super_admin":
+        _lock_active_super_admins(session)
+    user = update_user(session, user_id, name=name, active=active)
+    if role is not None:
+        set_role(session, user_id, role)
     return user

@@ -20,9 +20,7 @@ def add_member(body: UserCreateIn, session: SessionDep):
 
 @router.patch("/users/{user_id}", response_model=UserWithPasswordOut)
 def update_member(user_id: int, body: UserPatchIn, session: SessionDep):
-    user = users.update_user(session, user_id, name=body.name, active=body.active)
-    if body.role is not None:
-        users.set_role(session, user_id, body.role)
+    user = users.update_member(session, user_id, name=body.name, active=body.active, role=body.role)
     temporary = users.reset_password(session, user_id) if body.reset_password else None
     session.refresh(user)
     return UserWithPasswordOut(user=UserOut.model_validate(user), temporary_password=temporary)
