@@ -67,28 +67,31 @@ export default function TeamPage() {
     toast.error(err instanceof ApiError ? err.detail : "Something went wrong");
   const refresh = () => client.invalidateQueries({ queryKey: USERS_KEY });
 
+  // The temporary password goes straight into component state and is stripped
+  // before the mutation resolves, so it never reaches react-query's mutation cache.
+  const keepOnce = (res: Result): Member => {
+    if (res.temporary_password) {
+      setTemp({ name: res.user.name, password: res.temporary_password });
+    }
+    return res.user;
+  };
+
   const add = useMutation({
-    mutationFn: (body: { email: string; name: string }) =>
-      apiFetch<Result>("/v1/users", { method: "POST", json: body }),
-    onSuccess: (res) => {
+    gcTime: 0,
+    mutationFn: async (body: { email: string; name: string }) =>
+      keepOnce(await apiFetch<Result>("/v1/users", { method: "POST", json: body })),
+    onSuccess: () => {
       setEmail("");
       setName("");
-      if (res.temporary_password) {
-        setTemp({ name: res.user.name, password: res.temporary_password });
-      }
     },
     onError,
     onSettled: refresh,
   });
 
   const patch = useMutation({
-    mutationFn: ({ id, body }: { id: number; body: Patch }) =>
-      apiFetch<Result>(`/v1/users/${id}`, { method: "PATCH", json: body }),
-    onSuccess: (res, { body }) => {
-      if (body.reset_password && res.temporary_password) {
-        setTemp({ name: res.user.name, password: res.temporary_password });
-      }
-    },
+    gcTime: 0,
+    mutationFn: async ({ id, body }: { id: number; body: Patch }) =>
+      keepOnce(await apiFetch<Result>(`/v1/users/${id}`, { method: "PATCH", json: body })),
     onError,
     onSettled: refresh,
   });

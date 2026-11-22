@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
+import type { QueryClient } from "@tanstack/react-query";
 import TeamPage from "./TeamPage";
 import { ME, json, mockApi, renderApp } from "@/test-utils";
 
@@ -15,6 +16,12 @@ const bob = {
   id: 2, email: "bob@example.com", name: "Bob", active: true,
   must_change_password: true, last_login_at: null, created_at: "2026-11-02T10:00:00Z",
 };
+
+function cachedText(client: QueryClient): string {
+  const q = client.getQueryCache().getAll().map((x) => x.state.data);
+  const m = client.getMutationCache().getAll().map((x) => [x.state.data, x.state.variables]);
+  return JSON.stringify([q, m]);
+}
 
 beforeEach(() => vi.mocked(toast.error).mockClear());
 afterEach(() => vi.unstubAllGlobals());
@@ -70,12 +77,11 @@ describe("TeamPage", () => {
     await user.click(within(dialog).getByRole("button", { name: /copy/i }));
     expect(writeText).toHaveBeenCalledWith("tmp-Secret-123");
 
-    // never in the query cache
-    expect(JSON.stringify(client.getQueryCache().getAll().map((q) => q.state.data))).not.toContain(
-      "tmp-Secret-123");
+    expect(cachedText(client)).not.toContain("tmp-Secret-123");
 
     await user.click(within(dialog).getByRole("button", { name: "Done" }));
     await waitFor(() => expect(screen.queryByText("tmp-Secret-123")).not.toBeInTheDocument());
+    expect(cachedText(client)).not.toContain("tmp-Secret-123");
     expect(f.mock.calls.filter(([p, i]) => p === "/v1/users" && !i?.method).length).toBeGreaterThanOrEqual(2);
   });
 
@@ -93,7 +99,7 @@ describe("TeamPage", () => {
   });
 
   it("resets a password and shows it in the same one-time dialog", async () => {
-    const { f } = setup({
+    const { f, client } = setup({
       "PATCH /v1/users/2": () => json(200, { user: bob, temporary_password: "new-tmp-pw-9" }),
     });
     const user = userEvent.setup();
@@ -103,6 +109,10 @@ describe("TeamPage", () => {
     expect(within(dialog).getByText("new-tmp-pw-9")).toBeInTheDocument();
     const patch = f.mock.calls.find(([p]) => p === "/v1/users/2")!;
     expect(JSON.parse(patch[1]!.body as string)).toEqual({ reset_password: true });
+    expect(cachedText(client)).not.toContain("new-tmp-pw-9");
+    await user.click(within(dialog).getByRole("button", { name: "Done" }));
+    await waitFor(() => expect(screen.queryByText("new-tmp-pw-9")).not.toBeInTheDocument());
+    expect(cachedText(client)).not.toContain("new-tmp-pw-9");
   });
 
   it("renames a member", async () => {
