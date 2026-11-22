@@ -59,7 +59,8 @@ function redirectFor(path: string, err: ApiError) {
   }
 }
 
-export async function apiFetch<T>(path: string, init: Init = {}): Promise<T> {
+/** Sends the request; on an error status, redirects if needed and throws ApiError. */
+async function send(path: string, init: Init): Promise<Response> {
   const { json, headers, ...rest } = init;
   const merged = new Headers(headers);
   merged.set("X-Jerome-Client", "web");
@@ -75,6 +76,32 @@ export async function apiFetch<T>(path: string, init: Init = {}): Promise<T> {
     redirectFor(path, err);
     throw err;
   }
+  return res;
+}
+
+async function bodyOf<T>(res: Response): Promise<T> {
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
+}
+
+export async function apiFetch<T>(path: string, init: Init = {}): Promise<T> {
+  return bodyOf<T>(await send(path, init));
+}
+
+/**
+ * Like apiFetch, plus the full match count from the X-Total-Count header. Without a usable
+ * header, the total is the length of the returned list.
+ */
+export async function apiFetchPage<T>(
+  path: string,
+  init: Init = {},
+): Promise<{ data: T; total: number }> {
+  const res = await send(path, init);
+  const data = await bodyOf<T>(res);
+  const header = res.headers.get("X-Total-Count");
+  const total =
+    header !== null && /^\d+$/.test(header.trim())
+      ? Number(header)
+      : Array.isArray(data) ? data.length : 0;
+  return { data, total };
 }

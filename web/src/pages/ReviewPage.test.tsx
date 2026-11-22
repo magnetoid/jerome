@@ -1,0 +1,221 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { toast } from "sonner";
+import { json } from "@/test-utils";
+import { bodyOf, callsTo } from "@/components/project/fixtures";
+import {
+  aiSug, block, firstPage, renderReview, reviewServer, sug, summaryRow,
+} from "@/components/review/fixtures";
+
+let toastError: ReturnType<typeof vi.spyOn>;
+beforeEach(() => {
+  toastError = vi.spyOn(toast, "error").mockImplementation(() => "t");
+  vi.spyOn(toast, "success").mockImplementation(() => "t");
+});
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
+
+// Chapter 11: two need you (1, 2), two applied by AI (6, 3), one accepted by a teammate (4).
+const s1 = sug({ id: 1, block_id: 100, start: 2, end: 5, original: "teh", replacement: "the" });
+const s6 = aiSug({
+  id: 6, block_id: 100, start: 13, end: 14, original: ".", replacement: "!",
+  category: "punctuation", explanation: "Stronger ending.",
+});
+const s2 = sug({ id: 2, block_id: 101, start: 2, end: 5, original: "dgo", replacement: "dog" });
+const s3 = aiSug({
+  id: 3, block_id: 101, start: 6, end: 12, original: "barked", replacement: "barks",
+  category: "grammar", explanation: "Present tense.",
+});
+const s4 = sug({
+  id: 4, block_id: 102, start: 4, end: 8, original: "said", replacement: "says",
+  category: "style", status: "accepted", decided_by: "bob@example.com",
+});
+const BLOCKS = [
+  block(100, 1, "𝔄 teh cat sat.", [s1, s6]),
+  block(101, 2, "A dgo barked.", [s2, s3]),
+  block(102, 3, "Bob said hi.", [s4]),
+];
+const SUMMARY = [
+  summaryRow(11, 1, "Arrival", 2),
+  summaryRow(12, 2, "Harbour", 0),
+  summaryRow(13, 3, "Appendix", 4),
+];
+
+const card = () => screen.getByRole("region", { name: /focused suggestion/i });
+const posts = (f: ReturnType<typeof reviewServer>["fetchMock"], path: string) => callsTo(f, "POST", path);
+
+describe("ReviewPage", () => {
+  it("j and a accept the focused suggestion, and the counter drops by one", async () => {
+    const { fetchMock } = reviewServer(BLOCKS, SUMMARY);
+    renderReview();
+    expect(await screen.findByText("2 left")).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: /focused suggestion/i })).not.toBeInTheDocument();
+
+    await userEvent.keyboard("j");
+    expect(within(card()).getByText("teh")).toBeInTheDocument();
+    expect(within(card()).getByText("the")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Needs you: “teh”/ })).toHaveAttribute("aria-current", "true");
+
+    await userEvent.keyboard("a");
+    await waitFor(() => expect(posts(fetchMock, "/v1/suggestions/1/accept")).toHaveLength(1));
+    expect(await screen.findByText("1 left")).toBeInTheDocument();
+    // Focus moves on to the next suggestion that needs a person.
+    await waitFor(() => expect(within(card()).getByText("dgo")).toBeInTheDocument());
+  });
+
+  it("the focus card shows the why, the checkers, the house rule and key hints", async () => {
+    const special = sug({
+      id: 1, agreed: true, disputed: true, alternative: "tea", rule: "house_spelling",
+      explanation: "House spelling.", category: "consistency", severity: "medium", source: "consistency",
+    });
+    const { fetchMock } = reviewServer([block(100, 1, "𝔄 teh cat sat.", [special])], [summaryRow(11, 1, "Arrival", 1)]);
+    renderReview();
+    await screen.findByText("1 left");
+    await userEvent.keyboard("j");
+    const c = card();
+    expect(within(c).getByText("House spelling.")).toBeInTheDocument();
+    expect(within(c).getByText("both checkers agree")).toBeInTheDocument();
+    expect(within(c).getByText("the checkers disagree")).toBeInTheDocument();
+    expect(within(c).getByText(/tea/)).toBeInTheDocument();
+    expect(within(c).getByText(/house spelling rule/i)).toBeInTheDocument();
+    expect(within(c).getByText("Needs you")).toBeInTheDocument();
+    for (const name of ["Accept (a)", "Reject (r)", "Edit (e)", "Undo (u)"]) {
+      expect(within(c).getByRole("button", { name })).toBeInTheDocument();
+    }
+    await userEvent.click(within(c).getByRole("button", { name: "Accept (a)" }));
+    await waitFor(() => expect(posts(fetchMock, "/v1/suggestions/1/accept")).toHaveLength(1));
+  });
+
+  it("r on an AI-applied change calls /reject", async () => {
+    const { fetchMock } = reviewServer(BLOCKS, SUMMARY);
+    renderReview();
+    await screen.findByText("2 left");
+    await userEvent.click(screen.getByRole("button", { name: "Applied by AI" }));
+    await userEvent.keyboard("j");
+    expect(within(card()).getByText("Applied by AI")).toBeInTheDocument();
+    await userEvent.keyboard("r");
+    await waitFor(() => expect(posts(fetchMock, "/v1/suggestions/6/reject")).toHaveLength(1));
+    expect(posts(fetchMock, "/v1/suggestions/6/undo")).toHaveLength(0);
+  });
+
+  it("typing a inside the edit textarea does not accept; Escape closes it; Save posts /edit", async () => {
+    const { fetchMock } = reviewServer(BLOCKS, SUMMARY);
+    renderReview();
+    await screen.findByText("2 left");
+    await userEvent.keyboard("j");
+    await userEvent.keyboard("e");
+    const field = screen.getByRole("textbox", { name: /replacement/i });
+    expect(field).toHaveValue("the");
+    expect(field).toHaveFocus();
+    await userEvent.keyboard("a");
+    expect(field).toHaveValue("thea");
+    expect(posts(fetchMock, "/v1/suggestions/1/accept")).toHaveLength(0);
+
+    await userEvent.keyboard("{Escape}");
+    expect(screen.queryByRole("textbox", { name: /replacement/i })).not.toBeInTheDocument();
+    expect(posts(fetchMock, "/v1/suggestions/1/edit")).toHaveLength(0);
+
+    await userEvent.keyboard("e");
+    const again = screen.getByRole("textbox", { name: /replacement/i });
+    await userEvent.clear(again);
+    await userEvent.type(again, "then");
+    await userEvent.click(screen.getByRole("button", { name: /save/i }));
+    await waitFor(() => expect(posts(fetchMock, "/v1/suggestions/1/edit")).toHaveLength(1));
+    expect(bodyOf(posts(fetchMock, "/v1/suggestions/1/edit")[0])).toEqual({ replacement: "then" });
+    expect(await screen.findByText("1 left")).toBeInTheDocument();
+  });
+
+  it("a 409 on accept shows the API detail as a toast and refetches that chapter (Review Focus 2)", async () => {
+    const server = reviewServer(BLOCKS, SUMMARY, {
+      "POST /v1/suggestions/1/accept": () => {
+        // A teammate decided it first.
+        server.set(1, { status: "accepted", decided_by: "bob@example.com" });
+        return json(409, { detail: "cannot accept a accepted suggestion" });
+      },
+    });
+    renderReview();
+    await screen.findByText("2 left");
+    expect(callsTo(server.fetchMock, "GET", firstPage(11).slice(4))).toHaveLength(1);
+    await userEvent.keyboard("ja");
+    await waitFor(() => expect(toastError).toHaveBeenCalledWith("cannot accept a accepted suggestion"));
+    await waitFor(() => expect(callsTo(server.fetchMock, "GET", firstPage(11).slice(4))).toHaveLength(2));
+    // The stale needs-you mark is gone; the teammate's decision shows instead.
+    await waitFor(() => expect(screen.queryByRole("button", { name: /^Needs you: “teh”/ })).not.toBeInTheDocument());
+    const mark = document.querySelector('[data-sid="1"]');
+    expect(mark).toHaveTextContent(/^the$/);
+    expect(mark).toHaveAttribute("title", expect.stringContaining("Accepted by bob@example.com"));
+    expect(await screen.findByText("1 left")).toBeInTheDocument();
+  });
+
+  it("the Applied by AI view lists only auto-applied changes, in document order", async () => {
+    reviewServer(BLOCKS, SUMMARY);
+    renderReview();
+    await screen.findByText("2 left");
+    expect(screen.getAllByRole("button", { name: /^Needs you:/ })).toHaveLength(2);
+    await userEvent.click(screen.getByRole("button", { name: "Applied by AI" }));
+    expect(screen.getByRole("button", { name: "Applied by AI" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryAllByRole("button", { name: /^Needs you:/ })).toHaveLength(0);
+    expect(screen.queryAllByRole("button", { name: /^Accepted by/ })).toHaveLength(0);
+    expect(screen.getAllByRole("button", { name: /^Applied by AI:/ }).map((b) => b.dataset.sid)).toEqual(["6", "3"]);
+    await userEvent.keyboard("j");
+    expect(within(card()).getByText("Stronger ending.")).toBeInTheDocument();
+    await userEvent.keyboard("j");
+    expect(within(card()).getByText("Present tense.")).toBeInTheDocument();
+    await userEvent.keyboard("j");
+    expect(within(card()).getByText("Present tense.")).toBeInTheDocument();
+    // The AI's notes stay in the margin in every view.
+    expect(screen.getAllByRole("complementary", { name: /AI notes/i })).toHaveLength(2);
+  });
+
+  it("the bulk action confirms, then posts the chapter and category filter", async () => {
+    const { fetchMock } = reviewServer(BLOCKS, SUMMARY, {
+      "GET /v1/books/1/suggestions?chapter_id=11&category=typo&status=open&limit=1": () =>
+        json(200, [s1], { "X-Total-Count": "2" }),
+      "POST /v1/suggestions/bulk": () => json(200, { decided: 2 }),
+    });
+    renderReview();
+    await screen.findByText("2 left");
+    expect(screen.queryByRole("button", { name: /accept all/i })).not.toBeInTheDocument();
+    await userEvent.selectOptions(screen.getByLabelText("Category"), "typo");
+    const bulk = await screen.findByRole("button", { name: "Accept all 2 remaining typo in this chapter" });
+    await userEvent.click(bulk);
+    const dialog = await screen.findByRole("alertdialog");
+    expect(posts(fetchMock, "/v1/suggestions/bulk")).toHaveLength(0);
+    await userEvent.click(within(dialog).getByRole("button", { name: /accept all/i }));
+    await waitFor(() => expect(posts(fetchMock, "/v1/suggestions/bulk")).toHaveLength(1));
+    expect(bodyOf(posts(fetchMock, "/v1/suggestions/bulk")[0])).toEqual({
+      book_id: 1, filter: { chapter_id: 11, category: "typo", status: "open" }, action: "accept",
+    });
+    await waitFor(() => expect(callsTo(fetchMock, "GET", firstPage(11).slice(4))).toHaveLength(2));
+  });
+
+  it("deciding the last open item shows the next-chapter prompt", async () => {
+    const { fetchMock } = reviewServer([block(100, 1, "𝔄 teh cat sat.", [s1, s6])], SUMMARY.map((c) => (
+      c.chapter_id === 11 ? { ...c, open: 1 } : c
+    )));
+    renderReview();
+    await screen.findByText("1 left");
+    expect(screen.queryByText(/chapter done/i)).not.toBeInTheDocument();
+    await userEvent.keyboard("ja");
+    await waitFor(() => expect(posts(fetchMock, "/v1/suggestions/1/accept")).toHaveLength(1));
+    expect(await screen.findByText("0 left")).toBeInTheDocument();
+    expect(await screen.findByText(/chapter done/i)).toBeInTheDocument();
+    // Harbour (2) has nothing open, so the prompt skips to Appendix (3).
+    expect(screen.getByRole("link", { name: /3\. Appendix/ })).toHaveAttribute("href", "/projects/1/review/13");
+  });
+
+  it("when nothing is left in the book, the prompt says so and links back to the project", async () => {
+    const { fetchMock } = reviewServer([block(100, 1, "𝔄 teh cat sat.", [s1])], [
+      summaryRow(11, 1, "Arrival", 1), summaryRow(12, 2, "Harbour", 0),
+    ]);
+    renderReview();
+    await screen.findByText("1 left");
+    await userEvent.keyboard("ja");
+    await waitFor(() => expect(posts(fetchMock, "/v1/suggestions/1/accept")).toHaveLength(1));
+    expect(await screen.findByText(/nothing left to review in this book/i)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /back to project/i })).toHaveAttribute("href", "/projects/1");
+  });
+});

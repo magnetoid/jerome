@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ApiError, apiFetch } from "./api";
+import { ApiError, apiFetch, apiFetchPage } from "./api";
 
 function reply(status: number, body?: unknown, statusText = "") {
   const res = new Response(body === undefined ? null : JSON.stringify(body), {
@@ -162,5 +162,42 @@ describe("apiFetch", () => {
     const res = new Response(null, { status: 429, headers: { "Retry-After": "soon" } });
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(res));
     expect((await failure(apiFetch("/v1/x"))).retryAfter).toBeUndefined();
+  });
+});
+
+describe("apiFetchPage", () => {
+  it("returns the body and the X-Total-Count total", async () => {
+    const res = new Response(JSON.stringify([{ id: 1 }]), {
+      status: 200,
+      headers: { "X-Total-Count": "42" },
+    });
+    const fetchMock = vi.fn().mockResolvedValue(res);
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(apiFetchPage("/v1/books/1/suggestions?limit=1")).resolves.toEqual({
+      data: [{ id: 1 }],
+      total: 42,
+    });
+    const [path, init] = fetchMock.mock.calls[0];
+    expect(path).toBe("/v1/books/1/suggestions?limit=1");
+    expect(init.credentials).toBe("same-origin");
+    expect(new Headers(init.headers).get("X-Jerome-Client")).toBe("web");
+  });
+
+  it("falls back to the list length when the header is missing or not a number", async () => {
+    vi.stubGlobal("fetch", reply(200, [{ id: 1 }, { id: 2 }]));
+    await expect(apiFetchPage("/v1/x")).resolves.toEqual({ data: [{ id: 1 }, { id: 2 }], total: 2 });
+    const res = new Response(JSON.stringify([]), { status: 200, headers: { "X-Total-Count": "lots" } });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(res));
+    await expect(apiFetchPage("/v1/x")).resolves.toEqual({ data: [], total: 0 });
+  });
+
+  it("throws ApiError and redirects like apiFetch", async () => {
+    vi.stubGlobal("fetch", reply(409, { detail: "already decided" }));
+    const err = await failure(apiFetchPage("/v1/x"));
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.detail).toBe("already decided");
+    vi.stubGlobal("fetch", reply(401, { detail: "Not authenticated" }));
+    await failure(apiFetchPage("/v1/projects"));
+    expect(assign).toHaveBeenCalledWith("/login?next=" + encodeURIComponent("/projects/3?tab=2"));
   });
 });
