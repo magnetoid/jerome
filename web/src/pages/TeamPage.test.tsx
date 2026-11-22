@@ -237,13 +237,13 @@ describe("TeamPage roles", () => {
     });
     const user = userEvent.setup();
     await screen.findByText("bob@example.com");
-    await user.click(screen.getByRole("button", { name: "Make Bob super admin" }));
+    await user.click(screen.getByRole("button", { name: "Make super admin: Bob" }));
     let confirm = await screen.findByRole("alertdialog");
     await user.click(within(confirm).getByRole("button", { name: "Cancel" }));
     await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
     expect(f.mock.calls.filter(([p]) => p === "/v1/users/2")).toHaveLength(0);
 
-    await user.click(screen.getByRole("button", { name: "Make Bob super admin" }));
+    await user.click(screen.getByRole("button", { name: "Make super admin: Bob" }));
     confirm = await screen.findByRole("alertdialog");
     await user.click(within(confirm).getByRole("button", { name: "Make super admin" }));
     await waitFor(() => {
@@ -258,7 +258,7 @@ describe("TeamPage roles", () => {
     });
     const user = userEvent.setup();
     await screen.findByText("ann@example.com");
-    await user.click(screen.getByRole("button", { name: "Make Ann a member" }));
+    await user.click(screen.getByRole("button", { name: "Make member: Ann" }));
     const confirm = await screen.findByRole("alertdialog");
     expect(confirm).toHaveTextContent(/no longer be able to manage the team/i);
     await user.click(within(confirm).getByRole("button", { name: "Make member" }));
@@ -275,10 +275,43 @@ describe("TeamPage roles", () => {
     });
     const user = userEvent.setup();
     await screen.findByText("ann@example.com");
-    await user.click(screen.getByRole("button", { name: "Make Ann a member" }));
+    await user.click(screen.getByRole("button", { name: "Make member: Ann" }));
     const confirm = await screen.findByRole("alertdialog");
     await user.click(within(confirm).getByRole("button", { name: "Make member" }));
     expect(await screen.findByText(/only a super admin can manage the team/i)).toBeInTheDocument();
     expect(f.mock.calls.filter(([p]) => p === "/v1/auth/me").length).toBeGreaterThanOrEqual(2);
+    // the list is not refetched, so "Could not load the team." never flashes
+    expect(f.mock.calls.filter(([p]) => p === "/v1/users")).toHaveLength(1);
+    expect(screen.queryByText(/could not load the team/i)).not.toBeInTheDocument();
+  });
+
+  it("switches to the member message when the users list is refused as super admin only", async () => {
+    let meCalls = 0;
+    setup({
+      "GET /v1/auth/me": () => json(200, meCalls++ === 0 ? ME : MEMBER),
+      "GET /v1/users": json(403, { detail: "super admin only" }),
+    });
+    expect(await screen.findByText(/only a super admin can manage the team/i)).toBeInTheDocument();
+  });
+
+  it("keeps the dialog wording of the chosen member while it closes", async () => {
+    setup();
+    const user = userEvent.setup();
+    await screen.findByText("ann@example.com");
+    await user.click(screen.getByRole("button", { name: "Make member: Ann" }));
+    const confirm = await screen.findByRole("alertdialog");
+    expect(confirm).toHaveTextContent("Make Ann a member?");
+    await user.click(within(confirm).getByRole("button", { name: "Cancel" }));
+    expect(document.body).not.toHaveTextContent(/undefined|Make Ann a super admin/);
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+  });
+
+  it("gives role buttons an accessible name that starts with the visible text", async () => {
+    setup();
+    await screen.findByText("ann@example.com");
+    expect(screen.getByRole("button", { name: "Make member: Ann" })).toHaveTextContent("Make member");
+    expect(screen.getByRole("button", { name: "Make super admin: Bob" })).toHaveTextContent(
+      "Make super admin",
+    );
   });
 });

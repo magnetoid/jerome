@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -63,6 +63,13 @@ export default function TeamPage() {
     enabled: isSuperAdmin,
   });
 
+  // A super admin demoted elsewhere gets 403 here: re-read who I am so the page
+  // switches to the member message.
+  const forbidden = users.error instanceof ApiError && users.error.detail === "super admin only";
+  useEffect(() => {
+    if (forbidden) client.invalidateQueries({ queryKey: ME_KEY });
+  }, [forbidden, client]);
+
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
   const [role, setRole] = useState<Role>("member");
@@ -71,7 +78,9 @@ export default function TeamPage() {
   const [renameTo, setRenameTo] = useState("");
   const [deactivating, setDeactivating] = useState<Member | null>(null);
   const [resetting, setResetting] = useState<Member | null>(null);
-  const [changingRole, setChangingRole] = useState<Member | null>(null);
+  // The dialog's text keeps showing its member while it animates closed.
+  const [roleMember, setRoleMember] = useState<Member | null>(null);
+  const [roleOpen, setRoleOpen] = useState(false);
 
   const onError = (err: unknown) =>
     toast.error(err instanceof ApiError ? err.detail : "Something went wrong");
@@ -105,11 +114,12 @@ export default function TeamPage() {
       keepOnce(await apiFetch<Result>(`/v1/users/${id}`, { method: "PATCH", json: body })),
     onError,
     onSettled: (_data, _err, vars) => {
-      refresh();
-      // Changing your own role changes what you may see; refresh it too.
+      // Changing your own role changes what you may see: wait for that instead of
+      // refetching a list you may no longer be allowed to read.
       if (vars.body.role !== undefined && vars.id === me?.id) {
-        client.invalidateQueries({ queryKey: ME_KEY });
+        return client.invalidateQueries({ queryKey: ME_KEY });
       }
+      return refresh();
     },
   });
 
@@ -222,10 +232,13 @@ export default function TeamPage() {
                       variant="ghost"
                       aria-label={
                         u.role === "super_admin"
-                          ? `Make ${u.name} a member`
-                          : `Make ${u.name} super admin`
+                          ? `Make member: ${u.name}`
+                          : `Make super admin: ${u.name}`
                       }
-                      onClick={() => setChangingRole(u)}
+                      onClick={() => {
+                        setRoleMember(u);
+                        setRoleOpen(true);
+                      }}
                     >
                       {u.role === "super_admin" ? "Make member" : "Make super admin"}
                     </Button>
@@ -315,17 +328,17 @@ export default function TeamPage() {
         </AlertDialogContent>
       </AlertDialog>
 
-      <AlertDialog open={changingRole !== null} onOpenChange={(o) => !o && setChangingRole(null)}>
+      <AlertDialog open={roleOpen} onOpenChange={setRoleOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              {changingRole?.role === "super_admin"
-                ? `Make ${changingRole?.name} a member?`
-                : `Make ${changingRole?.name} a super admin?`}
+              {roleMember?.role === "super_admin"
+                ? `Make ${roleMember?.name} a member?`
+                : `Make ${roleMember?.name} a super admin?`}
             </AlertDialogTitle>
             <AlertDialogDescription>
-              {changingRole?.role === "super_admin"
-                ? changingRole.id === me?.id
+              {roleMember?.role === "super_admin"
+                ? roleMember.id === me?.id
                   ? "You will no longer be able to manage the team."
                   : "They will no longer be able to manage the team."
                 : "They will be able to add members, change roles and reset passwords."}
@@ -335,14 +348,14 @@ export default function TeamPage() {
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
               onClick={() =>
-                changingRole &&
+                roleMember &&
                 patch.mutate({
-                  id: changingRole.id,
-                  body: { role: changingRole.role === "super_admin" ? "member" : "super_admin" },
+                  id: roleMember.id,
+                  body: { role: roleMember.role === "super_admin" ? "member" : "super_admin" },
                 })
               }
             >
-              {changingRole?.role === "super_admin" ? "Make member" : "Make super admin"}
+              {roleMember?.role === "super_admin" ? "Make member" : "Make super admin"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
