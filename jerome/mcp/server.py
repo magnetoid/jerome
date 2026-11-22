@@ -41,12 +41,15 @@ class JeromeMCP(MCPServer):
       taking a ``ctx`` parameter. (1.x had ``get_context()``; 2.x has no equivalent.)
     - The SDK prefixes a tool's error text with ``Error executing tool <name>: ``. The
       agent gets exactly ``<code>: <message>`` instead, and arguments that fail the tool's
-      input schema read ``invalid: ...`` like any other validation error.
+      input schema read ``invalid: ...`` like any other validation error, and an unknown
+      tool name reads ``not_found: unknown tool <name>``.
     """
 
     async def call_tool(
         self, name: str, arguments: dict[str, Any], context: Context | None = None
     ) -> CallToolResult | InputRequiredResult:
+        if self._tool_manager.get_tool(name) is None:
+            return _error_result(f"not_found: unknown tool {name}")
         token = current_mcp_context.set(context)
         try:
             return await super().call_tool(name, arguments, context)
@@ -59,7 +62,7 @@ class JeromeMCP(MCPServer):
                 return _error_result(str(cause))
             if isinstance(cause, ValidationError):
                 return _error_result(str(to_tool_error(cause)))
-            raise  # e.g. an unknown tool name: the SDK's own text
+            raise  # any other SDK ToolError keeps its own text
         finally:
             current_mcp_context.reset(token)
 
@@ -68,7 +71,7 @@ class JeromeMCP(MCPServer):
 mcp = JeromeMCP("jerome", log_level="WARNING")
 
 # The tool modules register on `mcp` when imported.
-from jerome.mcp import tools_books  # noqa: E402, F401
+from jerome.mcp import tools_books, tools_jobs, tools_review, tools_text  # noqa: E402, F401
 
 
 def mount_mcp(app: FastAPI) -> None:
