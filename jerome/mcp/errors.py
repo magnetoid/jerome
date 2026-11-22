@@ -47,8 +47,11 @@ def _message(exc: Exception) -> tuple[str, str] | None:
         if isinstance(exc, exc_type):
             return code, str(exc)
     if isinstance(exc, HTTPException):
-        code = "rate_limited" if exc.status_code == 429 else "invalid"
-        return code, str(exc.detail)
+        if exc.status_code == 429:
+            wait = (exc.headers or {}).get("Retry-After")
+            suffix = f" (retry after {wait} s)" if wait else ""
+            return "rate_limited", f"{exc.detail}{suffix}"
+        return "invalid", str(exc.detail)
     if isinstance(exc, RequestValidationError | ValidationError):
         return "invalid", _validation_message(exc.errors())
     return None

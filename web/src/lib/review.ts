@@ -156,6 +156,10 @@ export const RULE_LABELS: Record<string, string> = {
   name: "Name variant (majority form in the book)",
 };
 
+/** A decision's author as shown to people: Janus's key name reads "Janus (<key>)". */
+export const actorLabel = (actor: string, channel: string | null | undefined): string =>
+  channel === "mcp" ? `Janus (${actor})` : actor;
+
 /** Who decided it, in words: "Needs you", "Applied by AI", "Accepted by …". */
 export function stateLabel(s: Suggestion): string {
   if (s.status === "open") return "Needs you";
@@ -163,8 +167,7 @@ export function stateLabel(s: Suggestion): string {
   const verb = { accepted: "Accepted", edited: "Edited", rejected: "Rejected", superseded: "Superseded" }[s.status];
   // decided_by is only meaningful on a decided row (an undone row carries the undoer).
   if (!isDecided(s) || !s.decided_by) return verb;
-  // The API key's name, for a decision Janus made through the MCP server.
-  return s.decided_channel === "mcp" ? `${verb} by Janus (${s.decided_by})` : `${verb} by ${s.decided_by}`;
+  return `${verb} by ${actorLabel(s.decided_by, s.decided_channel)}`;
 }
 
 const quoted = (t: string) => (t ? `“${t}”` : "nothing");

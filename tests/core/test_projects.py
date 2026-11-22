@@ -110,14 +110,22 @@ def test_projects_list_one_request_shape_and_order(session, book_factory):
         1,
     )
     assert by["A"]["stage"] == "to_review" and by["A"]["variant"] == "en-US"
-    assert by["A"]["last_activity"] == {"actor": "bob", "at": T0 + timedelta(days=30)}
+    assert by["A"]["last_activity"] == {
+        "actor": "bob",
+        "at": T0 + timedelta(days=30),
+        "channel": "web",
+    }
     assert by["A"]["active_job"] is None
     assert by["B"]["stage"] == "proofreading"
     assert by["B"]["active_job"] == {
         "id": jb.id, "status": "running", "chapters_done": 1, "chapters_total": 2,
         "cost_actual": "1.2500", "max_cost": "5.0000",
     }  # fmt: skip
-    assert by["B"]["last_activity"] == {"actor": "cy", "at": T0 + timedelta(days=10)}
+    assert by["B"]["last_activity"] == {
+        "actor": "cy",
+        "at": T0 + timedelta(days=10),
+        "channel": None,
+    }
     assert by["C"]["stage"] == "needs_attention"
     assert by["C"]["active_job"]["status"] == "paused_cost_cap"
     assert by["D"]["last_activity"] is None and by["D"]["stage"] == "set_up"
@@ -145,7 +153,7 @@ def test_system_decisions_do_not_count_as_activity(session, book_factory):
     session.query(Decision).filter_by(channel="auto").update({"created_at": T0 + timedelta(days=1)})
     session.flush()
     assert list_projects(session)[0]["last_activity"] == {
-        "actor": "auto", "at": T0 + timedelta(days=1),
+        "actor": "auto", "at": T0 + timedelta(days=1), "channel": "auto",
     }  # fmt: skip
 
 
@@ -271,6 +279,7 @@ def test_last_activity_is_latest_decision_by_time_not_id(session, book_factory):
     assert list_projects(session)[0]["last_activity"] == {
         "actor": "newer",
         "at": T0 + timedelta(days=5),
+        "channel": "web",
     }
 
 
@@ -282,8 +291,8 @@ def test_last_activity_job_newer_than_decision_wins_and_vice_versa(session, book
     _decide_at(session, declwins, 1, "", [("dec", T0 + timedelta(days=9))])
     _job(session, declwins, "completed", T0 + timedelta(days=4), by="jobber")
     by = {r["title"]: r["last_activity"] for r in list_projects(session)}
-    assert by["J"] == {"actor": "jobber", "at": T0 + timedelta(days=3)}
-    assert by["D"] == {"actor": "dec", "at": T0 + timedelta(days=9)}
+    assert by["J"] == {"actor": "jobber", "at": T0 + timedelta(days=3), "channel": None}
+    assert by["D"] == {"actor": "dec", "at": T0 + timedelta(days=9), "channel": "web"}
 
 
 def test_latest_job_and_active_job_follow_created_at_not_id(session, book_factory):
@@ -293,7 +302,7 @@ def test_latest_job_and_active_job_follow_created_at_not_id(session, book_factor
     _job(session, book, "failed", T0 + timedelta(days=1), by="old")
     (p,) = list_projects(session)
     assert p["stage"] == "done"  # the newer job (completed) decides, not the failed higher id
-    assert p["last_activity"] == {"actor": "new", "at": T0 + timedelta(days=5)}
+    assert p["last_activity"] == {"actor": "new", "at": T0 + timedelta(days=5), "channel": None}
 
     # the active job is the active one even when a newer-by-time job is finished
     other = _book(session, book_factory, "B", created_at=T0)
@@ -331,3 +340,12 @@ def test_project_order_is_by_activity_time_opposite_to_id(session, book_factory)
     quiet_new = _book(session, book_factory, "quiet", created_at=T0 + timedelta(days=5))
     assert low.id < high.id < quiet_new.id
     assert [r["title"] for r in list_projects(session)] == ["low", "quiet", "high"]
+
+
+def test_projects_list_carries_the_channel_of_a_janus_decision(session, book_factory):
+    book = _book(session, book_factory, "J", created_at=T0)
+    s1 = add_one(session, _blocks(session, book)[0], 0, 3, "teh", "the")
+    decide(session, s1.id, "accept", actor="janus-desktop", channel="mcp")
+    session.flush()
+    assert list_projects(session)[0]["last_activity"]["channel"] == "mcp"
+    assert list_projects(session)[0]["last_activity"]["actor"] == "janus-desktop"

@@ -1,3 +1,5 @@
+import re
+
 import httpx
 import pytest
 from fastapi.testclient import TestClient
@@ -70,7 +72,9 @@ def test_proofread_text_shares_rest_rate_limit(
     _fake_models(rpm1_client.app, test_settings, [{"suggestions": [AI_ITEM]}] * 2)
     assert rpm1_client.post("/v1/proofread/text", json=BODY, headers=mcp_auth).status_code == 200
     result = mcp_call(rpm1_client, mcp_auth, "proofread_text", BODY)
-    assert tool_error(result) == "rate_limited: Rate limit exceeded"
+    assert re.fullmatch(
+        r"rate_limited: Rate limit exceeded \(retry after \d+ s\)", tool_error(result)
+    )
 
 
 def test_proofread_text_shares_rest_daily_cap(client, mcp_auth, session):
@@ -83,7 +87,9 @@ def test_proofread_text_shares_rest_daily_cap(client, mcp_auth, session):
     )
     session.flush()
     result = mcp_call(client, mcp_auth, "proofread_text", BODY)
-    assert tool_error(result) == "rate_limited: Daily cost cap reached"
+    assert re.fullmatch(
+        r"rate_limited: Daily cost cap reached \(retry after \d+ s\)", tool_error(result)
+    )
 
 
 def test_proofread_text_model_failure_keeps_the_usage_row(client, mcp_auth, session, ai):

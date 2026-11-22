@@ -61,8 +61,9 @@ def _count_columns(latest) -> tuple[Any, Any, Any]:
     )
 
 
-def _activity(actor: str | None, at: datetime | None) -> dict | None:
-    return None if at is None else {"actor": actor, "at": at}
+def _activity(actor: str | None, at: datetime | None, channel: str | None) -> dict | None:
+    """``channel`` is where a decision came from ("mcp" for Janus); None for a job start."""
+    return None if at is None else {"actor": actor, "at": at, "channel": channel}
 
 
 def list_projects(session: Session) -> list[dict]:
@@ -85,9 +86,9 @@ def list_projects(session: Session) -> list[dict]:
     }
 
     last_decision = {
-        r.book_id: (r.actor, r.created_at)
+        r.book_id: (r.actor, r.created_at, r.channel)
         for r in session.execute(
-            select(Suggestion.book_id, Decision.actor, Decision.created_at)
+            select(Suggestion.book_id, Decision.actor, Decision.created_at, Decision.channel)
             .join(Suggestion, Suggestion.id == Decision.suggestion_id)
             .where(Decision.channel != "system")
             .ext(distinct_on(Suggestion.book_id))
@@ -141,7 +142,7 @@ def list_projects(session: Session) -> list[dict]:
         if b.id in last_decision:
             candidates.append(last_decision[b.id])
         if job is not None:
-            candidates.append((job.created_by, job.created_at))
+            candidates.append((job.created_by, job.created_at, None))
         last = max(candidates, key=lambda c: c[1]) if candidates else None
         out.append(
             {

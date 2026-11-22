@@ -62,15 +62,27 @@ def test_bulk_decide_logs_count(client, mcp_auth, session, two):
     assert out == {"decided": 2}
     log = actions(session)
     assert [x.summary for x in log] == ["Accepted 2 suggestions"]
-    assert log[0].book_id == book.id and log[0].after == {"decided": 2}
+    assert log[0].book_id == book.id
+    assert log[0].after == {"decided": 2, "suggestion_ids": [a.id, b.id]}
     assert _latest(session, a.id).channel == "mcp"
+
+
+def test_bulk_accept_of_one_reads_singular(client, mcp_auth, session, two):
+    book, a, _ = two
+    args = {"book_id": book.id, "action": "accept", "ids": [a.id]}
+    assert tool_json(mcp_call(client, mcp_auth, "bulk_decide", args)) == {"decided": 1}
+    log = actions(session)
+    assert log[0].summary == "Accepted 1 suggestion"
+    assert log[0].after == {"decided": 1, "suggestion_ids": [a.id]}
 
 
 def test_bulk_decide_with_filter(client, mcp_auth, session, two):
     book, _, _ = two
     args = {"book_id": book.id, "action": "reject", "filter": {"category": "style"}}
     assert tool_json(mcp_call(client, mcp_auth, "bulk_decide", args)) == {"decided": 1}
-    assert actions(session)[0].summary == "Rejected 1 suggestions"
+    log = actions(session)
+    assert log[0].summary == "Rejected 1 suggestion"
+    assert log[0].after["decided"] == 1 and len(log[0].after["suggestion_ids"]) == 1
 
 
 def test_bulk_decide_rejects_what_rest_rejects(client, mcp_auth, session, two):

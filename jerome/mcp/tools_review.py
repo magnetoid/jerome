@@ -15,12 +15,12 @@ from jerome.api import routes_projects, routes_suggestions
 from jerome.api.schemas import (
     BlockOut,
     BulkBody,
-    BulkOut,
     EditBody,
     SuggestionFilterIn,
     SuggestionOut,
 )
 from jerome.core.agent_actions import record_action
+from jerome.core.suggestions import bulk_decide as bulk_decide_core
 from jerome.mcp.context import ToolContext, call
 from jerome.mcp.rest import READ_ONLY, rest_json
 from jerome.mcp.server import mcp
@@ -190,18 +190,25 @@ def bulk_decide(
 
     def body(c: ToolContext) -> dict[str, Any]:
         request = BulkBody(book_id=book_id, ids=ids, filter=filter, action=action)
-        out = rest_json(routes_suggestions.bulk(request, c.session, c.principal), BulkOut)
+        decided = bulk_decide_core(
+            c.session,
+            book_id,
+            ids=request.ids,
+            f=routes_suggestions._to_filter(request.filter) if request.filter else None,
+            action=request.action,
+            actor=c.principal.actor,
+            channel=c.principal.channel,
+        )
+        out = {"decided": len(decided)}
+        n = len(decided)
+        noun = "suggestion" if n == 1 else "suggestions"
         record_action(
             c.session,
             actor=c.principal.actor,
             tool="bulk_decide",
-            summary=(
-                f"Accepted {out['decided']} suggestions"
-                if action == "accept"
-                else f"Rejected {out['decided']} suggestions"
-            ),
+            summary=f"{'Accepted' if action == 'accept' else 'Rejected'} {n} {noun}",
             book_id=book_id,
-            after={"decided": out["decided"]},
+            after={"decided": n, "suggestion_ids": decided},
         )
         return out
 

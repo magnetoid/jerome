@@ -68,6 +68,26 @@ def _live_by_token(session: Session, token: str, kind: str, now: datetime) -> Tr
     return link
 
 
+def check_upload_open(session: Session, token: str, now: datetime) -> None:
+    """Raise NotFound unless ``token`` is a live upload link still waiting for its PUT.
+
+    An unlocked, cheap look so a caller can refuse before reading a body;
+    :func:`receive_upload` repeats the check under a row lock.
+    """
+    link = session.scalars(
+        select(TransferLink).where(
+            TransferLink.token_hash == _hash(token), TransferLink.kind == "upload"
+        )
+    ).one_or_none()
+    if (
+        link is None
+        or link.expires_at <= now
+        or link.used_at is not None
+        or link.received_at is not None
+    ):
+        raise NotFound(_BAD_LINK)
+
+
 def purge_expired(session: Session, storage: Storage, now: datetime) -> int:
     """Delete expired links and their files; returns how many. Rows another request holds
     locked right now are left for the next purge."""

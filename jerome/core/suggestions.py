@@ -397,7 +397,8 @@ def bulk_decide(
     action: Literal["accept", "reject"],
     actor: str,
     channel: Channel = "api",
-) -> int:
+) -> list[int]:
+    """Decide many suggestions; the ids actually decided (refusals and skips left out)."""
     if (ids is None) == (f is None):
         raise InvalidChangeError("give exactly one of ids or filter")
     if ids is not None:
@@ -413,10 +414,10 @@ def bulk_decide(
     else:
         assert f is not None
         if f.status not in (None, "open"):
-            return 0
+            return []
         scoped = SuggestionFilter(**{**f.__dict__, "status": "open"})
         targets = list_suggestions(session, book_id, scoped, limit=2**31 - 1).rows
-    decided = 0
+    decided: list[int] = []
     for s in targets:
         session.refresh(s)  # an earlier accept in this bulk may have superseded it
         if s.status != "open":
@@ -426,7 +427,7 @@ def bulk_decide(
                 decide(session, s.id, action, actor=actor, channel=channel)
         except Conflict:
             continue
-        decided += 1
+        decided.append(s.id)
     return decided
 
 

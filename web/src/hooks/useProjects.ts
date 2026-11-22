@@ -21,7 +21,7 @@ export interface Project {
   auto_applied_count: number;
   decided_count: number;
   active_job: ActiveJob | null;
-  last_activity: { actor: string; at: string } | null;
+  last_activity: { actor: string; at: string; channel?: string | null } | null;
   created_at: string;
 }
 

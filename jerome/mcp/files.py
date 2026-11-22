@@ -55,6 +55,8 @@ async def put_file(
     settings: Annotated[Settings, Depends(get_settings_dep)],
 ) -> Response:
     limit = settings.max_upload_mb * MIB
+    # Refuse an unknown or spent token before buffering any of the body.
+    await run_in_threadpool(transfer_links.check_upload_open, session, token, datetime.now(UTC))
     data = await _read_bounded(request, limit)
     if data is None:
         return _too_large()

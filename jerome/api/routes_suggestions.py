@@ -122,7 +122,7 @@ def get_block(book_id: int, block_id: int, session: SessionDep):
 
 @router.post("/suggestions/bulk", response_model=BulkOut)
 def bulk(body: BulkBody, session: SessionDep, principal: PrincipalDep):
-    n = suggestions.bulk_decide(
+    decided = suggestions.bulk_decide(
         session,
         body.book_id,
         ids=body.ids,
@@ -131,7 +131,7 @@ def bulk(body: BulkBody, session: SessionDep, principal: PrincipalDep):
         actor=principal.actor,
         channel=principal.channel,
     )
-    return {"decided": n}
+    return {"decided": len(decided)}
 
 
 @router.post("/suggestions/{suggestion_id}/edit", response_model=SuggestionOut)
