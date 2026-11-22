@@ -130,6 +130,7 @@ Settings are read from `JEROME_*` environment variables and from `.env`.
 | `JEROME_TEXT_DAILY_COST_CAP` | `5` | Daily cost cap per API key for the short-text endpoint |
 | `JEROME_TEXT_RPM` | `30` | Requests per minute per key for the short-text endpoint |
 | `JEROME_MAX_UPLOAD_MB` | `50` | Maximum upload size |
+| `JEROME_PUBLIC_BASE_URL` | unset | Public address of Jerome (e.g. `https://jerome.example.com`) for the file links MCP tools return; unset, the request's own address |
 | `ANTHROPIC_API_KEY` | unset | Anthropic API key (no `JEROME_` prefix). Read from the environment or `.env`, so local runs find it too; never logged |
 
 ## Data directory
@@ -165,6 +166,56 @@ are kept and not paid for twice.
 3. In Word (or LibreOffice) accept or reject changes, and edit freely. Save as DOCX.
 4. Upload the file to `POST /v1/books/{id}/review-imports`. Jerome records your decisions.
 5. Export `docx-clean` (or `docx-tracked`) for the final text.
+
+## Connecting Janus (MCP)
+
+Jerome is also an MCP server, so an AI agent such as Janus (or any MCP client) can do what
+an editor does: import books, set up and run proofreading jobs, review and decide
+suggestions, and do the Word round trip. The endpoint is `/mcp` (Streamable HTTP,
+stateless, JSON responses), outside `/v1`.
+
+1. Make one key per agent, named after it, so revoking it cuts off that agent alone:
+
+   ```bash
+   docker compose exec api jerome keys create janus-desktop   # prints the key, shown once
+   ```
+
+2. Point the agent at `https://<your Jerome domain>/mcp` and send the key in the header
+   `Authorization: Bearer <key>` on every request. A missing, unknown or revoked key gets
+   401; a browser session cookie is never accepted on `/mcp`. For Janus, an entry in
+   `mcp_servers` looks like this:
+
+   ```json
+   {
+     "mcp_servers": {
+       "jerome": {
+         "type": "http",
+         "url": "https://jerome.example.com/mcp",
+         "headers": { "Authorization": "Bearer jk_..." }
+       }
+     }
+   }
+   ```
+
+3. Set `JEROME_PUBLIC_BASE_URL` (for example `https://jerome.example.com`) when Jerome
+   runs behind a reverse proxy, so the file links below point at the public address.
+   Unset, links use the address the MCP request came in on.
+
+**Files.** Books never travel inside a tool call. `request_upload` returns an `upload_url`
+that takes one `PUT` of the raw file (`curl --fail --upload-file book.docx "<upload_url>"`),
+then `import_book` or `import_review_copy` takes its `upload_id`. `export_book` returns a
+`download_url` that takes one `GET`. The links carry their own token, so the API key never
+appears in a shell command. They work once, expire after 15 minutes, and an upload can only
+be used by the key that asked for it; an upload is at most `JEROME_MAX_UPLOAD_MB`.
+
+**What Janus does is visible.** A suggestion decision made through MCP shows as
+"Janus (<key name>)" in the review screens and can be undone there. Every other change
+(imports, settings, jobs) is listed on the "Janus activity" page, with the before and after
+values for a setting. Decisions in an imported Word review copy are the editor's, so they are
+recorded as Word decisions.
+
+**Not available over MCP:** deleting a book, team management, signing in, passwords and API
+keys. Those stay with people, in the web interface and the CLI.
 
 ## Public repository: no manuscripts
 
