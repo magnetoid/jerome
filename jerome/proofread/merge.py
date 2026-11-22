@@ -19,30 +19,33 @@ def _combine_twins(kept: Candidate, c: Candidate) -> Candidate:
     rule = kept.rule or c.rule
     if Source.MODEL in (kept.source, c.source) and kept.source != c.source:
         model_twin = c if c.source == Source.MODEL else kept
-        return replace(
-            model_twin,
-            agreed=True,
-            rule=rule,
-            disputed=kept.disputed,
-            alternative=kept.alternative,
-        )
+        return replace(model_twin, agreed=True, rule=rule)
     return replace(kept, rule=rule)
 
 
-def _record_dispute(kept: list[Candidate], dropped: Candidate) -> None:
-    for i, k in enumerate(kept):
-        if (
-            k.block_id == dropped.block_id
-            and spans_overlap(k.start, k.end, dropped.start, dropped.end)
-            and k.source != dropped.source
-            and k.replacement != dropped.replacement
-        ):
-            kept[i] = replace(k, disputed=True, alternative=k.alternative or dropped.replacement)
+def _record_disputes(kept: list[Candidate], dropped: Sequence[Candidate]) -> None:
+    """Mark kept candidates that a dropped one of another source disputes with another fix.
+    Runs after twins are settled, so sources are those of the final kept candidates."""
+    for d in dropped:
+        for i, k in enumerate(kept):
+            if (
+                k.block_id == d.block_id
+                and spans_overlap(k.start, k.end, d.start, d.end)
+                and k.source != d.source
+                and k.replacement != d.replacement
+            ):
+                kept[i] = replace(
+                    k,
+                    disputed=True,
+                    alternative=d.replacement if k.alternative is None else k.alternative,
+                )
 
 
 def merge_candidates(candidates: Sequence[Candidate]) -> list[Candidate]:
     kept: list[Candidate] = []
-    for c in sorted(candidates, key=_priority):
+    dropped: list[Candidate] = []
+    # end and replacement break ties so the result does not depend on input order
+    for c in sorted(candidates, key=lambda c: (*_priority(c), c.end, c.replacement)):
         twin = next(
             (
                 i
@@ -57,7 +60,8 @@ def merge_candidates(candidates: Sequence[Candidate]) -> list[Candidate]:
         elif any(
             k.block_id == c.block_id and spans_overlap(k.start, k.end, c.start, c.end) for k in kept
         ):
-            _record_dispute(kept, c)
+            dropped.append(c)
         else:
             kept.append(c)
+    _record_disputes(kept, dropped)
     return sorted(kept, key=lambda c: (c.block_id, c.start, c.end))

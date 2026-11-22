@@ -1,3 +1,4 @@
+import itertools
 from dataclasses import replace
 
 from jerome.proofread.merge import merge_candidates
@@ -49,8 +50,54 @@ def test_twin_keeps_the_consistency_rule():
     cons = replace(cand(0, 3, Source.CONSISTENCY), rule="house_spelling")
     for other in (Source.LANGUAGETOOL, Source.MODEL):
         twin = cand(0, 3, other, Severity.HIGH)
-        (out,) = merge_candidates([twin, cons])
-        assert out.rule == "house_spelling"
+        for order in ([twin, cons], [cons, twin]):
+            (out,) = merge_candidates(order)
+            assert out.rule == "house_spelling"
+
+
+def test_three_way_twin_keeps_rule_and_agreed():
+    model = cand(0, 3, Source.MODEL, Severity.LOW)
+    lt = cand(0, 3, Source.LANGUAGETOOL, Severity.HIGH)
+    cons = replace(cand(0, 3, Source.CONSISTENCY, Severity.MEDIUM), rule="variant")
+    for order in itertools.permutations([model, lt, cons]):
+        (out,) = merge_candidates(list(order))
+        assert out.source == Source.MODEL and out.agreed and out.rule == "variant"
+
+
+def test_same_source_dispute_vanishes_when_a_model_twin_takes_over():
+    k = cand(0, 3, Source.LANGUAGETOOL, Severity.HIGH, repl="a")
+    d = cand(1, 2, Source.MODEL, Severity.MEDIUM, repl="b")
+    m = cand(0, 3, Source.MODEL, Severity.LOW, repl="a")
+    for order in itertools.permutations([k, d, m]):
+        (out,) = merge_candidates(list(order))
+        assert out.source == Source.MODEL and out.agreed
+        assert not out.disputed and out.alternative is None
+
+
+def test_dispute_appears_when_a_model_twin_takes_over_from_same_source_conflict():
+    k = cand(0, 3, Source.LANGUAGETOOL, Severity.HIGH, repl="a")
+    d = cand(1, 2, Source.LANGUAGETOOL, Severity.MEDIUM, repl="b")
+    m = cand(0, 3, Source.MODEL, Severity.LOW, repl="a")
+    for order in itertools.permutations([k, d, m]):
+        (out,) = merge_candidates(list(order))
+        assert out.source == Source.MODEL and out.disputed and out.alternative == "b"
+
+
+def test_first_dropped_alternative_wins_even_when_empty():
+    model = cand(0, 5, Source.MODEL, Severity.HIGH, repl="a")
+    deletion = cand(1, 2, Source.LANGUAGETOOL, Severity.MEDIUM, repl="")
+    other = cand(2, 3, Source.CONSISTENCY, Severity.MEDIUM, repl="z")
+    for order in ([model, deletion, other], [other, deletion, model]):
+        (out,) = merge_candidates(order)
+        assert out.disputed and out.alternative == ""
+
+
+def test_equal_priority_candidates_merge_the_same_in_any_order():
+    a = cand(0, 3, Source.MODEL, repl="a")
+    b = cand(0, 3, Source.MODEL, repl="b")
+    lt = cand(0, 3, Source.LANGUAGETOOL, repl="c")
+    results = {tuple(merge_candidates(list(o))) for o in itertools.permutations([a, b, lt])}
+    assert len(results) == 1
 
 
 def test_different_fix_for_overlapping_span_marks_disputed_with_alternative():
