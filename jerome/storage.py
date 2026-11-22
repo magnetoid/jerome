@@ -1,13 +1,16 @@
 import os
 import shutil
 import tempfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from jerome.errors import NotFound
 
+TRANSFERS = "transfers"
+
 
 class Storage:
-    """Files of books under ``<root>/books/<id>/``."""
+    """Files of books under ``<root>/books/<id>/``; files waiting behind a single-use
+    transfer link under ``<root>/transfers/<link id>``."""
 
     def __init__(self, root: Path) -> None:
         self.root = Path(root)
@@ -30,6 +33,28 @@ class Storage:
 
     def delete_book(self, book_id: int) -> None:
         shutil.rmtree(self._book_dir(book_id), ignore_errors=True)
+
+    def save_transfer(self, link_id: int, data: bytes) -> str:
+        """Write a link's file atomically; returns its path relative to the root."""
+        rel = f"{TRANSFERS}/{int(link_id)}"
+        _write_atomic(self._transfer_path(rel), data)
+        return rel
+
+    def read_transfer(self, rel: str) -> bytes:
+        try:
+            return self._transfer_path(rel).read_bytes()
+        except FileNotFoundError:
+            raise NotFound("transfer file") from None
+
+    def delete_transfer(self, rel: str) -> None:
+        self._transfer_path(rel).unlink(missing_ok=True)
+
+    def _transfer_path(self, rel: str) -> Path:
+        """Only ``transfers/<digits>``: a stored path can never point anywhere else."""
+        parts = PurePosixPath(rel).parts
+        if len(parts) != 2 or parts[0] != TRANSFERS or not parts[1].isdigit():
+            raise ValueError(f"not a transfer path: {rel!r}")
+        return self.root / TRANSFERS / parts[1]
 
 
 def _write_atomic(path: Path, data: bytes) -> Path:
