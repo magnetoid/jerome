@@ -3,11 +3,11 @@ import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Route, Routes } from "react-router-dom";
 import AppShell from "./AppShell";
-import { ME, Where, json, mockApi, renderApp } from "@/test-utils";
+import { ME, MEMBER, Where, json, mockApi, renderApp } from "@/test-utils";
 
 afterEach(() => vi.unstubAllGlobals());
 
-function setup(me = ME) {
+function setup(me: typeof ME | typeof MEMBER = ME) {
   const f = mockApi({
     "GET /v1/auth/me": json(200, me),
     "POST /v1/auth/logout": json(204),
@@ -35,6 +35,13 @@ describe("AppShell", () => {
     expect(screen.getByRole("link", { name: "Projects" })).toHaveAttribute("href", "/");
     expect(screen.getByRole("link", { name: "Team" })).toHaveAttribute("href", "/team");
     expect(screen.getByRole("link", { name: "+ New project" })).toHaveAttribute("href", "/projects/new");
+  });
+
+  it("hides the Team link from members", async () => {
+    setup(MEMBER);
+    expect(await screen.findByText("home page")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Projects" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Team" })).not.toBeInTheDocument();
   });
 
   it("redirects to /change-password when a change is forced", async () => {

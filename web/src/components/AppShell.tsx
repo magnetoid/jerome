@@ -48,9 +48,11 @@ export default function AppShell() {
             <NavLink to="/" end className={link}>
               Projects
             </NavLink>
-            <NavLink to="/team" className={link}>
-              Team
-            </NavLink>
+            {me.data?.role === "super_admin" && (
+              <NavLink to="/team" className={link}>
+                Team
+              </NavLink>
+            )}
           </nav>
           <div className="ml-auto flex items-center gap-3">
             <Button asChild size="sm">

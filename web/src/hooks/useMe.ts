@@ -2,11 +2,15 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { apiFetch } from "@/lib/api";
 
+export type Role = "super_admin" | "member";
+
 export type Me = {
   id: number | null;
   email: string | null;
   name: string;
   must_change_password: boolean;
+  /** null for API keys. */
+  role: Role | null;
 };
 
 export const ME_KEY = ["me"] as const;

@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { ApiError, apiFetch } from "@/lib/api";
-import { useMe } from "@/hooks/useMe";
+import { ME_KEY, useMe, type Role } from "@/hooks/useMe";
 import TempPasswordDialog, { type TempPassword } from "@/components/TempPasswordDialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -26,6 +26,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { NATIVE_SELECT } from "@/components/NativeSelect";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
 type Member = {
@@ -33,12 +34,13 @@ type Member = {
   email: string;
   name: string;
   active: boolean;
+  role: Role;
   must_change_password: boolean;
   last_login_at: string | null;
   created_at: string;
 };
 type Result = { user: Member; temporary_password: string | null };
-type Patch = { name?: string; active?: boolean; reset_password?: boolean };
+type Patch = { name?: string; active?: boolean; reset_password?: boolean; role?: Role };
 
 const USERS_KEY = ["users"] as const;
 
@@ -54,15 +56,22 @@ function lastLogin(iso: string | null): string {
 export default function TeamPage() {
   const client = useQueryClient();
   const me = useMe().data;
-  const users = useQuery({ queryKey: USERS_KEY, queryFn: () => apiFetch<Member[]>("/v1/users") });
+  const isSuperAdmin = me?.role === "super_admin";
+  const users = useQuery({
+    queryKey: USERS_KEY,
+    queryFn: () => apiFetch<Member[]>("/v1/users"),
+    enabled: isSuperAdmin,
+  });
 
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
+  const [role, setRole] = useState<Role>("member");
   const [temp, setTemp] = useState<TempPassword | null>(null);
   const [renaming, setRenaming] = useState<Member | null>(null);
   const [renameTo, setRenameTo] = useState("");
   const [deactivating, setDeactivating] = useState<Member | null>(null);
   const [resetting, setResetting] = useState<Member | null>(null);
+  const [changingRole, setChangingRole] = useState<Member | null>(null);
 
   const onError = (err: unknown) =>
     toast.error(err instanceof ApiError ? err.detail : "Something went wrong");
@@ -79,11 +88,12 @@ export default function TeamPage() {
 
   const add = useMutation({
     gcTime: 0,
-    mutationFn: async (body: { email: string; name: string }) =>
+    mutationFn: async (body: { email: string; name: string; role: Role }) =>
       keepOnce(await apiFetch<Result>("/v1/users", { method: "POST", json: body })),
     onSuccess: () => {
       setEmail("");
       setName("");
+      setRole("member");
     },
     onError,
     onSettled: refresh,
@@ -94,12 +104,18 @@ export default function TeamPage() {
     mutationFn: async ({ id, body }: { id: number; body: Patch }) =>
       keepOnce(await apiFetch<Result>(`/v1/users/${id}`, { method: "PATCH", json: body })),
     onError,
-    onSettled: refresh,
+    onSettled: (_data, _err, vars) => {
+      refresh();
+      // Changing your own role changes what you may see; refresh it too.
+      if (vars.body.role !== undefined && vars.id === me?.id) {
+        client.invalidateQueries({ queryKey: ME_KEY });
+      }
+    },
   });
 
   function onAdd(e: FormEvent) {
     e.preventDefault();
-    add.mutate({ email: email.trim(), name: name.trim() });
+    add.mutate({ email: email.trim(), name: name.trim(), role });
   }
 
   function onRename(e: FormEvent) {
@@ -113,6 +129,10 @@ export default function TeamPage() {
     <main className="mx-auto max-w-4xl space-y-8 p-6">
       <h1 className="text-2xl font-semibold">Team</h1>
 
+      {me && !isSuperAdmin ? (
+        <p className="text-muted-foreground">Only a super admin can manage the team</p>
+      ) : (
+        <>
       <form onSubmit={onAdd} className="flex flex-wrap items-end gap-3" aria-label="Add member">
         <div className="grid gap-2">
           <Label htmlFor="add-email">Email</Label>
@@ -133,6 +153,18 @@ export default function TeamPage() {
             onChange={(e) => setName(e.target.value)}
           />
         </div>
+        <div className="grid gap-2">
+          <Label htmlFor="add-role">Role</Label>
+          <select
+            id="add-role"
+            className={NATIVE_SELECT}
+            value={role}
+            onChange={(e) => setRole(e.target.value as Role)}
+          >
+            <option value="member">Member</option>
+            <option value="super_admin">Super admin</option>
+          </select>
+        </div>
         <Button type="submit" disabled={add.isPending}>
           Add member
         </Button>
@@ -146,6 +178,7 @@ export default function TeamPage() {
             <TableRow>
               <TableHead>Name</TableHead>
               <TableHead>Email</TableHead>
+              <TableHead>Role</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Last login</TableHead>
               <TableHead className="text-right">Actions</TableHead>
@@ -158,6 +191,11 @@ export default function TeamPage() {
                 <TableRow key={u.id}>
                   <TableCell className="font-medium">{u.name}</TableCell>
                   <TableCell>{u.email}</TableCell>
+                  <TableCell>
+                    <Badge variant={u.role === "super_admin" ? "default" : "outline"}>
+                      {u.role === "super_admin" ? "Super admin" : "Member"}
+                    </Badge>
+                  </TableCell>
                   <TableCell className="space-x-2">
                     <Badge variant={u.active ? "default" : "secondary"}>
                       {u.active ? "Active" : "Inactive"}
@@ -178,6 +216,18 @@ export default function TeamPage() {
                       }}
                     >
                       Rename
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      aria-label={
+                        u.role === "super_admin"
+                          ? `Make ${u.name} a member`
+                          : `Make ${u.name} super admin`
+                      }
+                      onClick={() => setChangingRole(u)}
+                    >
+                      {u.role === "super_admin" ? "Make member" : "Make super admin"}
                     </Button>
                     {u.active ? (
                       <Button
@@ -265,6 +315,39 @@ export default function TeamPage() {
         </AlertDialogContent>
       </AlertDialog>
 
+      <AlertDialog open={changingRole !== null} onOpenChange={(o) => !o && setChangingRole(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {changingRole?.role === "super_admin"
+                ? `Make ${changingRole?.name} a member?`
+                : `Make ${changingRole?.name} a super admin?`}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {changingRole?.role === "super_admin"
+                ? changingRole.id === me?.id
+                  ? "You will no longer be able to manage the team."
+                  : "They will no longer be able to manage the team."
+                : "They will be able to add members, change roles and reset passwords."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() =>
+                changingRole &&
+                patch.mutate({
+                  id: changingRole.id,
+                  body: { role: changingRole.role === "super_admin" ? "member" : "super_admin" },
+                })
+              }
+            >
+              {changingRole?.role === "super_admin" ? "Make member" : "Make super admin"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <AlertDialog open={resetting !== null} onOpenChange={(o) => !o && setResetting(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -286,6 +369,8 @@ export default function TeamPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+        </>
+      )}
     </main>
   );
 }

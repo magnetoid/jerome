@@ -42,4 +42,5 @@ export function mockApi(routes: Record<string, Handler | Response>) {
   return fn;
 }
 
-export const ME = { id: 1, email: "ann@example.com", name: "Ann", must_change_password: false };
+export const ME = { id: 1, email: "ann@example.com", name: "Ann", must_change_password: false, role: "super_admin" as const };
+export const MEMBER = { ...ME, role: "member" as const };
