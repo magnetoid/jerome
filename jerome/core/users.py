@@ -1,4 +1,5 @@
 import secrets
+import threading
 from datetime import UTC, datetime
 from functools import cache
 
@@ -14,6 +15,14 @@ from jerome.orm import User
 
 MIN_PASSWORD_LENGTH = 10
 _hasher = PasswordHasher()
+# Each argon2 hash or verify uses 64 MiB. Login is unauthenticated, so a burst of attempts
+# must queue rather than run all at once: at most this many run together.
+_ARGON2_SLOTS = threading.BoundedSemaphore(4)
+
+
+def _hash(password: str) -> str:
+    with _ARGON2_SLOTS:
+        return _hasher.hash(password)
 
 
 def normalize_email(email: str) -> str:
@@ -50,7 +59,7 @@ def create_user(
     user = User(
         email=email,
         name=name,
-        password_hash=_hasher.hash(password),
+        password_hash=_hash(password),
         must_change_password=temporary,
     )
     try:
@@ -63,7 +72,8 @@ def create_user(
 
 def _verify_hash(password_hash: str, password: str) -> bool:
     try:
-        return _hasher.verify(password_hash, password)
+        with _ARGON2_SLOTS:
+            return _hasher.verify(password_hash, password)
     except (VerificationError, InvalidHashError):
         return False
 
@@ -75,7 +85,7 @@ def _verify(user: User, password: str) -> bool:
 @cache
 def _dummy_hash() -> str:
     """A hash made with the same parameters as real ones, so verifying against it costs the same."""
-    return _hasher.hash(secrets.token_urlsafe(16))
+    return _hash(secrets.token_urlsafe(16))
 
 
 def authenticate(session: Session, email: str, password: str) -> User | None:
@@ -100,7 +110,7 @@ def change_password(
     if not _verify(user, current):
         raise InvalidChangeError("current password is wrong")
     _check_length(new)
-    user.password_hash = _hasher.hash(new)
+    user.password_hash = _hash(new)
     user.must_change_password = False
     revoke_user_sessions(session, user.id, keep_token=keep_token)
     session.flush()
@@ -109,7 +119,7 @@ def change_password(
 def reset_password(session: Session, user_id: int) -> str:
     user = _get(session, user_id)
     password = _temporary_password()
-    user.password_hash = _hasher.hash(password)
+    user.password_hash = _hash(password)
     user.must_change_password = True
     revoke_user_sessions(session, user.id)  # whoever held the old password is logged out
     session.flush()

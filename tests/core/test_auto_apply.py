@@ -16,13 +16,15 @@ from jerome.core.auto_apply import (
     set_policy,
 )
 from jerome.core.books import import_book
+from jerome.core.style_sheets import get_style_sheet
 from jerome.core.suggestions import add_candidates, decide
 from jerome.orm import AUTO_APPLY_DEFAULT, Block, Book, Decision, Suggestion
-from jerome.types import Category, Severity, Source
+from jerome.proofread.consistency import consistency_candidates
+from jerome.types import BlockText, Category, Severity, Source
 from tests.fixtures.docx_builders import make_docx
 from tests.fixtures.suggestions import cand, insert_raw_open
 
-TEXT = "teh cat sat on the mat ."  # five separate spans: teh, cat, sat, mat, " ."
+TEXT = 'teh cat sat on the mat ."'  # separate spans: teh, cat, sat, mat, " .", a straight quote
 
 
 @pytest.fixture
@@ -123,7 +125,7 @@ def _consistency_rows(session, para):
         session,
         para,
         c(0, 3, "teh", "tea", "house_spelling"),
-        c(22, 24, " .", " !", "quote_style", Category.PUNCTUATION),
+        c(24, 25, '"', "”", "quote_style", Category.PUNCTUATION),
         c(4, 7, "cat", "Cat", "variant"),
         c(8, 11, "sat", "Sat", "name"),
     )
@@ -133,6 +135,44 @@ def test_house_rules_apply_but_variants_and_names_do_not(session, para):
     rows = _consistency_rows(session, para)
     assert apply_clear_cut(session, rows, DEFAULT_POLICY) == 2
     assert statuses(session, rows) == ["accepted", "accepted", "open", "open"]
+
+
+def _quote_rows(session, tmp_storage, text, variant):
+    """The consistency pass's own quote-style findings for one paragraph of a new book."""
+    book = import_book(
+        session, tmp_storage, filename="q.docx", data=make_docx([text]), variant=variant
+    )
+    block = session.query(Block).filter_by(book_id=book.id).one()
+    found = consistency_candidates(
+        [BlockText(block.id, block.text)], get_style_sheet(session, book.id)
+    )
+    return add(session, block, *[c for c in found if c.rule == "quote_style"])
+
+
+@pytest.mark.parametrize(
+    ("variant", "text", "curly", "swap"),
+    [
+        # in de-DE “ is a closing quote, so ” is swapped for it and “Hallo” would become “Hallo“
+        ("de-DE", 'Er sagte “Hallo”. Sie sagte "Tschüss".', "”", "“"),
+        # and the other way round: „Hallo“ in an English book would become “Hallo“
+        ("en-US", 'He said „Hallo“. She said "bye".', "„", "“"),
+        ("en-GB", 'He said „Hallo“. She said "bye".', "„", "“"),
+    ],
+)
+def test_quote_style_applies_straight_quotes_only(session, tmp_storage, variant, text, curly, swap):
+    """A curly quote of another style may be one half of a pair the rule cannot see whole, so
+    swapping it can leave mismatched quotes. Only straight quotes are applied; a curly-to-curly
+    change waits for a person."""
+    rows = _quote_rows(session, tmp_storage, text, variant)
+    assert sorted((r.original, r.replacement) for r in rows if r.original == curly) == [
+        (curly, swap)
+    ]
+    assert [r.original for r in rows if r.original != curly] == ['"', '"']
+
+    assert apply_clear_cut(session, rows, DEFAULT_POLICY) == 2
+    assert sorted((r.original, session.get(Suggestion, r.id).status) for r in rows) == sorted(
+        [(curly, "open"), ('"', "accepted"), ('"', "accepted")]
+    )
 
 
 def test_house_rules_toggle_off(session, para):

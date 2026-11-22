@@ -65,6 +65,8 @@ def build(
     house=None,
     chapter_ids=None,
     auto_apply=None,
+    variant="en-US",
+    quote_style="“”‘’",
 ):
     """Committed book + job. `chapters` is a list of lists of block texts. Without
     `auto_apply` the book gets the column default, auto-apply off."""
@@ -73,8 +75,8 @@ def build(
         if auto_apply is not None:
             book.auto_apply = policy_to_json(auto_apply)
         book.style_sheet = StyleSheetRow(
-            variant="en-US",
-            quote_style="“”‘’",
+            variant=variant,
+            quote_style=quote_style,
             house_spellings=house or {},
             ignore_words=[],
         )
@@ -584,6 +586,34 @@ def test_consistency_pass_applies_house_spellings(session_factory, test_settings
         ("colour", "accepted", "ai", "auto"),
         ("colour", "accepted", "ai", "auto"),
     ]
+    assert job(session_factory, ids.job_id).stats["auto_applied"] == 2
+
+
+def test_consistency_pass_applies_straight_quotes_but_leaves_curly_ones_open(
+    session_factory, test_settings, lt_route
+):
+    """In de-DE, “Hallo” would become “Hallo“: a curly quote of another style waits for a
+    person, while straight quotes still get the house style."""
+    ids = build(
+        session_factory,
+        [['Er sagte “Hallo”. Sie sagte "Tschüss".']],
+        consistency=True,
+        variant="de-DE",
+        quote_style="„“‚‘",
+        auto_apply=DEFAULT_POLICY,
+    )
+    deps = make_deps(test_settings, FakeProvider([reply()]))
+    for tid in ids.task_ids:
+        run_task(session_factory, tid, deps)
+    assert job(session_factory, ids.job_id).status == "completed"
+    assert decisions(session_factory) == [('"', "accepted", "ai", "auto")] * 2
+    with session_factory() as s:
+        rows = s.execute(
+            select(Suggestion.original, Suggestion.replacement, Suggestion.status)
+            .where(Suggestion.rule == "quote_style")
+            .order_by(Suggestion.start)
+        ).all()
+    assert rows == [("”", "“", "open"), ('"', "„", "accepted"), ('"', "“", "accepted")]
     assert job(session_factory, ids.job_id).stats["auto_applied"] == 2
 
 

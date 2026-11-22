@@ -32,6 +32,9 @@ __all__ = [
 
 # consistency rules that come from the book's own style sheet, not from guessing
 HOUSE_RULES = ("house_spelling", "quote_style")
+# a straight quote has no style of its own; a curly one may be half of a pair the rule
+# cannot see whole (in de-DE, “Hallo” would become “Hallo“), so only straight ones apply
+_STRAIGHT_QUOTES = frozenset("\"'")
 
 
 @dataclass(frozen=True)
@@ -91,12 +94,15 @@ def set_policy(session: Session, book_id: int, p: AutoApplyPolicy) -> AutoApplyP
 def qualifies(s: Suggestion, p: AutoApplyPolicy) -> bool:
     """True if ``s`` is clear-cut under ``p``.
 
-    Disputed suggestions never qualify. A house rule qualifies whichever checker's twin
-    carries it. Other consistency findings (variants, names) are guesses about the book and
-    never qualify. Otherwise only the AI's suggestions in the chosen categories at or above
-    the minimum severity do: LanguageTool alone is never enough.
+    Disputed suggestions never qualify, nor does a quote-style change of a curly quote: only
+    straight quotes are clear-cut. A house rule qualifies whichever checker's twin carries
+    it. Other consistency findings (variants, names) are guesses about the book and never
+    qualify. Otherwise only the AI's suggestions in the chosen categories at or above the
+    minimum severity do: LanguageTool alone is never enough.
     """
     if not p.enabled or s.disputed:
+        return False
+    if s.rule == "quote_style" and not (s.original and set(s.original) <= _STRAIGHT_QUOTES):
         return False
     if s.rule in HOUSE_RULES and p.house_rules:
         return True
