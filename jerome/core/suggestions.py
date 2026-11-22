@@ -437,13 +437,19 @@ def get_block(session: Session, book_id: int, block_id: int) -> Block:
     return block
 
 
+def text_with_changes(text: str, suggestions: Iterable[Suggestion]) -> str:
+    """The block text with its accepted and edited suggestions applied; others are ignored."""
+    changes = [
+        Change(s.start, s.end, s.final_text if s.status == "edited" else s.replacement)
+        for s in suggestions
+        if s.status in DECIDED
+    ]
+    return apply_changes(text, changes)
+
+
 def current_text(session: Session, block_id: int) -> str:
     block = session.get(Block, block_id)
     if block is None:
         raise NotFound(f"block {block_id} not found")
     stmt = select(Suggestion).where(Suggestion.block_id == block_id, Suggestion.status.in_(DECIDED))
-    changes = [
-        Change(s.start, s.end, s.final_text if s.status == "edited" else s.replacement)
-        for s in session.scalars(stmt)
-    ]
-    return apply_changes(block.text, changes)
+    return text_with_changes(block.text, session.scalars(stmt))
