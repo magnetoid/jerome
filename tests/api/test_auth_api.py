@@ -31,6 +31,7 @@ def test_login_sets_secure_httponly_cookie(web_client, session, test_settings):
         "id": user.id,
         "email": "ana@x.org",
         "name": "Ana",
+        "role": "super_admin",
         "must_change_password": False,
     }
     cookie = r.headers["set-cookie"]
@@ -86,6 +87,7 @@ def test_bearer_key_still_works_and_records_api_channel(client, auth, session, b
         "id": None,
         "email": None,
         "name": "tester",
+        "role": None,
         "must_change_password": False,
     }
     body = {"current": "whatever-123", "new": "whatever-456"}

@@ -32,6 +32,33 @@ def test_users_create_prints_a_password_once(cli_runner, cli_env, session_factor
         assert authenticate(s, "ana@x.org", out.stdout.strip()) is not None
 
 
+def test_users_create_with_a_role_and_set_role(cli_runner, cli_env, session_factory):
+    from jerome.core.users import get_user_by_email
+
+    out = cli_runner.invoke(app, ["users", "create", "b@x.org", "--name", "B", "--role", "member"])
+    assert out.exit_code == 0, out.output
+    with session_factory() as s:
+        assert get_user_by_email(s, "b@x.org").role == "member"
+
+    out = cli_runner.invoke(app, ["users", "set-role", "b@x.org", "super_admin"])
+    assert out.exit_code == 0, out.output
+    assert out.stdout.strip() == "b@x.org is now super_admin"
+    with session_factory() as s:
+        assert get_user_by_email(s, "b@x.org").role == "super_admin"
+
+
+def test_users_set_role_errors_exit_2(cli_runner, cli_env):
+    out = cli_runner.invoke(app, ["users", "set-role", "nobody@x.org", "member"])
+    assert out.exit_code == 2 and "Error:" in out.stderr
+
+    assert cli_runner.invoke(app, ["users", "create", "a@x.org", "--name", "A"]).exit_code == 0
+    out = cli_runner.invoke(app, ["users", "set-role", "a@x.org", "member"])
+    assert out.exit_code == 2 and "last active super admin" in out.stderr
+
+    out = cli_runner.invoke(app, ["users", "create", "c@x.org", "--name", "C", "--role", "owner"])
+    assert out.exit_code == 2 and "Error:" in out.stderr
+
+
 @pytest.fixture
 def cli_env(monkeypatch, tmp_path, session_factory):
     """Point the CLI at the test database and a temp data dir; truncate afterwards."""

@@ -19,6 +19,7 @@ from jerome.config import Settings
 from jerome.core import users
 from jerome.core.sessions import create_session, revoke_session
 from jerome.orm import User
+from jerome.types import Role
 
 # Included without the router-level auth dependency: login needs none, and the other
 # routes ask for the principal themselves.
@@ -42,6 +43,7 @@ class MeOut(BaseModel):
     id: int | None
     email: str | None
     name: str
+    role: Role | None
     must_change_password: bool
 
 
@@ -50,6 +52,7 @@ def _me(user: User) -> MeOut:
         id=user.id,
         email=user.email,
         name=user.name,
+        role=user.role,
         must_change_password=user.must_change_password,
     )
 
@@ -95,7 +98,9 @@ def logout(request: Request, session: SessionDep, settings: SettingsDep, princip
 @router.get("/auth/me", response_model=MeOut)
 def me(session: SessionDep, principal: PrincipalDep):
     if principal.user_id is None:  # an API key
-        return MeOut(id=None, email=None, name=principal.actor, must_change_password=False)
+        return MeOut(
+            id=None, email=None, name=principal.actor, role=None, must_change_password=False
+        )
     user = session.get(User, principal.user_id)
     assert user is not None  # current_principal just resolved it
     return _me(user)
