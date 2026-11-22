@@ -245,3 +245,89 @@ def test_chapter_review_pages_by_paragraph(session, book_factory):
     out = chapter_review(session, ch.id, 100, 50)
     assert len(out["blocks"]) == 20 and out["total_blocks"] == 120
     assert [b["ordinal"] for b in out["blocks"]] == list(range(100, 120))
+
+
+def _decide_at(session, book, n, actor, at_by_order):
+    """n suggestions on the book's block, each decided by `actor` at the given time (ids
+    ascend with the call order, times are whatever the caller passes)."""
+    block = _blocks(session, book)[0]
+    spans = [(0, 3, "teh", "the"), (4, 7, "cat", "cats"), (8, 11, "sat", "sits")]
+    ids = []
+    for (start, end, o, r), (who, at) in zip(spans, at_by_order, strict=False):
+        s = add_one(session, block, start, end, o, r)
+        decide(session, s.id, "accept", actor=who, channel="web")
+        ids.append(s.id)
+        session.query(Decision).filter_by(suggestion_id=s.id).update({"created_at": at})
+    session.flush()
+    return ids
+
+
+def test_last_activity_is_latest_decision_by_time_not_id(session, book_factory):
+    book = _book(session, book_factory, "A", created_at=T0)
+    # the higher decision id has the older time
+    _decide_at(
+        session, book, 2, "", [("newer", T0 + timedelta(days=5)), ("older", T0 + timedelta(days=2))]
+    )
+    assert list_projects(session)[0]["last_activity"] == {
+        "actor": "newer",
+        "at": T0 + timedelta(days=5),
+    }
+
+
+def test_last_activity_job_newer_than_decision_wins_and_vice_versa(session, book_factory):
+    jobwins = _book(session, book_factory, "J", created_at=T0)
+    _decide_at(session, jobwins, 1, "", [("dec", T0 + timedelta(days=2))])
+    _job(session, jobwins, "completed", T0 + timedelta(days=3), by="jobber")
+    declwins = _book(session, book_factory, "D", created_at=T0)
+    _decide_at(session, declwins, 1, "", [("dec", T0 + timedelta(days=9))])
+    _job(session, declwins, "completed", T0 + timedelta(days=4), by="jobber")
+    by = {r["title"]: r["last_activity"] for r in list_projects(session)}
+    assert by["J"] == {"actor": "jobber", "at": T0 + timedelta(days=3)}
+    assert by["D"] == {"actor": "dec", "at": T0 + timedelta(days=9)}
+
+
+def test_latest_job_and_active_job_follow_created_at_not_id(session, book_factory):
+    book = _book(session, book_factory, "A", created_at=T0)
+    # higher id, older time: a failed job; lower id, newer time: a completed job
+    _job(session, book, "completed", T0 + timedelta(days=5), by="new")
+    _job(session, book, "failed", T0 + timedelta(days=1), by="old")
+    (p,) = list_projects(session)
+    assert p["stage"] == "done"  # the newer job (completed) decides, not the failed higher id
+    assert p["last_activity"] == {"actor": "new", "at": T0 + timedelta(days=5)}
+
+    # the active job is the active one even when a newer-by-time job is finished
+    other = _book(session, book_factory, "B", created_at=T0)
+    older_active = _job(session, other, "queued", T0 + timedelta(days=1))
+    session.add(JobTask(job_id=older_active.id, kind="chapter", status="done"))
+    _job(session, other, "cancelled", T0 + timedelta(days=6))
+    session.flush()
+    b = next(r for r in list_projects(session) if r["title"] == "B")
+    assert b["active_job"]["id"] == older_active.id and b["active_job"]["chapters_done"] == 1
+    # the newest job is cancelled, but a job is still active, so the book is proofreading
+    assert b["stage"] == "proofreading"
+
+
+def test_newer_cancelled_job_after_failed_is_not_needs_attention(session, book_factory):
+    for title, open_suggestion, stage in (("todo", True, "to_review"), ("none", False, "set_up")):
+        book = _book(session, book_factory, title, created_at=T0)
+        _job(session, book, "failed", T0 + timedelta(days=1))
+        _job(session, book, "cancelled", T0 + timedelta(days=2))
+        if open_suggestion:
+            add_one(session, _blocks(session, book)[0], 0, 3, "teh", "the")
+        got = next(r for r in list_projects(session) if r["title"] == title)
+        assert got["stage"] == stage
+    done = _book(session, book_factory, "done", created_at=T0)
+    _job(session, done, "completed", T0 + timedelta(days=0, hours=1))
+    _job(session, done, "failed", T0 + timedelta(days=1))
+    _job(session, done, "cancelled", T0 + timedelta(days=2))
+    assert next(r for r in list_projects(session) if r["title"] == "done")["stage"] == "done"
+
+
+def test_project_order_is_by_activity_time_opposite_to_id(session, book_factory):
+    low = _book(session, book_factory, "low", created_at=T0)  # lower id, newest activity
+    high = _book(session, book_factory, "high", created_at=T0 + timedelta(days=1))
+    _job(session, low, "completed", T0 + timedelta(days=10))
+    _job(session, high, "completed", T0 + timedelta(days=3))
+    quiet_new = _book(session, book_factory, "quiet", created_at=T0 + timedelta(days=5))
+    assert low.id < high.id < quiet_new.id
+    assert [r["title"] for r in list_projects(session)] == ["low", "quiet", "high"]
