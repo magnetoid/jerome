@@ -58,7 +58,8 @@ watch its progress and review the result in the browser. Clear-cut changes (typo
 and house-style rules) can be applied automatically by the AI while proofreading runs; every
 such change is marked as the AI's and can be reverted in one step. Exports (Word with
 comments, Word with tracked changes, clean Word, clean EPUB) are on the project page. The API
-and its bearer keys work as before.
+and its bearer keys work as before, except team management (`/v1/users`), which needs a
+super admin signed in to the web interface.
 
 **First login.** There is no sign-up. Create each member once, inside the API container:
 
