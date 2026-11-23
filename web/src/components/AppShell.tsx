@@ -56,6 +56,11 @@ export default function AppShell() {
                 Team
               </NavLink>
             )}
+            {me.data?.role === "super_admin" && (
+              <NavLink to="/settings" className={link}>
+                Settings
+              </NavLink>
+            )}
           </nav>
           <div className="ml-auto flex items-center gap-3">
             <Button asChild size="sm">
