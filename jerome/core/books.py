@@ -4,10 +4,11 @@ from collections import Counter
 from collections.abc import Iterable
 from pathlib import Path
 
-from sqlalchemy import insert, select
+from sqlalchemy import insert, or_, select
 from sqlalchemy.orm import Session
 
 from jerome.core.auto_apply import DEFAULT_POLICY, AutoApplyPolicy, policy_to_json
+from jerome.core.translation import ensure_not_source, source_of
 from jerome.documents.docx_reader import read_docx
 from jerome.documents.epub_reader import read_epub
 from jerome.documents.model import BlockKind, ParsedBook
@@ -183,7 +184,7 @@ def get_book(session: Session, book_id: int) -> Book:
 
 
 def list_books(session: Session) -> list[Book]:
-    return list(session.scalars(select(Book).order_by(Book.id)))
+    return list(session.scalars(select(Book).where(Book.is_source.is_(False)).order_by(Book.id)))
 
 
 def list_chapters(session: Session, book_id: int) -> list[Chapter]:
@@ -197,6 +198,7 @@ def set_chapter_proofread(session: Session, chapter_id: int, proofread: bool) ->
     chapter = session.get(Chapter, chapter_id)
     if chapter is None:
         raise NotFound(f"chapter {chapter_id}")
+    ensure_not_source(session, chapter.book_id)
     chapter.proofread = proofread
     session.flush()
     return chapter
@@ -204,12 +206,24 @@ def set_chapter_proofread(session: Session, chapter_id: int, proofread: bool) ->
 
 def delete_book(session: Session, storage: Storage, book_id: int) -> None:
     book = get_book(session, book_id)
+    ensure_not_source(session, book_id)
+    source = source_of(session, book)
     session.delete(book)
+    if source is not None:
+        session.delete(source)
     session.flush()
     storage.delete_book(book_id)
+    if source is not None:
+        storage.delete_book(source.id)
 
 
-def block_texts(session: Session, book_id: int, chapter_id: int | None = None) -> list[BlockText]:
+def block_texts(
+    session: Session,
+    book_id: int,
+    chapter_id: int | None = None,
+    *,
+    proofreadable_only: bool = False,
+) -> list[BlockText]:
     stmt = (
         select(Block.id, Block.text)
         .join(Chapter, Block.chapter_id == Chapter.id)
@@ -218,4 +232,11 @@ def block_texts(session: Session, book_id: int, chapter_id: int | None = None) -
     )
     if chapter_id is not None:
         stmt = stmt.where(Block.chapter_id == chapter_id)
+    if proofreadable_only:  # untranslated, flagged and kept blocks hold no text to proofread
+        stmt = stmt.where(
+            or_(
+                Block.translation_status.is_(None),
+                Block.translation_status.not_in(("pending", "flagged", "kept")),
+            )
+        )
     return [BlockText(id=i, text=t) for i, t in session.execute(stmt)]

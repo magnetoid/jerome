@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from jerome.core.books import get_book
 from jerome.core.suggestions import is_auto_applied, spans_overlap
+from jerome.core.translation import ensure_not_source
 from jerome.documents.changes import Change
 from jerome.documents.docx_writer import DocxWriteOptions, write_docx
 from jerome.documents.epub_writer import write_epub
@@ -181,6 +182,7 @@ def export_book(
     actor: str | None = None,
     now: datetime | None = None,
 ) -> ExportFile:
+    ensure_not_source(session, book_id)
     book = get_book(session, book_id)
     wanted = {
         "epub-clean": "epub",

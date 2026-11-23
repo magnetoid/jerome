@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from jerome.core.translation import ensure_not_source
 from jerome.errors import Conflict, NotFound
 from jerome.jobs.estimate import ALL_PASSES, PassName, estimate_job, included_chapter_ids
 from jerome.models import Registry
@@ -52,6 +53,7 @@ def create_job(
     callback_url: str | None,
     actor: str,
 ) -> Job:
+    ensure_not_source(session, book_id)
     if _active_job_id(session, book_id) is not None:
         raise _already_active(book_id)
     included = included_chapter_ids(session, book_id, chapter_ids)

@@ -33,6 +33,7 @@ from jerome.errors import (
     NotFound,
     UnknownModelPrice,
     UnsupportedDocumentError,
+    UnsupportedLanguagePair,
 )
 from jerome.mcp.server import mount_mcp
 from jerome.models.registry import build_registry
@@ -46,6 +47,7 @@ _ERROR_STATUS: dict[type[Exception], int] = {
     InvalidChangeError: 422,
     UnknownModelPrice: 422,
     InvalidSetting: 400,
+    UnsupportedLanguagePair: 400,
 }
 
 

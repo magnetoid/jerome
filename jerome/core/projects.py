@@ -72,6 +72,7 @@ def list_projects(session: Session) -> list[dict]:
     books = session.execute(
         select(Book.id, Book.title, Book.format, StyleSheetRow.variant, Book.created_at)
         .outerjoin(StyleSheetRow, StyleSheetRow.book_id == Book.id)
+        .where(Book.is_source.is_(False))
     ).all()  # fmt: skip
 
     latest = _latest_channel().subquery()
