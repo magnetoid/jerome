@@ -71,6 +71,24 @@ def effective_for_app(app: FastAPI, session: Session) -> Settings:
     return _sync(app)
 
 
+def refresh_if_due(app: FastAPI) -> None:
+    """Read the settings table now if the cache is due, in a session of its own.
+
+    For code that runs before any route, such as the body-size check: without it a raised
+    limit would be refused against the old cached one until some other request refreshed.
+    A failure keeps the cached settings.
+    """
+    if not app.state.settings_store.due:
+        return
+    from jerome.mcp.context import open_session  # the MCP context imports the API
+
+    try:
+        with open_session(app) as session:
+            effective_for_app(app, session)
+    except Exception:  # noqa: BLE001 - the cached settings still apply
+        log.exception("settings refresh failed; keeping the cached settings")
+
+
 def cached_for_app(app: FastAPI) -> Settings:
     """The effective settings as last read, without touching the database."""
     store: SettingsStore = app.state.settings_store

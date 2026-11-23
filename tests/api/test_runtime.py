@@ -75,3 +75,15 @@ def test_assigned_base_settings_keep_assigned_objects(client, session, test_sett
     assert eff.cookie_secure is False
     assert app.state.registry is registry and app.state.lt_client is lt
     assert app.state.text_limits is limits
+
+
+def test_raised_upload_limit_applies_before_the_body_check(
+    web_client, session, auth, test_settings
+):
+    # Another process (or a restart) left this one's cache on the old, lower limit.
+    test_settings.max_upload_mb = 1
+    store = web_client.app.state.settings_store
+    set_value(session, "max_upload_mb", 3, actor="a", base=store.base)
+    store.invalidate()
+    r = web_client.post("/v1/books", headers=auth, files={"file": ("a.docx", b"x" * (2 * MIB))})
+    assert r.status_code != 413

@@ -152,6 +152,7 @@ class _Paid:
 
     result: AiPassResult | None = None
     billed: Billed | None = None
+    deps: WorkerDeps | None = None  # what the chunk ran with: prices a failed call
 
 
 @dataclass
@@ -291,6 +292,7 @@ def _run_chapter(
             _requeue_for_stop(sf, task_id, plan)
             return
         deps = refreshed(deps)
+        paid.deps = deps
         if not _precheck(sf, task_id, plan, deps):
             return
         paid.result = paid.billed = None
@@ -484,14 +486,15 @@ def _record_failure(
     sf: SessionFactory, task_id: int, exc: Exception, paid: _Paid, deps: WorkerDeps
 ) -> None:
     note = None
-    deps = refreshed(deps)  # price and sign with the settings as they are now
+    pricing = paid.deps or deps  # a billed call is priced as it ran, not as settings are now
+    deps = refreshed(deps)  # the notification is signed with the current webhook secret
     with sf() as s:
         job_id = s.scalar(select(JobTask.job_id).where(JobTask.id == task_id))
         job, task = _lock_job_task(s, job_id, task_id)
         billed = paid.billed or billed_from(exc)
         if billed is not None:  # the model call was billed: keep its spend on the books
-            configured = deps.registry.settings.models.get("ai", {}).get("model", "")
-            _usage_row(s, job, billed, deps.registry, configured)
+            configured = pricing.registry.settings.models.get("ai", {}).get("model", "")
+            _usage_row(s, job, billed, pricing.registry, configured)
         task.attempts += 1
         task.error = repr(exc)[:2000]
         if task.attempts >= MAX_ATTEMPTS:

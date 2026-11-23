@@ -120,6 +120,11 @@ class SettingsStore:
     def cached(self) -> Effective:
         return self._effective
 
+    @property
+    def due(self) -> bool:
+        """Whether the next ``current()`` would read the table."""
+        return self._due or self._clock() - self._last_read >= self._interval
+
     def invalidate(self) -> None:
         self._due = True
 
