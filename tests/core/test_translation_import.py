@@ -16,7 +16,7 @@ from jerome.core.translation import (
     source_of,
     translation_counts,
 )
-from jerome.errors import Conflict, UnsupportedLanguagePair
+from jerome.errors import Conflict, NotFound, UnsupportedLanguagePair
 from jerome.orm import Block, Book, Chapter
 from tests.fixtures.docx_builders import make_docx
 
@@ -63,7 +63,7 @@ def test_import_creates_hidden_source_and_pending_translated_book(session, tmp_s
     assert [b.id for b in list_books(session)] == [t.id]
     assert translation_counts(session, t.id) == {"pending": len(t_blocks)}
     assert tmp_storage.read_original(src.id)
-    with pytest.raises(FileNotFoundError):
+    with pytest.raises(NotFound):
         tmp_storage.read_original(t.id)
 
 
