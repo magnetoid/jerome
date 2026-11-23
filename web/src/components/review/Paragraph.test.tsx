@@ -123,4 +123,24 @@ describe("Paragraph", () => {
     await userEvent.click(first);
     expect(onSelect).toHaveBeenCalledWith(1);
   });
+
+  it("shows the source paragraph next to a translated block", async () => {
+    render(<Paragraph block={block(100, 1, "The cat sat.", [], "paragraph", "Die Katze sass.")} />);
+    const src = screen.getByLabelText("Source paragraph");
+    expect(src).toHaveTextContent("Die Katze sass.");
+    // Below 1024 px the original sits behind a toggle.
+    const toggle = screen.getByRole("button", { name: "Show original" });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(src.className).toMatch(/\bhidden\b/);
+    expect(src.className).toMatch(/lg:block/);
+    await userEvent.click(toggle);
+    expect(screen.getByRole("button", { name: "Hide original" })).toHaveAttribute("aria-expanded", "true");
+    expect(src.className).not.toMatch(/\bhidden\b/);
+  });
+
+  it("no source column for a proofread-only book", () => {
+    render(<Paragraph block={block(100, 1, "The cat sat.")} />);
+    expect(screen.queryByLabelText("Source paragraph")).toBeNull();
+    expect(screen.queryByRole("button", { name: /original/i })).toBeNull();
+  });
 });

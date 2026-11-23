@@ -203,6 +203,7 @@ function ChapterReview({ bookId, chapterId, chapters }: {
             {current?.block_id === b.id && (
               <FocusCard
                 s={current}
+                source={b.source}
                 hiddenBy={hiddenBy(b.suggestions, current)}
                 editing={editing === current.id}
                 busy={decide.isPending}

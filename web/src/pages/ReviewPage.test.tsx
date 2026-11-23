@@ -294,4 +294,21 @@ describe("focus card placement (S2)", () => {
     expect(box.lastElementChild).toBe(card());
     expect(card()).toHaveClass("sticky", "bottom-4", "bg-card");
   });
+
+  it("translation category is filterable", async () => {
+    const t = sug({
+      id: 9, block_id: 100, start: 2, end: 5, original: "teh", replacement: "the",
+      category: "translation", explanation: "Says something different from the source.",
+    });
+    reviewServer([block(100, 1, "𝔄 teh cat sat.", [t, s6], "paragraph", "Die Katze sass.")], SUMMARY);
+    renderReview();
+    await screen.findByLabelText("Source paragraph");
+    expect(screen.getByLabelText("Source paragraph")).toHaveTextContent("Die Katze sass.");
+    expect(screen.getByRole("option", { name: "Translation" })).toBeInTheDocument();
+    await userEvent.selectOptions(screen.getByLabelText("Category"), "translation");
+    expect(screen.getAllByRole("button", { name: /^Needs you:/ })).toHaveLength(1);
+    await userEvent.click(screen.getByRole("button", { name: /^Needs you:/ }));
+    expect(within(card()).getByText("Translation")).toBeInTheDocument();
+    expect(within(card()).getByLabelText("Original paragraph")).toHaveTextContent("Die Katze sass.");
+  });
 });

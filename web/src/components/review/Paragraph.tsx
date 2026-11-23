@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { cpToUtf16 } from "@/lib/offsets";
 import {
   changeText, layoutMarks, resultText, stateLabel, type ReviewBlock, type Suggestion,
@@ -87,6 +87,7 @@ function Mark({ s, original, active, focused, onSelect }: {
 }
 
 export default function Paragraph({ block, isActive = () => true, focusedId = null, onSelect }: Props) {
+  const [showSource, setShowSource] = useState(false);
   const marks = useMemo(() => layoutMarks(block.suggestions), [block.suggestions]);
   const notes = block.suggestions.filter((s) => s.auto_applied && s.status !== "superseded");
 
@@ -111,8 +112,8 @@ export default function Paragraph({ block, isActive = () => true, focusedId = nu
   }
   if (at < text.length) parts.push(text.slice(at));
 
-  return (
-    <div className="md:grid md:grid-cols-[minmax(0,1fr)_14rem] md:gap-6">
+  const body = (
+    <div className={cn(block.source == null && "md:grid md:grid-cols-[minmax(0,1fr)_14rem] md:gap-6")}>
       <p className={cn("leading-8", KIND_CLASS[block.kind])}>{parts}</p>
       {notes.length > 0 && (
         <aside aria-label="AI notes" className="mt-1 space-y-1 border-l-2 border-ai/40 pl-3 text-xs md:mt-1.5">
@@ -123,6 +124,35 @@ export default function Paragraph({ block, isActive = () => true, focusedId = nu
           ))}
         </aside>
       )}
+    </div>
+  );
+  if (block.source == null) return body;
+
+  // A translated block: the source paragraph beside the text from 1024 px up, behind a
+  // toggle under it on narrower screens.
+  return (
+    <div className="lg:grid lg:grid-cols-2 lg:gap-6">
+      <div className="mb-2 lg:mb-0">
+        <button
+          type="button"
+          className="text-xs text-muted-foreground underline underline-offset-2 lg:hidden"
+          aria-expanded={showSource}
+          onClick={() => setShowSource((v) => !v)}
+        >
+          {showSource ? "Hide original" : "Show original"}
+        </button>
+        <div
+          aria-label="Source paragraph"
+          role="note"
+          className={cn(
+            showSource ? "block" : "hidden", "lg:block mt-1 border-l-2 border-muted-foreground/30 pl-3 leading-8 text-muted-foreground lg:mt-0",
+            KIND_CLASS[block.kind],
+          )}
+        >
+          {block.source}
+        </div>
+      </div>
+      {body}
     </div>
   );
 }
