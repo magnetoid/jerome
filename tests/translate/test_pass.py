@@ -161,3 +161,22 @@ def test_blank_reply_for_a_block_with_text_fails():
     r = run_translate_pass(chunk, EN, DE, [], FakeProvider([scripted(replies)]), "m", None)
     assert r.failed == [1, 2, 5]
     assert r.done[3].text == PLACEHOLDER and r.done[4].text == ""
+
+
+def test_pass_moves_edge_placeholders_back_and_pins_their_marks():
+    chunk = TranslateChunk(
+        [
+            item(1, f"{PLACEHOLDER}Chapter One"),
+            item(2, f"word{PLACEHOLDER}", [Mark(4, 5, MarkKind.SUPERSCRIPT)]),
+        ]
+    )
+    provider = FakeProvider([scripted({1: "Kapitel Eins⟦1⟧", 2: "Wort⟦1⟧"})])
+    r = run_translate_pass(chunk, EN, DE, [], provider, "m", None)
+    assert r.done[1].text == f"{PLACEHOLDER}Kapitel Eins"
+    assert r.done[2].marks == [Mark(4, 5, MarkKind.SUPERSCRIPT)]
+
+
+def test_pass_fails_a_reply_with_characters_xml_cannot_carry():
+    provider = FakeProvider([scripted({1: "Hallo\x0cWelt"})])
+    r = run_translate_pass(chunk_of(1), EN, DE, [], provider, "m", None)
+    assert r.failed == [1] and r.done == {}

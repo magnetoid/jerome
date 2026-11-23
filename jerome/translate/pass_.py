@@ -179,7 +179,7 @@ def run_translate_pass(
             failed.append(block_id)
             continue
         try:
-            decoded = decode(texts[0], it.marks, it.text.count(PLACEHOLDER))
+            decoded = decode(texts[0], it.marks, it.text.count(PLACEHOLDER), source_text=it.text)
         except TagError:
             failed.append(block_id)
             continue

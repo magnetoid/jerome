@@ -99,7 +99,6 @@ def test_nested_formatting_has_no_reopen_churn():
     assert encode(text, [Mark(4, 7, B), Mark(4, 13, IT)]) == "one <i><b>two</b> three</i> four"
     # same span: the fixed order decides (a, b, i, u, sc, s, sup, sub)
     marks = [
-        Mark(0, 3, MarkKind.SUBSCRIPT),
         Mark(0, 3, MarkKind.SUPERSCRIPT),
         Mark(0, 3, MarkKind.STRIKE),
         Mark(0, 3, MarkKind.SMALLCAPS),
@@ -109,8 +108,11 @@ def test_nested_formatting_has_no_reopen_churn():
         Mark(0, 3, L, "h"),
     ]
     assert encode(text, marks) == (
-        "<a1><b><i><u><sc><s><sup><sub>one</sub></sup></s></sc></u></i></b></a1> two three four"
+        "<a1><b><i><u><sc><s><sup>one</sup></s></sc></u></i></b></a1> two three four"
     )
+    # sub comes last (it never shares text with sup: see the R14 tests)
+    sub = [Mark(0, 3, MarkKind.SUBSCRIPT), Mark(0, 3, MarkKind.STRIKE)]
+    assert encode(text, sub) == "<s><sub>one</sub></s> two three four"
 
 
 def test_crossing_marks_round_trip():
@@ -180,3 +182,122 @@ def test_unknown_entities_and_markup_declarations_raise(tagged):
 )
 def test_bare_ampersand_stays_literal(tagged, text):
     assert decode(tagged, [], placeholder_count=0).text == text
+
+
+# --- fix round for Task 6: rulings R11-R14 ---
+
+SUP, SUB = MarkKind.SUPERSCRIPT, MarkKind.SUBSCRIPT
+P = PLACEHOLDER
+
+
+def test_r11_leading_placeholder_is_moved_back_to_the_start():
+    d = decode("<b>Kapitel</b> Eins⟦1⟧", [Mark(1, 8, B)], 1, source_text=f"{P}Chapter One")
+    assert d.text == f"{P}Kapitel Eins" and d.placeholders == [0]
+    assert d.marks == [Mark(1, 8, B)]
+
+
+def test_r11_without_source_text_nothing_is_moved():
+    assert decode("Kapitel Eins⟦1⟧", [], 1).text == f"Kapitel Eins{P}"
+
+
+def test_r11_trailing_run_keeps_its_order_and_interior_is_untouched():
+    d = decode("⟦2⟧Ende⟦1⟧", [], 2, source_text=f"End{P}{P}")
+    assert d.text == f"Ende{P}{P}" and d.placeholders == [0, 1]
+    d = decode("x⟦3⟧ ⟦2⟧ y ⟦1⟧", [], 3, source_text=f"{P}a{P}b{P}")
+    assert d.text == f"{P}x {P} y {P}" and d.placeholders == [0, 1, 2]
+
+
+def test_r11_all_placeholder_source_is_put_in_source_order():
+    d = decode("⟦2⟧ ⟦1⟧", [], 2, source_text=f"{P}{P}")
+    assert d.text == f"{P}{P} " and d.placeholders == [0, 1]
+
+
+def test_r11_a_moved_placeholder_carries_its_link():
+    marks = [Mark(0, 8, L, "#c1")]
+    d = decode("<a1>Kapitel⟦1⟧</a1>", marks, 1, source_text=f"{P}Chapter")
+    assert d.text == f"{P}Kapitel" and d.marks == [Mark(0, 8, L, "#c1")]
+
+
+def test_r11_no_text_is_lost_for_random_token_moves():
+    rng = random.Random(22367)
+    for _ in range(300):
+        source = "".join(rng.choice(["w", P]) for _ in range(rng.randint(0, 6))) + P
+        n = source.count(P)
+        units = [f"⟦{k}⟧" for k in range(1, n + 1)] + list("abc ")
+        rng.shuffle(units)
+        d = decode("".join(units), [], n, source_text=source)
+        assert sorted(c for c in d.text if c != P) == sorted("abc ")
+        assert d.text.count(P) == n and sorted(d.placeholders) == list(range(n))
+        lead = len(source) - len(source.lstrip(P))
+        trail = 0 if lead == n else len(source) - len(source.rstrip(P))
+        assert d.text.startswith(P * lead) and d.placeholders[:lead] == list(range(lead))
+        assert d.text.endswith(P * trail)
+        assert d.placeholders[n - trail :] == list(range(n - trail, n))
+
+
+@pytest.mark.parametrize(
+    "bad", ["\x00", "\x0c", "\x1b", "\x0b", "\ud800", "\udfff", "\ufffe", "\uffff"]
+)
+def test_r12_characters_xml_cannot_carry_raise(bad):
+    with pytest.raises(TagError):
+        decode(f"a{bad}b", [], 0)
+
+
+def test_r12_tab_newline_and_carriage_return_are_allowed():
+    assert decode("a\tb\nc\rd", [], 0).text == "a\tb\nc\rd"
+
+
+def test_r13_bold_merged_over_a_placeholder_leaves_the_placeholder_unbolded():
+    marks = [Mark(0, 7, B), Mark(8, 14, B)]
+    d = decode("<b>Abbildung ⟦1⟧ zeigt</b>", marks, 1, source_text=f"Figure {P} shows")
+    assert d.text == f"Abbildung {P} zeigt"
+    assert d.marks == [Mark(0, 10, B), Mark(11, 17, B)] and d.marks_dropped == 0
+
+
+def test_r13_footnote_reference_keeps_its_superscript_when_the_model_drops_it():
+    d = decode("Wort⟦1⟧ mehr", [Mark(4, 5, SUP)], 1, source_text=f"word{P} more")
+    assert d.marks == [Mark(4, 5, SUP)]
+
+
+def test_r13_each_placeholder_gets_its_own_source_marks():
+    source = f"a{P} b{P}"  # placeholder 1 is superscript, placeholder 2 is plain
+    marks = [Mark(0, 1, B), Mark(1, 2, SUP)]
+    d = decode("<b>⟦2⟧ B ⟦1⟧</b>", marks, 2, source_text=source)
+    assert d.text == f" B {P}{P}" and d.placeholders == [0, 1]  # R11 moves ⟦2⟧ to the end
+    assert d.marks == [Mark(0, 3, B), Mark(3, 4, SUP)]
+
+
+def test_r13_without_source_text_placeholder_marks_are_left_alone():
+    d = decode("<b>A⟦1⟧</b>", [Mark(0, 2, B)], 1)
+    assert d.marks == [Mark(0, 2, B)]
+
+
+def test_r14_subscript_under_superscript_is_dropped_and_counted():
+    marks = [Mark(0, 1, SUP), Mark(1, 2, SUB)]
+    d = decode("<sup>x<sub>y</sub></sup>z<sub>w</sub>", marks, 0)
+    assert d.marks == [Mark(0, 2, SUP), Mark(3, 4, SUB)] and d.marks_dropped == 1
+
+
+def test_r14_normal_form_cuts_subscript_where_superscript_overlaps():
+    marks = [Mark(0, 5, SUB), Mark(2, 3, SUP)]
+    assert normalize_marks(marks) == [Mark(0, 2, SUB), Mark(2, 3, SUP), Mark(3, 5, SUB)]
+    d = decode(encode("abcde", marks), marks, 0, source_text="abcde")
+    assert d.marks == normalize_marks(marks) and d.marks_dropped == 0
+
+
+def test_round_trip_with_source_text_is_unchanged_for_random_mark_sets():
+    rng = random.Random(1932)
+    alphabet = "ab <>&" + PLACEHOLDER
+    kinds = list(MarkKind)
+    for _ in range(500):
+        text = "".join(rng.choice(alphabet) for _ in range(rng.randint(0, 30)))
+        marks = []
+        for _ in range(rng.randint(0, 8)):
+            s = rng.randint(0, len(text))
+            e = rng.randint(s, len(text))
+            kind = rng.choice(kinds)
+            marks.append(Mark(s, e, kind, rng.choice(["h1", "h2"]) if kind == L else None))
+        count = text.count(PLACEHOLDER)
+        d = decode(encode(text, marks), marks, count, source_text=text)
+        assert (d.text, d.marks) == (text, normalize_marks(marks))
+        assert d.placeholders == list(range(count)) and d.marks_dropped == 0
