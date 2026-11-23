@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     # Where clients reach Jerome (e.g. https://jerome.example.com), for the absolute links
     # MCP file tools return. Unset: the MCP request's own base URL.
     public_base_url: str | None = None
+    # Fernet key that encrypts secrets saved from the Settings page; environment only.
+    secret_key: SecretStr | None = None
     anthropic_api_key: SecretStr | None = Field(default=None, validation_alias="ANTHROPIC_API_KEY")
 
     @field_validator("data_dir")
