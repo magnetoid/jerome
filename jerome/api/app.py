@@ -20,6 +20,7 @@ from jerome.api.deps import current_principal
 from jerome.api.limits import BodyLimitMiddleware
 from jerome.api.web import mount_web
 from jerome.config import Settings, get_settings
+from jerome.core.app_settings import InvalidSetting
 from jerome.db import make_engine
 from jerome.errors import (
     Conflict,
@@ -39,6 +40,7 @@ _ERROR_STATUS: dict[type[Exception], int] = {
     UnsupportedDocumentError: 422,
     InvalidChangeError: 422,
     UnknownModelPrice: 422,
+    InvalidSetting: 400,
 }
 
 
