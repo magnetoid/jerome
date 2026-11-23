@@ -135,6 +135,12 @@ class TextLimits:
         self._buckets: dict[str, tuple[float, float]] = {}  # key -> (tokens, last refill)
         self._lock = threading.Lock()
 
+    def set_rpm(self, rpm: int) -> None:
+        """Change the rate; the buckets keep their counters (take clamps them to the new cap)."""
+        with self._lock:
+            self._capacity = float(rpm)
+            self._rate = rpm / 60
+
     def take(self, key: str) -> float | None:
         """Token bucket: take one token, or say how long until there is one."""
         with self._lock:
