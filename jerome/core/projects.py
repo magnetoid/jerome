@@ -42,7 +42,10 @@ def derive_stage(
 
     A translated book first goes through its translate job: ``translating`` while it runs,
     ``needs_attention`` when it failed or paused, ``set_up`` while blocks are still waiting
-    for it, and ``translated`` once it completed, until proofreading starts."""
+    for it, and ``translated`` once it completed, until a proofread job runs or completes.
+
+    ``completed_jobs`` counts completed proofread jobs only: a completed translation is not
+    proofreading done."""
     translate_job = work == "translate" and latest_job_type == "translate"
     if translate_job and active_job:
         return "translating"
@@ -60,6 +63,8 @@ def derive_stage(
         return "to_review"
     if completed_jobs > 0:
         return "done"
+    if work == "translate":  # translated (nothing pending), and no proofreading completed
+        return "translated"
     return "set_up"
 
 
@@ -146,7 +151,9 @@ def list_projects(session: Session) -> list[dict]:
     completed = {
         book_id: n
         for book_id, n in session.execute(
-            select(Job.book_id, func.count()).where(Job.status == "completed").group_by(Job.book_id)
+            select(Job.book_id, func.count())
+            .where(Job.status == "completed", Job.type == "proofread")
+            .group_by(Job.book_id)
         )
     }
 

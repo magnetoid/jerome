@@ -45,6 +45,8 @@ def test_derive_stage_table(active, latest, open_n, completed, stage):
         (True, "proofread", "running", 0, 0, 1, "proofreading"),
         (False, "proofread", "completed", 0, 3, 2, "to_review"),
         (False, "proofread", "completed", 0, 0, 2, "done"),
+        # translated, then a proofread job ended without completing: proofreading never ran
+        (False, "proofread", "cancelled", 0, 0, 0, "translated"),
     ],
 )
 def test_derive_stage_of_a_translated_book(
@@ -69,6 +71,33 @@ def test_translation_stages_apply_only_to_translated_books():
     assert derive_stage(**args, pending_blocks=5) == "set_up"
     completed = {**args, "latest_job_status": "completed", "completed_jobs": 1}
     assert derive_stage(**completed, latest_job_type="translate") == "done"
+
+
+def test_projects_list_translated_book_stays_translated_until_proofreading_completes(
+    session, tmp_storage
+):
+    from jerome.core.translation import import_for_translation
+    from tests.fixtures.docx_builders import make_docx
+
+    book = import_for_translation(
+        session,
+        tmp_storage,
+        filename="t.docx",
+        data=make_docx(["One.", "Two."]),
+        source_variant="en-GB",
+        target_variant="de-DE",
+    )
+    for block in session.query(Block).filter_by(book_id=book.id):
+        block.text, block.translation_status = "Eins.", "done"
+    translate = _job(session, book, "completed", T0)
+    translate.type = "translate"
+    session.flush()
+    assert list_projects(session)[0]["stage"] == "translated"
+    _job(session, book, "cancelled", T0 + timedelta(days=1))  # proofreading never completed
+    (row,) = list_projects(session)
+    assert (row["id"], row["stage"]) == (book.id, "translated")  # not "done"
+    _job(session, book, "completed", T0 + timedelta(days=2))
+    assert list_projects(session)[0]["stage"] == "done"
 
 
 def _book(session, book_factory, title, chapters=1, blocks=1, created_at=None):
