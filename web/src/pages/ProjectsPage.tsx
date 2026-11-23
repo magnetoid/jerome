@@ -15,12 +15,21 @@ import { relativeTime, variantLabel } from "@/lib/format";
 function nextStep(p: Project): { label: string; to: string } {
   const base = `/projects/${p.id}`;
   switch (p.stage) {
-    case "set_up": return { label: "Start proofreading", to: base };
+    case "set_up":
+      return { label: p.work === "translate" ? "Start translation" : "Start proofreading", to: base };
+    case "translating": return { label: "View progress", to: base };
+    case "translated": return { label: "Start proofreading", to: base };
     case "proofreading": return { label: "View progress", to: base };
     case "needs_attention": return { label: "Resume", to: base };
     case "to_review": return { label: `Review (${p.open_count} left)`, to: `${base}/review` };
     case "done": return { label: "Export", to: base };
   }
+}
+
+/** The book's language, or the language pair of a translation (`en-GB → de-DE`). */
+function languageOf(p: Project): string {
+  if (p.work === "translate" && p.source_variant) return `${p.source_variant} → ${p.variant}`;
+  return variantLabel(p.variant);
 }
 
 export default function ProjectsPage() {
@@ -84,7 +93,7 @@ function ProjectsBody({ projects, search }: { projects: Project[]; search: strin
                 <TableCell className="font-medium">
                   <Link to={`/projects/${p.id}`} className="underline-offset-2 hover:underline">{p.title}</Link>
                 </TableCell>
-                <TableCell>{variantLabel(p.variant)}</TableCell>
+                <TableCell>{languageOf(p)}</TableCell>
                 <TableCell><StageBadge stage={p.stage} /></TableCell>
                 <TableCell className="text-sm text-muted-foreground">
                   {p.open_count} left · {p.auto_applied_count} applied by AI · {p.decided_count} decided

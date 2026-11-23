@@ -17,6 +17,7 @@ import JobsList from "@/components/project/JobsList";
 import ExportMenu from "@/components/project/ExportMenu";
 import ReviewUpload from "@/components/project/ReviewUpload";
 import SettingsTab from "@/components/project/SettingsTab";
+import TranslationPanel, { SourceBookLink } from "@/components/project/TranslationPanel";
 import { PROJECTS_KEY, useProjects, type Project } from "@/hooks/useProjects";
 import { useBookJobs } from "@/hooks/useBookJobs";
 import { bookKey, detailOf } from "@/lib/jobs";
@@ -25,13 +26,20 @@ interface Book {
   id: number;
   title: string;
   format: "docx" | "epub";
+  /** The hidden source book of a translation; absent from older servers. */
+  source_book_id?: number | null;
 }
 
-function MainPanel({ project }: { project: Project }) {
+function MainPanel({ project, format }: { project: Project; format: string }) {
   const id = String(project.id);
   switch (project.stage) {
     case "set_up":
-      return <StartPanel bookId={id} openCount={project.open_count} />;
+      return project.work === "translate"
+        ? <TranslationPanel project={project} format={format} />
+        : <StartPanel bookId={id} openCount={project.open_count} />;
+    case "translated":
+      return <TranslationPanel project={project} format={format} />;
+    case "translating":
     case "proofreading":
       return project.active_job
         ? <ProgressPanel bookId={id} jobId={project.active_job.id} />
@@ -79,12 +87,16 @@ export default function ProjectPage() {
   // the cancel promised it could be resumed: offer that until another job takes its place.
   const resumable =
     idle && project.stage !== "needs_attention" && jobs.data?.[0]?.status === "cancelled";
+  // set_up and translated already show the proofreading start (or the translation's).
+  const rerun = idle && project.stage !== "set_up" && project.stage !== "translated";
+  const sourceId = book.data?.source_book_id;
 
   return (
     <main className="mx-auto max-w-4xl space-y-6 p-4 sm:p-8">
       <header className="flex flex-wrap items-center gap-3">
         <h1 className="text-2xl font-semibold">{project.title}</h1>
         <StageBadge stage={project.stage} />
+        {sourceId != null && <SourceBookLink sourceId={sourceId} variant={project.source_variant} />}
         <Link to={`/activity?book=${id}`} className="ml-auto text-sm text-muted-foreground underline underline-offset-4">
           Janus activity for this book
         </Link>
@@ -98,13 +110,13 @@ export default function ProjectPage() {
 
         <TabsContent value="overview" className="space-y-8 pt-4">
           <section className="space-y-4">
-            <MainPanel project={project} />
+            <MainPanel project={project} format={format} />
             {resumable && (
               <div className="border-t pt-4">
                 <AttentionPanel bookId={id} activeJobId={null} />
               </div>
             )}
-            {idle && project.stage !== "set_up" && (
+            {rerun && (
               again ? (
                 <div className="space-y-4 border-t pt-4">
                   <h2 className="text-lg font-medium">Run proofreading again</h2>

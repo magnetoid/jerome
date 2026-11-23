@@ -11,7 +11,7 @@ import {
 import { POLL_MS, PROJECTS_KEY } from "@/hooks/useProjects";
 import { money } from "@/lib/format";
 import {
-  chaptersKey, detailOf, isJobActive, jobKey, jobsKey, summaryKey, type Chapter, type Job,
+  chaptersKey, detailOf, isJobActive, jobKey, jobNoun, jobsKey, summaryKey, type Chapter, type Job,
   type JobTask,
 } from "@/lib/jobs";
 
@@ -77,6 +77,7 @@ export default function ProgressPanel({ bookId, jobId }: { bookId: string; jobId
   const spent = Number(j.cost_actual);
   const cap = Number(j.max_cost);
   const pct = cap > 0 ? Math.min(100, (spent / cap) * 100) : 0;
+  const noun = jobNoun(j).toLowerCase();
 
   return (
     <div className="space-y-5">
@@ -105,10 +106,13 @@ export default function ProgressPanel({ bookId, jobId }: { bookId: string; jobId
         })}
       </ul>
 
-      <p className="text-sm text-muted-foreground">
-        Chapters that are already done can be reviewed while the rest runs.{" "}
-        <Link className="underline" to={`/projects/${bookId}/review`}>Review</Link>
-      </p>
+      {/* A translation has nothing to review until proofreading has run. */}
+      {j.type !== "translate" && (
+        <p className="text-sm text-muted-foreground">
+          Chapters that are already done can be reviewed while the rest runs.{" "}
+          <Link className="underline" to={`/projects/${bookId}/review`}>Review</Link>
+        </p>
+      )}
 
       {cancel.isError && <p role="alert" className="text-sm text-destructive">{detailOf(cancel.error)}</p>}
 
@@ -118,14 +122,14 @@ export default function ProgressPanel({ bookId, jobId }: { bookId: string; jobId
         </AlertDialogTrigger>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Cancel proofreading?</AlertDialogTitle>
+            <AlertDialogTitle>Cancel {noun}?</AlertDialogTitle>
             <AlertDialogDescription>
               Work already finished is kept. You can resume later.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Keep going</AlertDialogCancel>
-            <AlertDialogAction onClick={() => cancel.mutate()}>Cancel proofreading</AlertDialogAction>
+            <AlertDialogAction onClick={() => cancel.mutate()}>Cancel {noun}</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

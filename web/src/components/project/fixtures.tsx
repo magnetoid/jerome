@@ -55,6 +55,25 @@ export function job(over: P = {}): P {
   };
 }
 
+/** A translate + proofread project: book 1 is the German translation of hidden book 2. */
+export const TRANSLATED_BOOK = { ...BOOK, title: "Seebuch", work: "translate", source_book_id: 2, translated_title: "Seebuch" };
+export const SOURCE_BOOK = { ...BOOK, id: 2, title: "Sea Book", work: "proofread", source_book_id: null, translated_title: null };
+
+export function translateProject(over: P = {}): P {
+  return project({
+    title: "Seebuch", work: "translate", source_variant: "en-GB", variant: "de-DE",
+    translation: { pending: 40 }, ...over,
+  });
+}
+
+export const TRANSLATION = {
+  counts: { done: 37, flagged: 2, kept: 1 },
+  flagged: [
+    { block_id: 501, chapter_id: 11, source: "The ship came in at dawn." },
+    { block_id: 502, chapter_id: 12, source: "Gulls circled the harbour wall." },
+  ],
+};
+
 export const STYLE = { variant: "en-GB", quote_style: "‘’“”", house_spellings: {}, ignore_words: [] };
 export const AUTO = { enabled: true, categories: ["typo", "punctuation"], min_severity: "high", house_rules: true };
 

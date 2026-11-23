@@ -3,7 +3,8 @@ import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { json } from "@/test-utils";
 import {
-  activeJob, bodyOf, BOOK, callsTo, job, pageApi, project, renderPage, STYLE,
+  activeJob, bodyOf, BOOK, callsTo, estimate, job, pageApi, project, renderPage, SOURCE_BOOK, STYLE,
+  TRANSLATED_BOOK, translateProject,
 } from "@/components/project/fixtures";
 
 afterEach(() => {
@@ -330,5 +331,103 @@ describe("always-available parts", () => {
     await backToSettings();
     await userEvent.click(await screen.findByRole("button", { name: /^house style$/i }));
     expect(await screen.findByLabelText(/words to ignore/i)).toHaveValue("Aberdeen");
+  });
+});
+
+describe("translate + proofread projects", () => {
+  const books = {
+    "GET /v1/books/1": () => json(200, TRANSLATED_BOOK),
+    "GET /v1/books/2": () => json(200, SOURCE_BOOK),
+  };
+
+  it("set_up translate project shows the translation estimate and starts a translate job", async () => {
+    const f = pageApi({
+      ...books,
+      "POST /v1/books/1/estimate": () => json(200, estimate("5.5")),
+      "POST /v1/books/1/jobs": () => json(201, job({ type: "translate", passes: ["translate"] })),
+    }, translateProject());
+    const { client } = renderPage();
+    const invalidate = vi.spyOn(client, "invalidateQueries");
+    expect(await screen.findByText("Estimated cost: $1.00 to $5.50")).toBeInTheDocument();
+    expect(bodyOf(callsTo(f, "POST", "/v1/books/1/estimate")[0])).toEqual({ type: "translate" });
+    expect(screen.queryByRole("button", { name: /start proofreading/i })).not.toBeInTheDocument();
+    const limit = screen.getByLabelText(/cost limit/i);
+    await waitFor(() => expect(limit).toHaveValue(6));
+    await userEvent.clear(limit);
+    await userEvent.type(limit, "8");
+    await userEvent.click(screen.getByRole("button", { name: "Start translation" }));
+    await waitFor(() => expect(callsTo(f, "POST", "/v1/books/1/jobs")).toHaveLength(1));
+    expect(bodyOf(callsTo(f, "POST", "/v1/books/1/jobs")[0])).toEqual({ type: "translate", max_cost: 8 });
+    await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: ["projects"] }));
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["jobs", "1"] });
+  });
+
+  it("shows the translation estimate's error, such as a missing translation model", async () => {
+    pageApi({
+      ...books,
+      "POST /v1/books/1/estimate": () => json(409, { detail: "no translation model is configured" }),
+    }, translateProject());
+    renderPage();
+    expect(await screen.findByRole("alert")).toHaveTextContent("no translation model is configured");
+    expect(screen.getByRole("button", { name: "Start translation" })).toBeDisabled();
+  });
+
+  it("links the source book's details from the header", async () => {
+    pageApi(books, translateProject());
+    renderPage();
+    const link = await screen.findByRole("button", { name: /Translated from Sea Book/ });
+    expect(link).toHaveTextContent("Translated from Sea Book · English (GB)");
+    await userEvent.click(link);
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent("Sea Book");
+    expect(dialog).toHaveTextContent("English (GB)");
+    expect(dialog).toHaveTextContent("sea.docx");
+  });
+
+  it("no source link on a proofread-only book", async () => {
+    const f = pageApi();
+    renderPage();
+    await screen.findByRole("button", { name: /start proofreading/i });
+    expect(screen.queryByText(/Translated from/)).not.toBeInTheDocument();
+    expect(callsTo(f, "GET", "/v1/books/2")).toHaveLength(0);
+  });
+
+  it("translating shows the job's per-chapter progress and cancels the translation", async () => {
+    const translating = job({ type: "translate", passes: ["translate"] });
+    pageApi({
+      ...books,
+      "GET /v1/jobs/9": () => json(200, translating),
+      "GET /v1/books/1/jobs": () => json(200, [translating]),
+    }, translateProject({ stage: "translating", active_job: activeJob() }));
+    renderPage();
+    expect(await screen.findByText("2/6")).toBeInTheDocument();
+    expect(screen.getByText("Translating")).toBeInTheDocument();
+    expect(screen.getByRole("progressbar", { name: "Cost so far" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /^review$/i })).not.toBeInTheDocument();
+    await waitFor(() => expect(jobRows()[0]).toHaveTextContent("Translation"));
+    await userEvent.click(screen.getByRole("button", { name: /^cancel$/i }));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(within(dialog).getByRole("button", { name: "Cancel translation" })).toBeInTheDocument();
+  });
+
+  it("translated shows the counts and the proofreading start, with no re-run button", async () => {
+    pageApi({
+      ...books,
+      "GET /v1/books/1/translation": () => json(200, { counts: { done: 40 }, flagged: [] }),
+      "GET /v1/books/1/jobs": () => json(200, [job({ type: "translate", passes: ["translate"], status: "completed" })]),
+    }, translateProject({ stage: "translated", translation: { done: 40 } }));
+    renderPage();
+    expect(await screen.findByText(/40 paragraphs translated/)).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /start proofreading/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /run proofreading again/i })).not.toBeInTheDocument();
+    expect(screen.getByText("Translated")).toBeInTheDocument();
+  });
+
+  it("a failed translation explains itself as a translation", async () => {
+    const failed = job({ type: "translate", passes: ["translate"], status: "failed" });
+    pageApi({ ...books, "GET /v1/books/1/jobs": () => json(200, [failed]) },
+      translateProject({ stage: "needs_attention" }));
+    renderPage();
+    expect(await screen.findByText(/Translation stopped because something went wrong/)).toBeInTheDocument();
   });
 });

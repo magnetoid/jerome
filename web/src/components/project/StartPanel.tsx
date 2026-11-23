@@ -31,9 +31,11 @@ interface Props {
   bookId: string;
   /** Open suggestions in the book already: the AI pass leaves their spots alone. */
   openCount?: number;
+  /** Paragraphs of a translated book that could not be translated (they keep their source text). */
+  flaggedCount?: number;
 }
 
-export default function StartPanel({ bookId, openCount = 0 }: Props) {
+export default function StartPanel({ bookId, openCount = 0, flaggedCount = 0 }: Props) {
   const client = useQueryClient();
   const chapters = useQuery({
     queryKey: chaptersKey(bookId),
@@ -140,6 +142,12 @@ export default function StartPanel({ bookId, openCount = 0 }: Props) {
       {!free && openCount > 0 && (
         <p className="text-sm text-muted-foreground">
           Spots that already have an open suggestion keep it: the AI won't re-check or auto-apply them.
+        </p>
+      )}
+
+      {flaggedCount > 0 && (
+        <p className="rounded-md border border-amber-500/50 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+          {`Proofreading skips the ${flaggedCount} flagged ${flaggedCount === 1 ? "paragraph" : "paragraphs"}, and export waits until ${flaggedCount === 1 ? "it is" : "they are"} resolved.`}
         </p>
       )}
 
