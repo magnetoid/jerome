@@ -30,6 +30,8 @@ export interface Suggestion {
   rule: "house_spelling" | "quote_style" | "variant" | "name" | string | null;
   auto_applied: boolean;
   decided_by: string | null;
+  /** Where the decision came from: "web", "api", "auto" or "mcp" (Janus). */
+  decided_channel: string | null;
 }
 
 export interface ReviewBlock {
@@ -154,13 +156,18 @@ export const RULE_LABELS: Record<string, string> = {
   name: "Name variant (majority form in the book)",
 };
 
+/** A decision's author as shown to people: Janus's key name reads "Janus (<key>)". */
+export const actorLabel = (actor: string, channel: string | null | undefined): string =>
+  channel === "mcp" ? `Janus (${actor})` : actor;
+
 /** Who decided it, in words: "Needs you", "Applied by AI", "Accepted by …". */
 export function stateLabel(s: Suggestion): string {
   if (s.status === "open") return "Needs you";
   if (s.auto_applied) return "Applied by AI";
   const verb = { accepted: "Accepted", edited: "Edited", rejected: "Rejected", superseded: "Superseded" }[s.status];
   // decided_by is only meaningful on a decided row (an undone row carries the undoer).
-  return isDecided(s) && s.decided_by ? `${verb} by ${s.decided_by}` : verb;
+  if (!isDecided(s) || !s.decided_by) return verb;
+  return `${verb} by ${actorLabel(s.decided_by, s.decided_channel)}`;
 }
 
 const quoted = (t: string) => (t ? `“${t}”` : "nothing");

@@ -28,7 +28,7 @@ from jerome.types import Category, Role, Severity, Source, Status
 JOB_STATUSES = ("queued", "running", "paused_cost_cap", "cancelled", "failed", "completed")
 ACTIVE_JOB_STATUSES = ("queued", "running", "paused_cost_cap")
 TASK_STATUSES = ("queued", "running", "done", "failed")
-CHANNELS = ("api", "word", "system", "web", "auto")
+CHANNELS = ("api", "word", "system", "web", "auto", "mcp")
 
 
 def _values(vocab: Iterable[str]) -> tuple[str, ...]:
@@ -350,3 +350,48 @@ class ModelUsage(Base):
     cache_write_tokens: Mapped[int] = mapped_column(BigInteger, server_default=sql_text("0"))
     cost: Mapped[Decimal] = mapped_column(Numeric(12, 6))
     created_at: Mapped[datetime] = _ts()
+
+
+class AgentAction(Base):
+    """What the owner's AI agent (Janus) did through MCP: one row per tool call."""
+
+    __tablename__ = "agent_actions"
+    __table_args__ = (CheckConstraint("channel IN ('mcp')", name="ck_agent_actions_channel"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+    actor: Mapped[str] = mapped_column(String)
+    channel: Mapped[str] = mapped_column(String)
+    tool: Mapped[str] = mapped_column(String)
+    book_id: Mapped[int | None] = mapped_column(
+        ForeignKey("books.id", ondelete="SET NULL"), index=True
+    )
+    chapter_id: Mapped[int | None] = mapped_column(Integer)
+    job_id: Mapped[int | None] = mapped_column(Integer)
+    summary: Mapped[str] = mapped_column(String)
+    before: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    after: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+
+
+class TransferLink(Base):
+    """A single-use link for moving a file in or out without it passing through the agent."""
+
+    __tablename__ = "transfer_links"
+    __table_args__ = (
+        CheckConstraint("kind IN ('upload', 'download')", name="ck_transfer_links_kind"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    token_hash: Mapped[str] = mapped_column(String, unique=True)
+    kind: Mapped[str] = mapped_column(String)
+    actor: Mapped[str] = mapped_column(String)
+    filename: Mapped[str | None] = mapped_column(String)
+    media_type: Mapped[str | None] = mapped_column(String)
+    size: Mapped[int | None] = mapped_column(Integer)
+    path: Mapped[str | None] = mapped_column(String)  # relative to data_dir
+    created_at: Mapped[datetime] = _ts()
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    received_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

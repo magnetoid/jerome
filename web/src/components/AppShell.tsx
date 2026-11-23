@@ -48,6 +48,9 @@ export default function AppShell() {
             <NavLink to="/" end className={link}>
               Projects
             </NavLink>
+            <NavLink to="/activity" className={link}>
+              Janus activity
+            </NavLink>
             {me.data?.role === "super_admin" && (
               <NavLink to="/team" className={link}>
                 Team

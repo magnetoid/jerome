@@ -1,4 +1,4 @@
-# Production deployment for Coolify behind the existing Irving Plesk HTTPS proxy.
+# Production deployment for Coolify behind an existing Plesk HTTPS proxy.
 x-app:
   build: .
   env_file: &id001

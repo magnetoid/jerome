@@ -17,6 +17,7 @@ dependencies = [
     "anthropic",
     "typer",
     "argon2-cffi>=25.1.0",
+    "mcp==2.3.0",
 ]
 
 [project.scripts]

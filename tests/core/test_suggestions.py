@@ -254,7 +254,7 @@ def test_list_filters_and_bulk(session, book_with_mixed_suggestions):
         action="reject",
         actor="a",
     )
-    assert n == 2
+    assert len(n) == 2
     assert len(list_suggestions(session, book_id, SuggestionFilter(status="rejected")).rows) == 2
     assert len(list_suggestions(session, book_id, SuggestionFilter(status="open")).rows) == 1
 
@@ -282,12 +282,11 @@ def test_list_filters_by_chapter_and_orders_by_document(session, tmp_storage):
 def test_bulk_by_ids_and_validation(session, block, tmp_storage):
     a = add_one(session, block, 0, 3, "teh", "the")
     b = add_one(session, block, 4, 7, "cat", "cats")
-    assert (
-        bulk_decide(session, block.book_id, ids=[b.id, a.id], f=None, action="accept", actor="x")
-        == 2
-    )
+    assert bulk_decide(
+        session, block.book_id, ids=[b.id, a.id], f=None, action="accept", actor="x"
+    ) == sorted([a.id, b.id])
     # already decided: nothing left to do
-    assert bulk_decide(session, block.book_id, ids=[a.id], f=None, action="reject", actor="x") == 0
+    assert bulk_decide(session, block.book_id, ids=[a.id], f=None, action="reject", actor="x") == []
     with pytest.raises(InvalidChangeError):
         bulk_decide(session, block.book_id, ids=None, f=None, action="accept", actor="x")
     with pytest.raises(InvalidChangeError):
@@ -305,7 +304,7 @@ def test_bulk_accept_supersedes_later_ones_in_same_bulk(session, block):
     a = add_one(session, block, 0, 3, "teh", "the")
     b = insert_raw_open(session, block, 0, 7, "teh cat", "the dog")
     n = bulk_decide(session, block.book_id, ids=[a.id, b.id], f=None, action="accept", actor="x")
-    assert n == 1
+    assert n == [a.id]
     assert session.get(Suggestion, a.id).status == "accepted"
     assert session.get(Suggestion, b.id).status == "superseded"
 
@@ -370,7 +369,7 @@ def test_bulk_accept_skips_conflicting_targets(session, block):
     decide(session, a.id, "undo", actor="a")
     c = add_one(session, block, 8, 11, "sat", "sits")
     n = bulk_decide(session, block.book_id, ids=[a.id, c.id], f=None, action="accept", actor="x")
-    assert n == 1
+    assert n == [c.id]
     assert session.get(Suggestion, a.id).status == "open"
     assert session.get(Suggestion, c.id).status == "accepted"
     assert current_text(session, block.id) == "The dog sits"

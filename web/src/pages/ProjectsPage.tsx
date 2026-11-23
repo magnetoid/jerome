@@ -9,6 +9,7 @@ import {
 import StageBadge from "@/components/StageBadge";
 import RunningJobsStrip from "@/components/RunningJobsStrip";
 import { useProjects, type Project } from "@/hooks/useProjects";
+import { actorLabel } from "@/lib/review";
 import { relativeTime, variantLabel } from "@/lib/format";
 
 function nextStep(p: Project): { label: string; to: string } {
@@ -94,7 +95,7 @@ function ProjectsBody({ projects, search }: { projects: Project[]; search: strin
                   </Button>
                 </TableCell>
                 <TableCell className="text-sm text-muted-foreground">
-                  {p.last_activity ? `${p.last_activity.actor}, ${relativeTime(p.last_activity.at)}` : "—"}
+                  {p.last_activity ? `${actorLabel(p.last_activity.actor, p.last_activity.channel)}, ${relativeTime(p.last_activity.at)}` : "—"}
                 </TableCell>
               </TableRow>
             );

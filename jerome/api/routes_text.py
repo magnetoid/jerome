@@ -45,6 +45,11 @@ class TextOut(BaseModel):
     warnings: list[str]
 
 
+def get_text_limits(request: Request) -> TextLimits:
+    """The app's per-key rate limit and daily cap, shared by REST and the MCP tool."""
+    return request.app.state.text_limits
+
+
 def _too_many(detail: str, wait: float) -> HTTPException:
     seconds = 1 if math.isinf(wait) else max(1, math.ceil(wait))
     return HTTPException(status_code=429, detail=detail, headers={"Retry-After": str(seconds)})
@@ -53,13 +58,12 @@ def _too_many(detail: str, wait: float) -> HTTPException:
 @router.post("/proofread/text", response_model=TextOut)
 def proofread_short_text(
     body: TextIn,
-    request: Request,
     session: SessionDep,
     actor: Annotated[str, Depends(current_actor)],
     deps: Annotated[WorkerDeps, Depends(get_worker_deps)],
     settings: Annotated[Settings, Depends(get_settings_dep)],
+    limits: Annotated[TextLimits, Depends(get_text_limits)],
 ):
-    limits: TextLimits = request.app.state.text_limits
     if (wait := limits.take(actor)) is not None:
         raise _too_many("Rate limit exceeded", wait)
     if (wait := limits.check_daily(session, actor, settings.text_daily_cost_cap)) is not None:

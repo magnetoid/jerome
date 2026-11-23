@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     session_days: int = 30
     cookie_secure: bool = True
     web_dir: Path | None = None
+    # Where clients reach Jerome (e.g. https://jerome.example.com), for the absolute links
+    # MCP file tools return. Unset: the MCP request's own base URL.
+    public_base_url: str | None = None
     anthropic_api_key: SecretStr | None = Field(default=None, validation_alias="ANTHROPIC_API_KEY")
 
     @field_validator("data_dir")

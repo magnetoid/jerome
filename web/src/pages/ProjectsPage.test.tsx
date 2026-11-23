@@ -38,6 +38,14 @@ const listCalls = (f: ReturnType<typeof mockApi>) =>
   f.mock.calls.filter(([p]) => p === "/v1/projects").length;
 
 describe("ProjectsPage", () => {
+  it("labels a Janus decision in the latest activity as Janus (<key>)", async () => {
+    listRoutes([
+      project({ id: 7, title: "Janus Book", last_activity: { actor: "janus-desktop", channel: "mcp", at: new Date().toISOString() } }),
+    ]);
+    renderApp(<ProjectsPage />);
+    expect(await screen.findByText(/Janus \(janus-desktop\),/)).toBeInTheDocument();
+  });
+
   it("renders rows in API order with one correctly labelled next step each", async () => {
     listRoutes(LIST);
     renderApp(<ProjectsPage />);

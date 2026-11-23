@@ -1,7 +1,11 @@
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from jerome.api import (
+    routes_agent_actions,
     routes_auth,
     routes_books,
     routes_exports,
@@ -24,6 +28,7 @@ from jerome.errors import (
     UnknownModelPrice,
     UnsupportedDocumentError,
 )
+from jerome.mcp.server import mount_mcp
 from jerome.models.registry import build_registry
 from jerome.proofread.languagetool import LanguageToolClient
 from jerome.proofread.text import TextLimits
@@ -44,9 +49,16 @@ def _handler(status: int):
     return handle
 
 
+@asynccontextmanager
+async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
+    # The MCP transport is stateless, but the SDK still needs its session manager running.
+    async with app.state.mcp_session_manager.run():
+        yield
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
-    app = FastAPI(title="Jerome")
+    app = FastAPI(title="Jerome", lifespan=_lifespan)
     app.state.settings = settings
     app.state.registry = build_registry(settings)
     app.state.lt_client = LanguageToolClient(settings.languagetool_url)
@@ -69,6 +81,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(routes_text.router, prefix="/v1", dependencies=auth)
     app.include_router(routes_users.router, prefix="/v1", dependencies=auth)
     app.include_router(routes_projects.router, prefix="/v1", dependencies=auth)
+    app.include_router(routes_agent_actions.router, prefix="/v1", dependencies=auth)
+    mount_mcp(app)  # /mcp, outside /v1, with its own Bearer-only auth
     # The catch-all web app goes last, so it never shadows an API route.
     if settings.web_dir is not None:
         mount_web(app, settings.web_dir)

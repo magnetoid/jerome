@@ -7,6 +7,7 @@ from tests.fixtures.suggestions import add_one
 
 KEYS = {
     "chapter_id", "agreed", "disputed", "alternative", "rule", "auto_applied", "decided_by",
+    "decided_channel",
     "id", "book_id", "block_id", "start", "end", "original", "replacement", "category",
     "severity", "source", "explanation", "status", "final_text", "job_id", "model", "created_at",
 }  # fmt: skip
@@ -198,3 +199,19 @@ def test_list_sets_total_count_header(client, auth, session, block):
     r = _total(client, auth, block.book_id, min_severity="high", limit=1, offset=1)
     assert len(r.json()) == 1 and r.headers["X-Total-Count"] == "2"
     assert _total(client, auth, block.book_id, offset=10).headers["X-Total-Count"] == "3"
+
+
+def test_decided_channel_is_web_for_a_session_and_api_for_a_key(
+    web_client, client, auth, session, block
+):
+    from tests.api.test_auth_api import WEB, login
+
+    login(web_client, session)
+    a = add_one(session, block, 0, 3, "teh", "the")
+    b = add_one(session, block, 4, 7, "cat", "cats")
+    assert web_client.post(f"/v1/suggestions/{a.id}/accept", headers=WEB).status_code == 200
+    assert client.post(f"/v1/suggestions/{b.id}/accept", headers=auth).status_code == 200
+    url = f"/v1/books/{block.book_id}/suggestions"
+    got = {x["id"]: x for x in client.get(url, headers=auth).json()}
+    assert (got[a.id]["decided_by"], got[a.id]["decided_channel"]) == ("ana@x.org", "web")
+    assert (got[b.id]["decided_by"], got[b.id]["decided_channel"]) == ("tester", "api")
