@@ -2,6 +2,9 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from jerome.api import (
@@ -53,6 +56,15 @@ def _handler(status: int):
     return handle
 
 
+async def _validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
+    """FastAPI's 422, except that settings routes never echo the submitted value (it may be
+    a secret)."""
+    if not request.url.path.startswith("/v1/settings"):
+        return await request_validation_exception_handler(request, exc)
+    errors = [{k: v for k, v in e.items() if k in ("loc", "msg", "type")} for e in exc.errors()]
+    return JSONResponse({"detail": jsonable_encoder(errors)}, status_code=422)
+
+
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # The MCP transport is stateless, but the SDK still needs its session manager running.
@@ -71,6 +83,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.engine = make_engine(settings.database_url)
     app.state.login_throttle = LoginThrottle()
     app.add_middleware(BodyLimitMiddleware)
+    app.add_exception_handler(RequestValidationError, _validation_error)
     for exc_type, status in _ERROR_STATUS.items():
         app.add_exception_handler(exc_type, _handler(status))
 

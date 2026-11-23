@@ -75,6 +75,54 @@ def test_writes_invalidate_the_settings_cache(web_client, session, monkeypatch):
     assert len(calls) == 2
 
 
+def test_put_and_reset_apply_without_restart(web_client, session):
+    login(web_client, session)
+    state = web_client.app.state
+    web_client.put("/v1/settings/text_rpm", headers=WEB, json={"value": 12})
+    web_client.get("/v1/settings")
+    assert state.settings_store.cached().settings.text_rpm == 12
+    assert state.text_limits._capacity == 12
+    web_client.delete("/v1/settings/text_rpm", headers=WEB)
+    web_client.get("/v1/settings")
+    assert state.settings_store.cached().settings.text_rpm == 30
+    assert state.text_limits._capacity == 30
+
+
+def test_secret_audit_rows_carry_no_values(web_client, session, with_secret_storage):
+    login(web_client, session)
+    url = "/v1/settings/anthropic_api_key"
+
+    def latest():
+        return web_client.get("/v1/settings/audit").json()[0]
+
+    for body, action in (
+        ({"value": "sk-ant-SECRET-1"}, "set"),
+        ({"value": "sk-ant-SECRET-2"}, "replaced"),
+        ({"value": None}, "cleared"),
+    ):
+        assert web_client.put(url, headers=WEB, json=body).status_code == 200
+        row = latest()
+        assert row["key"] == "anthropic_api_key" and row["action"] == action
+        assert row["before"] is None and row["after"] is None
+    web_client.put(url, headers=WEB, json={"value": "sk-ant-SECRET-3"})
+    assert web_client.delete(url, headers=WEB).status_code == 204
+    row = latest()
+    assert row["action"] == "reset" and row["before"] is None and row["after"] is None
+
+
+def test_validation_error_does_not_echo_input_on_settings(web_client, session):
+    login(web_client, session)
+    r = web_client.put(
+        "/v1/settings/anthropic_api_key",
+        headers=WEB,
+        content=b'"sk-SENTINEL-9"',
+    )
+    assert r.status_code == 422 and "sk-SENTINEL-9" not in r.text
+    assert all({"loc", "msg", "type"} <= set(e) for e in r.json()["detail"])
+    other = web_client.post("/v1/api-keys", headers=WEB, json={"nope": "echo-me"})
+    assert other.status_code == 422 and "echo-me" in other.text
+
+
 def test_secret_never_returned(web_client, session, with_secret_storage):
     login(web_client, session)
     r = web_client.put(
