@@ -14,6 +14,7 @@ from jerome.core.translation import (
     retranslate_block,
     translate_items,
 )
+from jerome.documents.model import PLACEHOLDER
 from jerome.errors import Conflict
 from jerome.jobs.estimate import estimate_translation
 from jerome.jobs.service import create_job, create_translation_job
@@ -122,7 +123,10 @@ def test_translate_job_fills_every_block_and_completes(session_factory, tmp_stor
     job = job_row(session_factory, job_id)
     assert job.status == "completed" and job.type == "translate" and job.passes == ["translate"]
     rows = blocks(session_factory, t)
-    assert all(b.translation_status == "done" and b.text.startswith("DE ") for b in rows)
+    assert all(
+        b.translation_status == "done" and b.text.lstrip(PLACEHOLDER).startswith("DE ")
+        for b in rows
+    )
     assert all(b.hash == hashlib.sha256(b.text.encode()).hexdigest() for b in rows)
     assert job.stats["translated"] == len(rows) and job.stats.get("flagged", 0) == 0
     assert job.cost_actual > 0
@@ -619,5 +623,8 @@ def test_de_to_en_on_public_german_epub(session_factory, tmp_storage, test_setti
     drain(session_factory, deps_for(reg))
     assert job_row(session_factory, job_id).status == "completed"
     rows = blocks(session_factory, t)
-    assert all(b.translation_status == "done" and b.text.startswith("EN ") for b in rows)
+    assert all(
+        b.translation_status == "done" and b.text.lstrip(PLACEHOLDER).startswith("EN ")
+        for b in rows
+    )
     assert {u.pass_name for u in usage_rows(session_factory, job_id)} == {"translate"}
