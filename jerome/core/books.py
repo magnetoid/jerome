@@ -11,8 +11,8 @@ from jerome.core.auto_apply import DEFAULT_POLICY, AutoApplyPolicy, policy_to_js
 from jerome.core.translation import ensure_not_source, source_of
 from jerome.documents.docx_reader import read_docx
 from jerome.documents.epub_reader import read_epub
-from jerome.documents.model import BlockKind, ParsedBook
-from jerome.documents.segments import split_sentences
+from jerome.documents.model import ParsedBook
+from jerome.documents.segments import block_spans
 from jerome.errors import NotFound, UnsupportedDocumentError
 from jerome.orm import Block, Book, Chapter, Segment, StyleSheetRow
 from jerome.storage import Storage
@@ -163,11 +163,7 @@ def _insert_blocks(
     )
     segments = []
     for block_id, row in zip(block_ids, rows, strict=True):
-        text = row["text"]
-        if row["kind"] == BlockKind.HEADING.value:
-            spans = [(0, len(text))] if text else []
-        else:
-            spans = split_sentences(text, style.language)
+        spans = block_spans(row["kind"], row["text"], style.language)
         segments.extend(
             {"block_id": block_id, "ordinal": n, "start": s, "end": e}
             for n, (s, e) in enumerate(spans)
