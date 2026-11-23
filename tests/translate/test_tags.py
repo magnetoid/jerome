@@ -162,6 +162,10 @@ def test_round_trip_is_lossless_for_random_mark_sets():
             kind = rng.choice(kinds)
             marks.append(Mark(s, e, kind, rng.choice(["h1", "h2"]) if kind == L else None))
         count = text.count(PLACEHOLDER)
+        if _links_overlap(marks):  # R21: refused, whatever the source
+            with pytest.raises(TagError, match="overlap"):
+                decode(encode(text, marks), marks, count)
+            continue
         d = decode(encode(text, marks), marks, count)
         assert (d.text, d.marks) == (text, normalize_marks(marks))
         assert d.placeholders == list(range(count)) and d.marks_dropped == 0
@@ -331,6 +335,35 @@ def test_round_trip_with_source_text_is_unchanged_for_random_mark_sets():
             kind = rng.choice(kinds)
             marks.append(Mark(s, e, kind, rng.choice(["h1", "h2"]) if kind == L else None))
         count = text.count(PLACEHOLDER)
+        if _links_overlap(marks):  # R21: refused, whatever the source
+            with pytest.raises(TagError, match="overlap"):
+                decode(encode(text, marks), marks, count, source_text=text)
+            continue
         d = decode(encode(text, marks), marks, count, source_text=text)
         assert (d.text, d.marks) == (text, normalize_marks(marks))
         assert d.placeholders == list(range(count)) and d.marks_dropped == 0
+
+
+def _links_overlap(marks: list[Mark]) -> bool:
+    links = [m for m in normalize_marks(marks) if m.kind == L]
+    return any(
+        a.href != b.href and a.start < b.end and b.start < a.end
+        for i, a in enumerate(links)
+        for b in links[i + 1 :]
+    )
+
+
+@pytest.mark.parametrize(
+    "reply",
+    ["<a1>x <a2>y</a2></a1>", "<a2><a1>x</a1> y</a2>", "<b><a1>x <a2>y</a2> z</a1></b>"],
+)
+def test_r21_nested_links_to_different_hrefs_raise(reply):
+    source = [Mark(0, 1, L, "h1"), Mark(2, 3, L, "h2")]
+    with pytest.raises(TagError, match="overlap"):
+        decode(reply, source, 0)
+
+
+def test_r21_nested_links_to_one_href_are_merged():
+    source = [Mark(0, 1, L, "h"), Mark(2, 3, L, "h")]
+    d = decode("<a1>x <a2>y</a2> z</a1>", source, 0)
+    assert (d.text, d.marks) == ("x y z", [Mark(0, 5, L, "h")])

@@ -13,6 +13,9 @@ translation puts them. The block element itself and its attributes stay.
   takes the k-th source link to it (the first when there are fewer).
 - With no source element for a kind, a plain one is made: ``b``, ``i``, ``u``, ``sup``,
   ``sub``, ``s``, or ``<span style="font-variant: small-caps">``.
+- Marks the block element itself makes (``<p style="font-style: italic">``) cover the whole
+  block and are not written inside it: the block reads back with them over all of its
+  text, as the original looks, whatever the translation's marks say for them.
 - A ``lang`` or ``xml:lang`` of the block element becomes the target language.
 - An ``id`` or ``name`` goes on the first copy of a source element only. Those of source
   inline elements the translation does not reuse are kept on empty ``a`` anchors at the
@@ -29,34 +32,36 @@ proofreading writer then works on it like on any other EPUB.
 
 import re
 from collections.abc import Mapping
-from typing import Literal
+from typing import Literal, cast
 
 from lxml import etree
 
 from jerome.documents.changes import NOT_XML
 from jerome.documents.docx_xml import ParagraphText, merge_marks, write_package
-from jerome.documents.epub_writer import _find_blocks, _serialize
 from jerome.documents.epub_xml import (
-    _ELEMENT_MARKS,
-    _IGNORED,
+    ELEMENT_MARKS,
+    IGNORED,
     NS,
     ContentDocument,
     EpubPackage,
-    _resolve,
-    _style_marks,
-    _xml,
+    EpubPiece,
     epub_type,
+    find_blocks,
     is_block_text,
     local_name,
     own_marks,
     parse_content_document,
+    parse_xml_root,
     read_container,
+    resolve_href,
+    serialize_document,
+    style_marks,
 )
 from jerome.documents.model import PLACEHOLDER, Mark, MarkKind
 from jerome.documents.translated import TranslatedBlock
 from jerome.errors import InvalidChangeError
 
-__all__ = ["write_translated_epub"]
+__all__ = ["TranslatedEpubError", "write_translated_epub"]
 
 _XML_LANG = "{http://www.w3.org/XML/1998/namespace}lang"
 _OPF = f"{{{NS['opf']}}}"
@@ -103,40 +108,57 @@ def write_translated_epub(
 
     ``language`` (e.g. ``de-DE``) becomes the OPF's ``dc:language`` and the ``lang`` and
     ``xml:lang`` of the root ``html`` of every document with a translated block. ``title``,
-    when given, replaces ``dc:title``.
+    when given and not blank, replaces ``dc:title``; None or a blank title keeps the
+    original.
 
     ``toc_labels`` maps a TOC target to its new label, keyed exactly like
     ``ParsedChapter.source_ref`` of a TOC-based chapter: the target's zip path (resolved
     against the TOC file, percent-decoded), ``#``, and its anchor, empty for a whole file
     (``OEBPS/ch1.xhtml#``, ``OEBPS/book.xhtml#c2``); a bare path is accepted for a whole
     file too. It is applied to the text of the nav document's TOC links and to the NCX
-    ``navLabel/text``, at every depth. Entries with no mapping keep their label, and so
-    does a nav link inside a translated block (the TOC page in the spine), which the
-    block's translation already gives.
+    ``navLabel/text``, at every depth. Entries with no mapping, or a blank label, keep their
+    label, and so does a nav link inside a translated block (the TOC page in the spine),
+    which the block's translation already gives.
 
-    Raises InvalidChangeError for a key that names no block, and for a translation that
-    cannot be written: placeholders that do not match the source's, marks out of range or
-    linking to an href the source block has no link to, characters XML cannot carry,
+    Raises InvalidChangeError for a language, title or label with characters XML cannot
+    carry, and TranslatedEpubError, listing every failing key with its reason, for keys
+    that name no block and for translations that cannot be written: placeholders that do
+    not match the source's, marks out of range, linking to an href the source block has no
+    link to, or overlapping links to different hrefs, characters XML cannot carry,
     whitespace the reader would collapse (leading, trailing, doubled spaces, tabs,
-    newlines), or no text besides placeholders; and for a language, title or label with
-    characters XML cannot carry.
+    newlines), or no text besides placeholders. Nothing is written unless every block can
+    be.
     """
+    if title is not None and not title.strip():
+        title = None
+    toc_labels = {target: label for target, label in toc_labels.items() if label.strip()}
     _check_metadata(language, title, toc_labels)
     package = read_container(original)
-    found, docs = _find_blocks(package, set(blocks))
-    dirty: set[str] = set()
-    for key, (el, text) in found.items():
-        _Rebuild(key, el, text, language).write(blocks[key])
-        dirty.add(key.partition("#")[0])
+    found, docs = find_blocks(package, set(blocks))
+    problems = {key: "no block with this key" for key in blocks if key not in found}
+    rebuilds: list[tuple[_Rebuild, list[int]]] = []
+    for key, (el, text) in found.items():  # check them all before changing any
+        rebuild = _Rebuild(key, el, text, language, blocks[key])
+        try:
+            rebuilds.append((rebuild, rebuild.check()))
+        except _Refused as exc:
+            problems[key] = str(exc)
+    if problems:
+        raise TranslatedEpubError({key: problems[key] for key in blocks if key in problems})
 
-    opf = _xml(package.files[package.opf_path], package.opf_path)
+    dirty: set[str] = set()
+    for rebuild, order in rebuilds:
+        rebuild.write(order)
+        dirty.add(rebuild.key.partition("#")[0])
+
+    opf = parse_xml_root(package.files[package.opf_path], package.opf_path)
     keyed = {el for el, _ in found.values()}
     if nav := _relabel_nav(package, docs, keyed, toc_labels):
         dirty.add(nav)
     _relabel_ncx(package, opf, toc_labels, language)
     for path in dirty:
         _set_language(docs[path], language)
-        package.files[path] = _serialize(docs[path], package.files[path], path)
+        package.files[path] = serialize_document(docs[path], package.files[path], path)
     _set_metadata(package, opf, language, title)
     return write_package(package.files, original)
 
@@ -151,23 +173,45 @@ def _check_metadata(language: str, title: str | None, toc_labels: Mapping[str, s
             raise InvalidChangeError(f"TOC label for {target!r} has characters not allowed in XML")
 
 
+class TranslatedEpubError(InvalidChangeError):
+    """Translations that cannot be written. ``problems`` maps each failing key, as passed to
+    ``write_translated_epub``, to the reason, in the caller's order."""
+
+    def __init__(self, problems: Mapping[str, str]):
+        self.problems = dict(problems)
+        super().__init__("; ".join(f"{key}: {why}" for key, why in self.problems.items()))
+
+
+class _Refused(Exception):
+    """One block's translation cannot be written (the message says why)."""
+
+
 # --- one block ------------------------------------------------------------------------
 
 
 class _Rebuild:
-    def __init__(self, key: str, block: etree._Element, text: ParagraphText, language: str):
+    def __init__(
+        self,
+        key: str,
+        block: etree._Element,
+        text: ParagraphText,
+        language: str,
+        translation: TranslatedBlock,
+    ):
         self.key = key
         self.block = block
         self.language = language
-        self.source_text = text.text
-        self.placeholders = [p.element for p in text.pieces if p.where == "self"]  # type: ignore[attr-defined]
+        self.translation = translation
+        pieces = cast(list[EpubPiece], text.pieces)
+        self.placeholders = [p.element for p in pieces if p.where == "self"]
         self.inline = _inline_elements(block, set(self.placeholders))
         self.implied = set(own_marks(block))  # marks the block element makes over all of it
         self.used: set[etree._Element] = set()  # source elements copied already
         self.templates: dict[MarkKind, etree._Element | None] = {}
 
-    def write(self, block: TranslatedBlock) -> None:
-        order = self._check(block)
+    def write(self, order: list[int]) -> None:
+        """Rebuild the block; ``order`` is what ``check`` returned."""
+        block = self.translation
         marks = [
             m for m in block.marks if m.start < m.end and (m.kind, _href(m)) not in self.implied
         ]
@@ -184,31 +228,37 @@ class _Rebuild:
             if self.block.get(name) is not None:
                 self.block.set(name, self.language)
 
-    def _check(self, block: TranslatedBlock) -> list[int]:
-        """The placeholder order, after checking the translation can be written."""
+    def check(self) -> list[int]:
+        """The placeholder order, after checking the translation can be written; raises
+        _Refused, saying why, when it cannot."""
+        block = self.translation
         text, count = block.text, len(self.placeholders)
         if NOT_XML.search(text):
-            raise InvalidChangeError(f"{self.key}: translation has characters not allowed in XML")
+            raise _Refused("translation has characters not allowed in XML")
         if _NOT_RENDERED.search(text):
-            raise InvalidChangeError(f"{self.key}: translation has whitespace the EPUB collapses")
+            raise _Refused("translation has whitespace the EPUB collapses")
         if not is_block_text(text):
-            raise InvalidChangeError(f"{self.key}: translation has no text")
+            raise _Refused("translation has no text")
         if text.count(PLACEHOLDER) != count:
-            raise InvalidChangeError(
-                f"{self.key}: translation has {text.count(PLACEHOLDER)} placeholders,"
-                f" the source {count}"
+            raise _Refused(
+                f"translation has {text.count(PLACEHOLDER)} placeholders, the source {count}"
             )
         order = list(block.placeholders) if block.placeholders is not None else list(range(count))
         if sorted(order) != list(range(count)):
-            raise InvalidChangeError(f"{self.key}: placeholder order {order} is not a permutation")
+            raise _Refused(f"placeholder order {order} is not a permutation")
         hrefs = {
             href for el in self.inline for kind, href in own_marks(el) if kind == MarkKind.LINK
         }
         for m in block.marks:
             if not 0 <= m.start <= m.end <= len(text):
-                raise InvalidChangeError(f"{self.key}: mark ({m.start}, {m.end}) is out of range")
+                raise _Refused(f"mark ({m.start}, {m.end}) is out of range")
             if m.kind == MarkKind.LINK and m.href not in hrefs:
-                raise InvalidChangeError(f"{self.key}: the source has no link to {m.href!r}")
+                raise _Refused(f"the source has no link to {m.href!r}")
+        links = [m for m in block.marks if m.kind == MarkKind.LINK and m.start < m.end]
+        for i, a in enumerate(links):
+            for b in links[i + 1 :]:
+                if a.href != b.href and a.start < b.end and b.start < a.end:
+                    raise _Refused(f"links to {a.href!r} and {b.href!r} overlap")
         return order
 
     # --- templates
@@ -222,7 +272,7 @@ class _Rebuild:
                     for el in self.inline
                     if local_name(el) != "a"
                     and (kind, None) in own_marks(el)
-                    and _ELEMENT_MARKS.get(local_name(el), kind) == kind
+                    and ELEMENT_MARKS.get(local_name(el), kind) == kind
                 ),
                 None,
             )
@@ -325,7 +375,7 @@ def _inline_elements(block: etree._Element, placeholders: set) -> list[etree._El
         for child in el:
             if not isinstance(child.tag, str) or child in placeholders:
                 continue
-            if local_name(child) in _IGNORED:
+            if local_name(child) in IGNORED:
                 continue
             out.append(child)
             walk(child)
@@ -348,7 +398,7 @@ def _style_keeping(style: str | None, kind: MarkKind) -> str | None:
     """``style`` without the declarations that make a mark other than ``kind``."""
     if style is None:
         return None
-    kept = [d for d in style.split(";") if d.strip() and set(_style_marks(d)) <= {kind}]
+    kept = [d for d in style.split(";") if d.strip() and set(style_marks(d)) <= {kind}]
     return ";".join(kept).strip() or None
 
 
@@ -396,7 +446,7 @@ def _relabel_nav(
             continue
         if any(ancestor in keyed for ancestor in a.iterancestors()):
             continue  # inside a translated block: the translation gives its text
-        label = _label_for(labels, *_resolve(item.path, a.get("href")))
+        label = _label_for(labels, *resolve_href(item.path, a.get("href")))
         if label is not None:
             _set_label(a, label)
             changed = True
@@ -416,7 +466,7 @@ def _relabel_ncx(
         item = next((m for m in package.manifest.values() if m.media_type == _NCX_TYPE), None)
     if not labels or item is None or item.path not in package.files:
         return
-    root = _xml(package.files[item.path], item.path)
+    root = parse_xml_root(package.files[item.path], item.path)
     nav_map = root.find(f"{_NCX}navMap")
     changed = False
     for point in nav_map.iter(f"{_NCX}navPoint") if nav_map is not None else ():
@@ -424,14 +474,14 @@ def _relabel_ncx(
         text = point.find(f"{_NCX}navLabel/{_NCX}text")
         if content is None or text is None or not content.get("src"):
             continue
-        label = _label_for(labels, *_resolve(item.path, content.get("src")))
+        label = _label_for(labels, *resolve_href(item.path, content.get("src")))
         if label is not None:
             _set_label(text, label)
             changed = True
     if changed:
         if root.get(_XML_LANG) is not None:
             root.set(_XML_LANG, language)
-        package.files[item.path] = _serialize(
+        package.files[item.path] = serialize_document(
             ContentDocument(root, "xml"), package.files[item.path], item.path
         )
 
@@ -467,4 +517,4 @@ def _set_metadata(
             el = etree.SubElement(metadata, f"{_DC}{name}", nsmap={"dc": NS["dc"]})
         _set_label(el, value)
     path = package.opf_path
-    package.files[path] = _serialize(ContentDocument(opf, "xml"), package.files[path], path)
+    package.files[path] = serialize_document(ContentDocument(opf, "xml"), package.files[path], path)

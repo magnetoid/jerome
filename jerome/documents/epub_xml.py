@@ -29,7 +29,10 @@ from jerome.errors import UnsupportedDocumentError
 
 __all__ = [
     "CONTENT_TYPES",
+    "ELEMENT_MARKS",
+    "IGNORED",
     "MAX_UNCOMPRESSED_BYTES",
+    "NS",
     "ContentDocument",
     "EpubPackage",
     "EpubPiece",
@@ -39,12 +42,18 @@ __all__ = [
     "block_kind",
     "content_documents",
     "element_text",
+    "epub_type",
+    "find_blocks",
     "is_block_text",
     "iter_epub_blocks",
     "local_name",
     "own_marks",
     "parse_content_document",
+    "parse_xml_root",
     "read_container",
+    "resolve_href",
+    "serialize_document",
+    "style_marks",
 ]
 
 NS = {
@@ -113,7 +122,7 @@ class EpubPackage:
     language: str | None = None
 
 
-def _xml(data: bytes, part: str) -> etree._Element:
+def parse_xml_root(data: bytes, part: str) -> etree._Element:
     parser = etree.XMLParser(resolve_entities=False, no_network=True)
     try:
         return etree.fromstring(data, parser)
@@ -121,7 +130,7 @@ def _xml(data: bytes, part: str) -> etree._Element:
         raise UnsupportedDocumentError(f"{part} is not well-formed XML: {exc}") from exc
 
 
-def _resolve(base: str, href: str) -> tuple[str, str]:
+def resolve_href(base: str, href: str) -> tuple[str, str]:
     """(zip path, anchor) of ``href`` relative to the file ``base``."""
     target, anchor = urldefrag(href)
     target = unquote(target)
@@ -134,16 +143,16 @@ def read_container(data: bytes) -> EpubPackage:
     files = read_package(data, kind="EPUB")
     if "META-INF/container.xml" not in files:
         raise UnsupportedDocumentError("Not an EPUB file: META-INF/container.xml is missing")
-    container = _xml(files["META-INF/container.xml"], "META-INF/container.xml")
+    container = parse_xml_root(files["META-INF/container.xml"], "META-INF/container.xml")
     rootfile = container.find(f".//{{{NS['c']}}}rootfile")
     opf_path = unquote(rootfile.get("full-path", "")) if rootfile is not None else ""
     if opf_path not in files:
         raise UnsupportedDocumentError("Not an EPUB file: the package document (OPF) is missing")
-    opf = _xml(files[opf_path], opf_path)
+    opf = parse_xml_root(files[opf_path], opf_path)
 
     manifest: dict[str, ManifestItem] = {}
     for item in opf.iterfind(f"{{{NS['opf']}}}manifest/{{{NS['opf']}}}item"):
-        path, _ = _resolve(opf_path, item.get("href", ""))
+        path, _ = resolve_href(opf_path, item.get("href", ""))
         manifest[item.get("id", "")] = ManifestItem(
             item.get("id", ""),
             path,
@@ -224,7 +233,7 @@ def _nav_points(package: EpubPackage, item: ManifestItem) -> list[NavPoint]:
             link = next((a for a in li.iter() if local_name(a) == "a" and a.get("href")), None)
         if link is None or own is None:
             continue
-        path, anchor = _resolve(item.path, link.get("href"))
+        path, anchor = resolve_href(item.path, link.get("href"))
         points.append(NavPoint(_label(own), path, anchor))
     return points
 
@@ -232,14 +241,14 @@ def _nav_points(package: EpubPackage, item: ManifestItem) -> list[NavPoint]:
 def _ncx_points(package: EpubPackage, item: ManifestItem) -> list[NavPoint]:
     if item.path not in package.files:
         return []
-    root = _xml(package.files[item.path], item.path)
+    root = parse_xml_root(package.files[item.path], item.path)
     points = []
     for nav_point in root.iterfind(f"{{{NS['ncx']}}}navMap/{{{NS['ncx']}}}navPoint"):
         text = nav_point.find(f"{{{NS['ncx']}}}navLabel/{{{NS['ncx']}}}text")
         content = nav_point.find(f"{{{NS['ncx']}}}content")
         if content is None or not content.get("src"):
             continue
-        path, anchor = _resolve(item.path, content.get("src"))
+        path, anchor = resolve_href(item.path, content.get("src"))
         points.append(NavPoint(_label(text) if text is not None else "", path, anchor))
     return points
 
@@ -409,8 +418,8 @@ _INLINE = {
     "ins", "small", "big", "abbr", "acronym", "code", "q", "mark", "font", "dfn", "kbd",
     "samp", "var", "time", "bdi", "bdo", "tt", "label", "ruby", "rb", "data", "nobr",
 }  # fmt: skip
-_IGNORED = {"script", "style", "wbr", "rt", "rp", "template", "noscript"}
-_ELEMENT_MARKS = {
+IGNORED = {"script", "style", "wbr", "rt", "rp", "template", "noscript"}
+ELEMENT_MARKS = {
     "b": MarkKind.BOLD,
     "strong": MarkKind.BOLD,
     "i": MarkKind.ITALIC,
@@ -425,7 +434,7 @@ _ELEMENT_MARKS = {
 }
 
 
-def _style_marks(style: str) -> list[MarkKind]:
+def style_marks(style: str) -> list[MarkKind]:
     kinds = []
     for declaration in style.split(";"):
         prop, _, value = declaration.partition(":")
@@ -446,11 +455,11 @@ def own_marks(el: etree._Element) -> list[tuple[MarkKind, str | None]]:
     as a link (``a`` with an ``href``, which is the mark's href), and from its ``style``."""
     name = local_name(el)
     marks: list[tuple[MarkKind, str | None]] = []
-    if name in _ELEMENT_MARKS:
-        marks.append((_ELEMENT_MARKS[name], None))
+    if name in ELEMENT_MARKS:
+        marks.append((ELEMENT_MARKS[name], None))
     if name == "a" and el.get("href"):
         marks.append((MarkKind.LINK, el.get("href")))
-    marks += [(kind, None) for kind in _style_marks(el.get("style") or "")]
+    marks += [(kind, None) for kind in style_marks(el.get("style") or "")]
     return marks
 
 
@@ -485,7 +494,7 @@ class _Collector:
             name = local_name(child)
             if child.tag is etree.Entity:
                 self.entity(child)
-            elif name and name not in _IGNORED:
+            elif name and name not in IGNORED:
                 if _is_placeholder(child):
                     self.atoms.append(_Atom(PLACEHOLDER, child, "self", -1))
                 else:
@@ -575,3 +584,126 @@ def _trimmed(mark: Mark, text: str) -> Mark:
     while end > start and text[end - 1] == " ":
         end -= 1
     return Mark(start, end, mark.kind, mark.href)
+
+
+# --- writing -------------------------------------------------------------------------
+
+
+def find_blocks(
+    package: EpubPackage, keys: set[str]
+) -> tuple[dict[str, tuple[etree._Element, ParagraphText]], dict[str, ContentDocument]]:
+    """The ``(element, text)`` of each block in ``keys`` that names one, and the parsed
+    documents holding them. Keys that name no block are left out."""
+    paths = {key.partition("#")[0] for key in keys}
+    docs: dict[str, ContentDocument] = {}
+    blocks: dict[str, tuple[etree._Element, ParagraphText]] = {}
+    for item in content_documents(package):
+        if item.path not in paths or item.path in docs:
+            continue
+        doc = docs[item.path] = parse_content_document(package.files[item.path], item.path)
+        for n, el in iter_epub_blocks(doc.root):
+            key = f"{item.path}#{n}"
+            if key in keys and is_block_text((text := element_text(el)).text):
+                blocks[key] = (el, text)
+    return blocks, docs
+
+
+_BOM_CODECS = (
+    (codecs.BOM_UTF8, "utf-8"),
+    (codecs.BOM_UTF16_LE, "utf-16-le"),
+    (codecs.BOM_UTF16_BE, "utf-16-be"),
+)
+_XHTML_NS = "http://www.w3.org/1999/xhtml"
+_VOID = frozenset(
+    "area base br col embed hr img input link meta param source track wbr".split()
+)  # HTML elements that never have content or an end tag
+_COMMENT_OR_PI = re.compile(r"<!--.*?-->|<\?.*?\?>", re.S)
+_DOCTYPE = re.compile("<!DOCTYPE", re.I)
+
+
+def serialize_document(doc: ContentDocument, original: bytes, path: str) -> bytes:
+    """The changed document: the original's bytes up to its root element, then the root
+    and what follows it serialized as parsed, then the original's trailing whitespace.
+
+    Keeps the original's encoding, and gives empty non-void XHTML elements an end tag
+    (``<a id="n"></a>``) when the document was parsed as XML."""
+    codec = _codec(doc, original, path)
+    if doc.parser == "xml":
+        _keep_end_tags(doc.root)
+    tostring = lxml_html.tostring if doc.parser == "html" else etree.tostring
+    nodes = (doc.root, *doc.root.itersiblings())
+    body = "".join(tostring(node, encoding="unicode") for node in nodes)
+    try:
+        text = original.decode(codec, "surrogateescape")  # a BOM stays, as U+FEFF
+        start, end = _root_start(text), len(text.rstrip(_XML_WS))
+        return (
+            text[:start].encode(codec, "surrogateescape")
+            + body.encode(codec, "xmlcharrefreplace")  # character references if need be
+            + text[max(start, end) :].encode(codec, "surrogateescape")
+        )
+    except UnicodeError as exc:
+        raise UnsupportedDocumentError(f"{path} cannot be written back as {codec}") from exc
+
+
+def _keep_end_tags(root: etree._Element) -> None:
+    """Make empty non-void XHTML elements serialize as ``<a id="n"></a>``, not ``<a/>``.
+
+    Reading systems with an HTML parser read ``<a/>``, ``<div/>`` or ``<script/>`` as a
+    start tag and swallow what follows; some show a page with ``<title/>`` blank. The tree
+    cannot tell how the original wrote them, so every one gets an end tag. Void elements
+    (``<br/>``), and SVG and MathML elements, stay self-closed.
+    """
+    for el in root.iter(etree.Element):
+        if el.text is None and len(el) == 0:
+            name = etree.QName(el)
+            if name.namespace in (_XHTML_NS, None) and name.localname.lower() not in _VOID:
+                el.text = ""
+
+
+def _codec(doc: ContentDocument, original: bytes, path: str) -> str:
+    """The original's encoding: from its BOM, else the one it was parsed with."""
+    for bom, codec in _BOM_CODECS:
+        if original.startswith(bom):
+            return codec
+    name = doc.root.getroottree().docinfo.encoding or "utf-8"
+    try:
+        return codecs.lookup(name).name
+    except LookupError as exc:
+        raise UnsupportedDocumentError(f"{path} is in an unknown encoding: {name}") from exc
+
+
+def _root_start(text: str) -> int:
+    """Where the root element starts: after a BOM, and the XML declaration, comments,
+    processing instructions, doctype and whitespace before the root."""
+    pos = 1 if text.startswith("﻿") else 0
+    while True:
+        while pos < len(text) and text[pos] in _XML_WS:
+            pos += 1
+        if m := _COMMENT_OR_PI.match(text, pos):
+            pos = m.end()
+        elif _DOCTYPE.match(text, pos) and (end := _doctype_end(text, pos)):
+            pos = end
+        else:
+            return pos
+
+
+def _doctype_end(text: str, pos: int) -> int | None:
+    """The end of the doctype at ``pos``, or None if it has none. Quoted strings, and
+    comments and processing instructions in the internal subset, may hold ``>`` or ``]``."""
+    i, subset = pos + len("<!DOCTYPE"), False
+    while i < len(text):
+        ch = text[i]
+        if ch in "\"'":
+            i = text.find(ch, i + 1)
+            if i < 0:
+                return None
+        elif subset and (m := _COMMENT_OR_PI.match(text, i)):
+            i = m.end() - 1
+        elif ch == "[":
+            subset = True
+        elif ch == "]":
+            subset = False
+        elif ch == ">" and not subset:
+            return i + 1
+        i += 1
+    return None

@@ -19,6 +19,7 @@ subscript is cut out where superscript covers the same text, and the result is s
 import re
 from dataclasses import dataclass
 
+from jerome.documents.changes import NOT_XML
 from jerome.documents.model import PLACEHOLDER, Mark, MarkKind
 from jerome.errors import JeromeError
 
@@ -48,10 +49,6 @@ _TOKEN = re.compile(
 )
 
 
-# characters XML 1.0 cannot carry: C0 controls but tab, newline and carriage return; the
-# non-characters U+FFFE and U+FFFF; lone surrogates (JSON can carry an escaped one)
-_NOT_XML = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\ufffe\uffff\ud800-\udfff]")
-
 _Key = tuple[MarkKind, str | None]
 
 
@@ -78,6 +75,22 @@ def normalize_marks(marks: list[Mark]) -> list[Mark]:
             piece for m in merged if m.kind == MarkKind.SUBSCRIPT for piece in _subtract(m, sups)
         ]
     return sorted(merged, key=lambda m: (m.start, m.end, m.kind, m.href or ""))
+
+
+def _overlapping_links(marks: list[Mark]) -> tuple[str, str] | None:
+    """The hrefs of the first two links to different hrefs that cover the same text, if
+    any. No writer can put such text in two links at once."""
+    links = sorted(
+        (m for m in marks if m.kind == MarkKind.LINK and m.start < m.end),
+        key=lambda m: (m.start, m.end),
+    )
+    for i, a in enumerate(links):
+        for b in links[i + 1 :]:
+            if b.start >= a.end:
+                break
+            if a.href != b.href:
+                return a.href or "", b.href or ""
+    return None
 
 
 def _subtract(mark: Mark, cuts: list[Mark]) -> list[Mark]:
@@ -178,7 +191,8 @@ def decode(
     """Map the model's tagged text back to text, marks and placeholders.
 
     Raises :class:`TagError` for a missing, repeated or out-of-range placeholder token, for
-    unbalanced or crossed tags, for an unknown or malformed tag (including ``<!``), for an
+    unbalanced or crossed tags, for link tags to different hrefs over the same text
+    (``<a1>x <a2>y</a2></a1>``), for an unknown or malformed tag (including ``<!``), for an
     unknown entity (``&`` + ``[#A-Za-z][^;\\s]{0,10};``, e.g. ``&quot;``), for a stray ``⟦``,
     ``⟧`` or raw U+FFFC, and for a character XML 1.0 cannot carry. A tag whose kind (or link
     index) the source does not have keeps its text and loses its mark, counted in
@@ -194,7 +208,7 @@ def decode(
     - each placeholder's non-link marks are exactly those its source placeholder had; the
       marks of the text around it are not changed.
     """
-    if bad := _NOT_XML.search(tagged):
+    if bad := NOT_XML.search(tagged):  # the writers refuse the same characters
         raise TagError(f"character U+{ord(bad.group()):04X} cannot be stored in XML")
     if source_text is not None and source_text.count(PLACEHOLDER) != placeholder_count:
         raise ValueError("placeholder_count does not match the placeholders in source_text")
@@ -258,6 +272,8 @@ def decode(
         raise TagError(f"unclosed tag <{stack[-1][0]}>")
     if len(placeholders) != placeholder_count:
         raise TagError(f"{placeholder_count - len(placeholders)} placeholder(s) missing")
+    if crossed := _overlapping_links(marks):
+        raise TagError(f"links to {crossed[0]!r} and {crossed[1]!r} overlap")
     return _settle("".join(parts), marks, placeholders, dropped, source, source_text)
 
 

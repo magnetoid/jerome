@@ -10,7 +10,7 @@ from lxml import etree
 from jerome.documents.changes import Change, apply_changes
 from jerome.documents.docx_xml import merge_marks
 from jerome.documents.epub_reader import read_epub
-from jerome.documents.epub_translate import write_translated_epub
+from jerome.documents.epub_translate import TranslatedEpubError, write_translated_epub
 from jerome.documents.epub_writer import write_epub
 from jerome.documents.model import PLACEHOLDER, Mark, MarkKind
 from jerome.documents.translated import TranslatedBlock
@@ -229,6 +229,17 @@ def test_new_mark_kinds_get_plain_elements():
     marks = [Mark(0, 1, k) for k in kinds] + [Mark(2, 3, MarkKind.SUBSCRIPT)]
     out = translate(src, {key: TranslatedBlock("x y z", marks, None)})
     assert readback(out)[key] == ("x y z", merge_marks(marks))
+    p = block_el(out, CH1)
+    made = [(etree.QName(el).localname, dict(el.attrib)) for el in p.iterdescendants()]
+    assert made == [
+        ("b", {}),
+        ("i", {}),
+        ("u", {}),
+        ("span", {"style": "font-variant: small-caps"}),
+        ("sup", {}),
+        ("s", {}),
+        ("sub", {}),
+    ]
 
 
 def test_ids_inside_a_block_survive():
@@ -406,6 +417,100 @@ def test_proofreading_applies_on_the_translated_base():
     assert readback(out)[key][0] == apply_changes(blocks[key].text, changes[key])
 
 
+# --- metadata and TOC -----------------------------------------------------------------
+
+
+def _with_files(data: bytes, files: dict[str, str]) -> bytes:
+    """``data`` with entries added or replaced (order kept, new ones last)."""
+    out = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(data)) as src, zipfile.ZipFile(out, "w") as dst:
+        for info in src.infolist():
+            content = files.get(info.filename)
+            dst.writestr(info, content.encode() if content is not None else src.read(info))
+        for name, content in files.items():
+            if name not in src.namelist():
+                dst.writestr(name, content.encode())
+    return out.getvalue()
+
+
+def _ncx(points: str) -> str:
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1" xml:lang="en">'
+        f"<head/><docTitle><text>T</text></docTitle><navMap>{points}</navMap></ncx>"
+    )
+
+
+def _point(n: int, label: str, src: str, inner: str = "") -> str:
+    return (
+        f'<navPoint id="p{n}" playOrder="{n}"><navLabel><text>{label}</text></navLabel>'
+        f'<content src="{src}"/>{inner}</navPoint>'
+    )
+
+
+def _ncx_labels(data: bytes) -> list[str]:
+    root = root_of(data, "OEBPS/toc.ncx")
+    return [t.text for t in root.iter("{http://www.daisy.org/z3986/2005/ncx/}text")][1:]
+
+
+def test_title_none_or_blank_keeps_dc_title():
+    src = make_epub([("C", ["Hello."])], title="Original")
+    for title in (None, "", "  \t"):
+        out = translate(src, {}, title=title)
+        assert read_epub(out).title == "Original"
+        assert "<dc:title>Original</dc:title>" in entry(out, "OEBPS/content.opf").decode()
+
+
+def test_missing_dc_language_is_created():
+    src = edit_entry(
+        make_epub([("C", ["Hello."])]),
+        "OEBPS/content.opf",
+        lambda opf: opf.replace("<dc:language>en</dc:language>", ""),
+    )
+    assert read_epub(src).language is None
+    out = translate(src, {})
+    assert read_epub(out).language == "de-DE"
+    assert "<dc:language>de-DE</dc:language>" in entry(out, "OEBPS/content.opf").decode()
+
+
+def test_blank_toc_label_keeps_the_label():
+    src = make_epub([("One", ["a"]), ("Two", ["b"])])
+    out = translate(src, {}, toc_labels={f"{CH1}#": " ", f"{CH2}#": "Zwei"})
+    assert titles(out) == ["One", "Zwei"]
+
+
+def test_nav_and_ncx_are_both_relabelled():
+    src = make_epub([("One", ["a"]), ("Two", ["b"])], toc="nav")
+    src = _with_files(
+        src,
+        {"OEBPS/toc.ncx": _ncx(_point(1, "One", "ch1.xhtml") + _point(2, "Two", "ch2.xhtml"))},
+    )
+    src = edit_entry(
+        src,
+        "OEBPS/content.opf",
+        lambda opf: opf.replace(
+            "</manifest><spine>",
+            '<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>'
+            '</manifest><spine toc="ncx">',
+        ),
+    )
+    out = translate(src, {}, toc_labels={f"{CH1}#": "Eins", f"{CH2}#": "Zwei"})
+    assert titles(out) == ["Eins", "Zwei"]  # from the nav
+    assert _ncx_labels(out) == ["Eins", "Zwei"]
+    assert root_of(out, "OEBPS/toc.ncx").get(XML_LANG) == "de-DE"
+
+
+def test_ncx_is_relabelled_at_nested_depth():
+    src = make_epub([("One", ["a"]), ("Two", ["b"])], toc="ncx")
+    nested = _point(
+        1, "One", "ch1.xhtml", _point(2, "Two", "ch2.xhtml", _point(3, "A", "ch2.xhtml#x"))
+    )
+    src = _with_files(src, {"OEBPS/toc.ncx": _ncx(nested)})
+    labels = {f"{CH2}#": "Zwei", f"{CH2}#x": "Anker"}
+    out = translate(src, {}, toc_labels=labels)
+    assert _ncx_labels(out) == ["One", "Zwei", "Anker"]
+
+
 # --- refusals -------------------------------------------------------------------------
 
 
@@ -427,8 +532,30 @@ def test_proofreading_applies_on_the_translated_base():
 )
 def test_bad_translations_are_refused(blocks):
     src = make_epub([("C", ["Hello [l](https://x.test).[^1]"])])
-    with pytest.raises(InvalidChangeError):
+    with pytest.raises(TranslatedEpubError) as exc:
         translate(src, blocks)
+    assert list(exc.value.problems) == list(blocks)
+
+
+def test_every_failing_block_is_reported_once():
+    src = make_epub([("C", ["Hello [l](https://x.test) and [m](https://y.test).[^1]"])])
+    links = [
+        Mark(0, 3, MarkKind.LINK, "https://x.test"),
+        Mark(2, 5, MarkKind.LINK, "https://y.test"),
+    ]
+    blocks = {
+        f"{CH1}#9": TranslatedBlock("x", [], None),
+        f"{CH1}#0": TranslatedBlock("Kopf", [], None),  # fine
+        f"{CH1}#1": TranslatedBlock(f"abcde{F}", links, None),
+    }
+    with pytest.raises(TranslatedEpubError) as exc:
+        translate(src, blocks)
+    assert isinstance(exc.value, InvalidChangeError)
+    assert exc.value.problems == {
+        f"{CH1}#9": "no block with this key",
+        f"{CH1}#1": "links to 'https://x.test' and 'https://y.test' overlap",
+    }
+    assert f"{CH1}#9: no block with this key" in str(exc.value)
 
 
 @pytest.mark.parametrize(
