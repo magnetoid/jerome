@@ -1,19 +1,25 @@
 """Per-process cache of the effective settings, refreshed from the database within seconds."""
 
+import dataclasses
 import json
 import logging
 import threading
 import time
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from jerome.config import Settings
 from jerome.core.app_settings import Effective, overlay
 from jerome.core.secretbox import secret_box
 from jerome.core.settings_changes import load_rows
+from jerome.models.registry import Registry, build_registry
 from jerome.orm import AppSetting
+from jerome.proofread.languagetool import LanguageToolClient
+
+if TYPE_CHECKING:  # jerome.jobs.worker imports jerome.core; keep this module below it
+    from jerome.jobs.worker import WorkerDeps
 
 log = logging.getLogger(__name__)
 
@@ -80,6 +86,7 @@ class SettingsStore:
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._base = base
+        self._base_values = dict(base.__dict__)  # to notice a change made in place
         self._interval = interval
         self._clock = clock
         self._lock = threading.Lock()
@@ -94,12 +101,19 @@ class SettingsStore:
     def base(self) -> Settings:
         return self._base
 
+    def _same_base(self, value: Settings) -> bool:
+        return value is self._base and value.__dict__ == self._base_values
+
     @base.setter
     def base(self, value: Settings) -> None:
+        """Another base, or the same object changed in place: recompute from the saved rows."""
+        if self._same_base(value):  # every request sets it; most of the time nothing changed
+            return
         with self._lock:
-            if value is self._base:
+            if self._same_base(value):
                 return
             self._base = value
+            self._base_values = dict(value.__dict__)
             self._effective = overlay(value, self._rows, secret_box(value))
             self.version += 1
 
@@ -131,3 +145,37 @@ class SettingsStore:
                 self._effective = overlay(self._base, self._rows, secret_box(self._base))
                 self.version += 1
             return self._effective
+
+
+class LiveRefresh:
+    """The worker's ``WorkerDeps.refresh``: deps for the current effective settings.
+
+    The deps first handed in are taken to be built from ``store.base``. A new registry or
+    LanguageTool client is built only when what it is made from changed, and is then handed
+    to every later call, whichever copy of the deps the caller still holds.
+    """
+
+    def __init__(self, store: SettingsStore, session_factory: sessionmaker[Session]) -> None:
+        self._store = store
+        self._session_factory = session_factory
+        self._registry: Registry | None = None  # None: keep the registry of the deps given
+        self._registry_inputs = registry_inputs(store.cached().settings)
+        self._lt: LanguageToolClient | None = None
+        self._lt_url = store.cached().settings.languagetool_url
+
+    def __call__(self, deps: "WorkerDeps") -> "WorkerDeps":
+        with self._session_factory() as session:
+            settings = self._store.current(session).settings
+        inputs = registry_inputs(settings)
+        if inputs != self._registry_inputs:
+            self._registry = build_registry(settings)
+            self._registry_inputs = inputs
+        if settings.languagetool_url != self._lt_url:
+            self._lt = LanguageToolClient(settings.languagetool_url)
+            self._lt_url = settings.languagetool_url
+        return dataclasses.replace(
+            deps,
+            registry=deps.registry if self._registry is None else self._registry,
+            lt=deps.lt if self._lt is None else self._lt,
+            webhook_secret=settings.webhook_secret,
+        )

@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session
 from starlette.requests import Request
 
 from jerome.api.deps import Principal, get_registry, get_session, get_storage, get_worker_deps
+from jerome.api.runtime import effective_for_app
 from jerome.config import Settings
 from jerome.db import session_scope
 from jerome.jobs.worker import WorkerDeps
@@ -95,12 +96,12 @@ def _registry(app: FastAPI) -> Registry:
     return override() if override is not None else app.state.registry
 
 
-def _worker_deps(app: FastAPI) -> WorkerDeps:
+def _worker_deps(app: FastAPI, settings: Settings) -> WorkerDeps:
     override = _override(app, get_worker_deps)
     if override is not None:
         return override()
     state = app.state
-    return WorkerDeps(state.registry, state.lt_client, state.settings.webhook_secret)
+    return WorkerDeps(state.registry, state.lt_client, settings.webhook_secret)
 
 
 def call[T](fn: Callable[[ToolContext], T]) -> T:
@@ -111,15 +112,16 @@ def call[T](fn: Callable[[ToolContext], T]) -> T:
     principal: Principal = state[PRINCIPAL_KEY]
     try:
         with open_session(app) as session, session.begin_nested():
+            settings = effective_for_app(app, session)  # first: it brings app.state in step
             return fn(
                 ToolContext(
                     app=app,
                     session=session,
                     principal=principal,
-                    settings=app.state.settings,
+                    settings=settings,
                     storage=_storage(app),
                     registry=_registry(app),
-                    worker_deps=_worker_deps(app),
+                    worker_deps=_worker_deps(app, settings),
                 )
             )
     except ToolError:

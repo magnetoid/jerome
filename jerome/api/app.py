@@ -18,6 +18,7 @@ from jerome.api import (
 from jerome.api.auth import LoginThrottle
 from jerome.api.deps import current_principal
 from jerome.api.limits import BodyLimitMiddleware
+from jerome.api.runtime import install as install_settings
 from jerome.api.web import mount_web
 from jerome.config import Settings, get_settings
 from jerome.core.app_settings import InvalidSetting
@@ -65,6 +66,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.registry = build_registry(settings)
     app.state.lt_client = LanguageToolClient(settings.languagetool_url)
     app.state.text_limits = TextLimits(settings.text_rpm)
+    install_settings(app, settings)  # app values from the database, laid on these settings
     app.state.engine = make_engine(settings.database_url)
     app.state.login_throttle = LoginThrottle()
     app.add_middleware(BodyLimitMiddleware)

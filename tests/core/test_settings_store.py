@@ -78,6 +78,16 @@ def test_same_base_assignment_does_nothing():
     assert store.version == 0
 
 
+def test_same_base_changed_in_place_recomputes():
+    base = Settings(_env_file=None)
+    store = SettingsStore(base)
+    base.max_upload_mb = 1  # tests change the app's settings object this way
+    store.base = base
+    assert store.cached().settings.max_upload_mb == 1 and store.version == 1
+    store.base = base
+    assert store.version == 1
+
+
 def test_registry_inputs_compare_by_value():
     a = Settings(_env_file=None, anthropic_api_key="k1")
     b = Settings(_env_file=None, anthropic_api_key="k1")

@@ -87,16 +87,20 @@ def worker(poll_interval: float = 1.0) -> None:
     """Run the background job worker."""
     from sqlalchemy.orm import sessionmaker
 
+    from jerome.core.settings_store import LiveRefresh, SettingsStore
     from jerome.jobs.worker import WorkerDeps, work_forever
     from jerome.models import build_registry
     from jerome.proofread.languagetool import LanguageToolClient
 
     settings = get_settings()
     engine = make_engine(settings.database_url)
+    session_factory = sessionmaker(engine)
     deps = WorkerDeps(
         registry=build_registry(settings),
         lt=LanguageToolClient(settings.languagetool_url),
         webhook_secret=settings.webhook_secret,
+        # app values from the database reach the worker before each task and chunk
+        refresh=LiveRefresh(SettingsStore(settings), session_factory),
     )
     stop = threading.Event()
 
@@ -109,7 +113,7 @@ def worker(poll_interval: float = 1.0) -> None:
     signal.signal(signal.SIGTERM, request_stop)
     signal.signal(signal.SIGINT, request_stop)
     try:
-        work_forever(sessionmaker(engine), deps, poll_interval, stop)
+        work_forever(session_factory, deps, poll_interval, stop)
     except KeyboardInterrupt:
         typer.echo("worker stopped")
     finally:

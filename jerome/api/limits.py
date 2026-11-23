@@ -1,5 +1,7 @@
 import json
 
+from jerome.api.runtime import cached_for_app
+
 _MIB = 1024 * 1024
 
 
@@ -11,7 +13,8 @@ class BodyLimitMiddleware:
     """Pure-ASGI request-body limit, applied before the app reads or parses the body.
 
     The limit is ``max_upload_mb`` MiB plus 1 MiB of slack for multipart framing. Read from
-    ``app.state.settings`` per request. Streamed bodies without Content-Length are counted.
+    the effective settings as last cached (no database read here) per request. Streamed
+    bodies without Content-Length are counted.
     """
 
     def __init__(self, app) -> None:
@@ -21,7 +24,7 @@ class BodyLimitMiddleware:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
-        limit = (scope["app"].state.settings.max_upload_mb + 1) * _MIB
+        limit = (cached_for_app(scope["app"]).max_upload_mb + 1) * _MIB
         for key, value in scope["headers"]:
             if key == b"content-length":
                 try:
