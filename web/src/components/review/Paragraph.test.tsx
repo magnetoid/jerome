@@ -138,6 +138,17 @@ describe("Paragraph", () => {
     expect(src.className).not.toMatch(/\bhidden\b/);
   });
 
+  it("narrow screens put the source column under the translated text; lg puts it on the left", () => {
+    const { container } = render(<Paragraph block={block(100, 1, "The cat sat.", [], "paragraph", "Die Katze sass.")} />);
+    const col = container.querySelector("[data-source-column]") as HTMLElement;
+    const text = container.querySelector("p") as HTMLElement;
+    // Text precedes the source column in the DOM, so a single column reads text, then toggle.
+    expect(text.compareDocumentPosition(col) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(col.className).toMatch(/\border-last\b/);
+    expect(col.className).toMatch(/lg:order-first/);
+    expect(col.parentElement!.className).toMatch(/lg:grid-cols-2/);
+  });
+
   it("no source column for a proofread-only book", () => {
     render(<Paragraph block={block(100, 1, "The cat sat.")} />);
     expect(screen.queryByLabelText("Source paragraph")).toBeNull();

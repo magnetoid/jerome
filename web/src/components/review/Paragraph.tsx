@@ -130,9 +130,12 @@ export default function Paragraph({ block, isActive = () => true, focusedId = nu
 
   // A translated block: the source paragraph beside the text from 1024 px up, behind a
   // toggle under it on narrower screens.
+  // In the DOM the translated text comes first, so narrow screens read text, then toggle.
+  // From lg the source column is ordered first: source left, translation right.
   return (
-    <div className="lg:grid lg:grid-cols-2 lg:gap-6">
-      <div className="mb-2 lg:mb-0">
+    <div className="flex flex-col lg:grid lg:grid-cols-2 lg:gap-6">
+      {body}
+      <div data-source-column className="order-last mt-2 lg:order-first lg:mt-0">
         <button
           type="button"
           className="text-xs text-muted-foreground underline underline-offset-2 lg:hidden"
@@ -145,14 +148,15 @@ export default function Paragraph({ block, isActive = () => true, focusedId = nu
           aria-label="Source paragraph"
           role="note"
           className={cn(
-            showSource ? "block" : "hidden", "lg:block mt-1 border-l-2 border-muted-foreground/30 pl-3 leading-8 text-muted-foreground lg:mt-0",
+            showSource ? "block" : "hidden",
+            "mt-1 border-l-2 border-muted-foreground/30 pl-3 leading-8 text-muted-foreground",
+            "lg:mt-0 lg:block",
             KIND_CLASS[block.kind],
           )}
         >
           {block.source}
         </div>
       </div>
-      {body}
     </div>
   );
 }
