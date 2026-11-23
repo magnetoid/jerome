@@ -1,6 +1,6 @@
 # Translation (EN↔DE) as the first step of a project: design
 
-Status: draft, written 2026-11-23, awaiting owner approval. Marked **(call)** = a decision Claude made that the owner has not confirmed; correct freely.
+Status: draft, written 2026-11-23, approved by the owner on 2026-11-23. Marked **(call)** = a decision Claude made that the owner has not confirmed; correct freely.
 
 It builds on:
 - the proofreading slice (`2026-11-21-proofreading-slice-design.md`), whose document model, job runner, suggestions and export this reuses;
