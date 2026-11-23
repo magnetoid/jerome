@@ -17,6 +17,7 @@ from jerome.orm import AppSetting
 
 RUNTIME_KEYS: tuple[str, ...] = (
     "models.ai",
+    "models.translate",
     "prices",
     "text_daily_cost_cap",
     "text_rpm",
@@ -30,6 +31,7 @@ SECRET_KEYS: tuple[str, ...] = ("anthropic_api_key", "webhook_secret", "openai_c
 _EFFORTS = ("low", "medium", "high", "xhigh", "max")
 _PROVIDERS = ("anthropic", "openai_compat")
 _PRICE_FIELDS = ("input", "output", "cache_read", "cache_write")
+_MODEL_KEYS = ("models.ai", "models.translate")
 _LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1")
 
 
@@ -95,14 +97,18 @@ def _integer(low: int, high: int) -> Callable[[Any], int]:
     return check
 
 
-def _models_ai(value: Any) -> dict[str, Any]:
+def _models_pass(name: str) -> Callable[[Any], dict[str, Any]]:
+    return lambda value: _model_config(f"models.{name}", value)
+
+
+def _model_config(label: str, value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
-        raise InvalidSetting("models.ai must be an object")
+        raise InvalidSetting(f"{label} must be an object")
     if "api_key" in value:
-        raise InvalidSetting("models.ai cannot hold an API key; set openai_compat_api_key instead")
+        raise InvalidSetting(f"{label} cannot hold an API key; set openai_compat_api_key instead")
     extra = set(value) - {"provider", "model", "effort", "base_url"}
     if extra:
-        raise InvalidSetting(f"models.ai has unknown field: {sorted(extra)[0]}")
+        raise InvalidSetting(f"{label} has unknown field: {sorted(extra)[0]}")
     provider = value.get("provider")
     if provider not in _PROVIDERS:
         raise InvalidSetting("provider must be anthropic or openai_compat")
@@ -175,7 +181,8 @@ def _public_base_url(value: Any) -> str | None:
 
 
 _VALIDATORS: dict[str, Callable[[Any], Any]] = {
-    "models.ai": _models_ai,
+    "models.ai": _models_pass("ai"),
+    "models.translate": _models_pass("translate"),
     "prices": _prices,
     "text_daily_cost_cap": _cost_cap,
     "text_rpm": _integer(1, 10000),
@@ -196,8 +203,9 @@ def validate(key: str, value: Any) -> Any:
 
 def value_of(settings: Settings, key: str) -> Any:
     """The JSON-able effective value of a runtime key (never an API key)."""
-    if key == "models.ai":
-        return {k: v for k, v in settings.models.get("ai", {}).items() if k != "api_key"}
+    if key in _MODEL_KEYS:
+        pass_name = key.removeprefix("models.")
+        return {k: v for k, v in settings.models.get(pass_name, {}).items() if k != "api_key"}
     if key == "text_daily_cost_cap":
         return str(settings.text_daily_cost_cap)
     if key in _VALIDATORS:
@@ -221,7 +229,7 @@ def overlay(base: Settings, rows: Sequence[AppSetting], box: SecretBox | None) -
     meta: dict[str, Meta] = {}
 
     for key in RUNTIME_KEYS:
-        field = "models" if key == "models.ai" else key
+        field = "models" if key in _MODEL_KEYS else key
         env_source: Literal["default", "environment"] = (
             "environment" if field in base.model_fields_set else "default"
         )
@@ -235,8 +243,11 @@ def overlay(base: Settings, rows: Sequence[AppSetting], box: SecretBox | None) -
             meta[key] = Meta(source=env_source, unreadable=True)
             continue
         meta[key] = Meta(source="app", updated_by=row.updated_by, updated_at=row.updated_at)
-        if key == "models.ai":
-            update["models"] = {**base.models, "ai": value}
+        if key in _MODEL_KEYS:
+            update["models"] = {
+                **update.get("models", base.models),
+                key.removeprefix("models."): value,
+            }
         elif key == "text_daily_cost_cap":
             update[key] = Decimal(value)
         else:
@@ -247,7 +258,8 @@ def overlay(base: Settings, rows: Sequence[AppSetting], box: SecretBox | None) -
             base.anthropic_api_key.get_secret_value() if base.anthropic_api_key else None
         ),
         "webhook_secret": base.webhook_secret,
-        "openai_compat_api_key": base.models.get("ai", {}).get("api_key"),
+        "openai_compat_api_key": base.models.get("ai", {}).get("api_key")
+        or base.models.get("translate", {}).get("api_key"),
     }
     secrets: dict[str, str | None] = {}
     for key in SECRET_KEYS:
@@ -291,10 +303,11 @@ def overlay(base: Settings, rows: Sequence[AppSetting], box: SecretBox | None) -
         k: dict(v) if isinstance(v, dict) else v
         for k, v in update.get("models", base.models).items()
     }
-    ai = models.get("ai")
-    if isinstance(ai, dict):
-        ai.pop("api_key", None)
-        if ai.get("provider") != "anthropic" and secrets["openai_compat_api_key"]:
-            ai["api_key"] = secrets["openai_compat_api_key"]
+    for pass_name in ("ai", "translate"):
+        config = models.get(pass_name)
+        if isinstance(config, dict):
+            config.pop("api_key", None)
+            if config.get("provider") != "anthropic" and secrets["openai_compat_api_key"]:
+                config["api_key"] = secrets["openai_compat_api_key"]
     update["models"] = models
     return Effective(settings=base.model_copy(update=update), meta=meta)

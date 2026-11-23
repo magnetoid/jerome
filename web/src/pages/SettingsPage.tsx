@@ -58,7 +58,18 @@ export default function SettingsPage() {
         <>
           <section className="space-y-3" aria-labelledby="h-ai">
             <Heading id="h-ai">AI model</Heading>
-            <ModelSettings key={stamp("models.ai")} row={row("models.ai")!} />
+            <ModelSettings
+              key={stamp("models.ai")}
+              row={row("models.ai")!}
+              label="Proofreading model"
+              idPrefix="ai"
+            />
+            <ModelSettings
+              key={stamp("models.translate")}
+              row={row("models.translate")!}
+              label="Translation model"
+              idPrefix="translate"
+            />
           </section>
 
           <section className="space-y-3" aria-labelledby="h-limits">

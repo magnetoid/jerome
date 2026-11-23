@@ -2,6 +2,7 @@ import pytest
 from cryptography.fernet import Fernet
 from pydantic import SecretStr
 
+from jerome.api.runtime import effective_for_app
 from jerome.core.users import create_user
 from jerome.orm import AppSetting
 from tests.api.test_auth_api import PASSWORD, WEB, login
@@ -32,6 +33,7 @@ def test_get_lists_keys_in_order(web_client, session):
     body = web_client.get("/v1/settings").json()
     assert [s["key"] for s in body["settings"]] == [
         "models.ai",
+        "models.translate",
         "prices",
         "text_daily_cost_cap",
         "text_rpm",
@@ -192,3 +194,28 @@ def test_put_without_value_or_with_typo_is_422_and_keeps_secret(
     )
     assert secret["is_set"] is True and secret["source"] == "app"
     assert web_client.put("/v1/settings/public_base_url", headers=WEB, json={}).status_code == 422
+
+
+def test_put_models_translate_applies_to_registry(web_client, session):
+    login(web_client, session)
+    app = web_client.app
+    before = app.state.registry
+    value = {"provider": "anthropic", "model": "claude-sonnet-5-5"}
+    r = web_client.put("/v1/settings/models.translate", headers=WEB, json={"value": value})
+    assert r.status_code == 200
+    row = next(s for s in r.json()["settings"] if s["key"] == "models.translate")
+    assert row["value"] == value and row["source"] == "app"
+    ai = next(s for s in r.json()["settings"] if s["key"] == "models.ai")
+    assert ai["source"] != "app"
+    bad = web_client.put(
+        "/v1/settings/models.translate",
+        headers=WEB,
+        json={"value": {"provider": "anthropic", "model": ""}},
+    )
+    assert bad.status_code == 400
+    effective_for_app(app, session)
+    assert app.state.registry is not before
+    assert (
+        app.state.registry.for_pass("translate", local_only=False)[1].model == "claude-sonnet-5-5"
+    )
+    assert app.state.registry.for_pass("ai", local_only=False)[1].model == "claude-opus-5-5"
