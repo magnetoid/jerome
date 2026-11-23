@@ -151,6 +151,8 @@ Secrets are stored encrypted, so a database backup alone does not reveal them. T
 uv run python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
 
+The API and the worker both need the same `JEROME_SECRET_KEY`.
+
 Without it you can still clear a secret, but not save one. If the key is lost or changed,
 the saved secrets cannot be read: Jerome falls back to the environment values and the page
 marks them, so enter them again.
