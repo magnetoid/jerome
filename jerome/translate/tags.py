@@ -261,6 +261,62 @@ def decode(
     return _settle("".join(parts), marks, placeholders, dropped, source, source_text)
 
 
+_Unit = tuple[str, int | None, set[_Key]]  # a character, its placeholder index, its marks
+
+
+def _is_space(u: _Unit) -> bool:
+    return u[1] is None and u[0].isspace()
+
+
+def _to_edges(units: list[_Unit], lead: int, trail: int, count: int) -> list[_Unit]:
+    """Move the source's leading placeholders (0 .. lead-1) to the start and its trailing ones
+    (count-trail .. count-1) to the end, in order. Tokens already at their edge stay put.
+
+    The whitespace a moved token leaves is collapsed: whitespace on both sides becomes one
+    (the first character of the run before it); whitespace on one side only is dropped,
+    unless that would glue two words together (text beyond the whitespace, and a letter or
+    digit on the token's other side), in which case it is kept."""
+    k = 0
+    while k < len(units) and k < lead and units[k][1] == k:
+        k += 1
+    j, want = len(units), count - 1
+    while j > k and want >= count - trail and units[j - 1][1] == want:
+        j, want = j - 1, want - 1
+    edge = set(range(lead)) | set(range(count - trail, count))
+    work = units[k:j]
+    moved: list[_Unit] = []
+    i = 0
+    while i < len(work):
+        if work[i][1] not in edge:
+            i += 1
+            continue
+        moved.append(work.pop(i))
+        lo, hi = i, i
+        while lo > 0 and _is_space(work[lo - 1]):
+            lo -= 1
+        while hi < len(work) and _is_space(work[hi]):
+            hi += 1
+        if lo < i and hi > i:  # whitespace on both sides: keep one
+            del work[lo + 1 : hi]
+            i = lo + 1
+            continue
+        if lo == i and hi == i:
+            continue
+        # whitespace on one side only: keep it only if dropping it would glue two words,
+        # i.e. there is text beyond it and the token's other side is a letter or digit
+        if lo < i:
+            far, other = work[lo - 1] if lo else None, work[i] if i < len(work) else None
+        else:
+            far, other = work[hi] if hi < len(work) else None, work[i - 1] if i else None
+        if far is None or other is None or not other[0].isalnum():
+            del work[lo:hi]
+            i = lo
+    moved.sort(key=lambda u: u[1])
+    heads = [u for u in moved if u[1] < lead]
+    tails = [u for u in moved if u[1] >= lead]
+    return units[:k] + heads + work + tails + units[j:]
+
+
 def _settle(
     text: str,
     marks: list[Mark],
@@ -284,10 +340,7 @@ def _settle(
         count = len(placeholders)
         lead = len(source_text) - len(source_text.lstrip(PLACEHOLDER))
         trail = 0 if lead == count else len(source_text) - len(source_text.rstrip(PLACEHOLDER))
-        edge = set(range(lead)) | set(range(count - trail, count))
-        middle = [u for u in units if u[1] not in edge]
-        moved = sorted((u for u in units if u[1] in edge), key=lambda u: u[1])
-        units = moved[:lead] + middle + moved[lead:]
+        units = _to_edges(units, lead, trail, count)
 
         at = [i for i, ch in enumerate(source_text) if ch == PLACEHOLDER]
         pinned = [

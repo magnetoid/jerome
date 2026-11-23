@@ -204,12 +204,12 @@ def test_r11_trailing_run_keeps_its_order_and_interior_is_untouched():
     d = decode("⟦2⟧Ende⟦1⟧", [], 2, source_text=f"End{P}{P}")
     assert d.text == f"Ende{P}{P}" and d.placeholders == [0, 1]
     d = decode("x⟦3⟧ ⟦2⟧ y ⟦1⟧", [], 3, source_text=f"{P}a{P}b{P}")
-    assert d.text == f"{P}x {P} y {P}" and d.placeholders == [0, 1, 2]
+    assert d.text == f"{P}x {P} y{P}" and d.placeholders == [0, 1, 2]
 
 
 def test_r11_all_placeholder_source_is_put_in_source_order():
     d = decode("⟦2⟧ ⟦1⟧", [], 2, source_text=f"{P}{P}")
-    assert d.text == f"{P}{P} " and d.placeholders == [0, 1]
+    assert d.text == f"{P}{P}" and d.placeholders == [0, 1]
 
 
 def test_r11_a_moved_placeholder_carries_its_link():
@@ -226,13 +226,45 @@ def test_r11_no_text_is_lost_for_random_token_moves():
         units = [f"⟦{k}⟧" for k in range(1, n + 1)] + list("abc ")
         rng.shuffle(units)
         d = decode("".join(units), [], n, source_text=source)
-        assert sorted(c for c in d.text if c != P) == sorted("abc ")
+        assert sorted(c for c in d.text if c not in (P, " ")) == sorted("abc")
+        assert d.text.count(" ") <= 1
         assert d.text.count(P) == n and sorted(d.placeholders) == list(range(n))
         lead = len(source) - len(source.lstrip(P))
         trail = 0 if lead == n else len(source) - len(source.rstrip(P))
         assert d.text.startswith(P * lead) and d.placeholders[:lead] == list(range(lead))
         assert d.text.endswith(P * trail)
         assert d.placeholders[n - trail :] == list(range(n - trail, n))
+
+
+@pytest.mark.parametrize(
+    ("reply", "text"),
+    [
+        ("Kapitel Eins ⟦1⟧", f"{P}Kapitel Eins"),
+        ("Kapitel Eins  \t⟦1⟧", f"{P}Kapitel Eins"),
+        ("⟦1⟧Kapitel Eins", f"{P}Kapitel Eins"),
+        ("Kapitel⟦1⟧ Eins", f"{P}Kapitel Eins"),
+        ("Kapitel ⟦1⟧Eins", f"{P}Kapitel Eins"),  # one side only, but a word beyond: kept
+        ("Kapitel Eins ⟦1⟧.", f"{P}Kapitel Eins."),
+        ("„⟦1⟧ Kapitel Eins“", f"{P}„Kapitel Eins“"),
+    ],
+)
+def test_r11_whitespace_left_by_a_moved_token_is_collapsed(reply, text):
+    assert decode(reply, [], 1, source_text=f"{P}Chapter One").text == text
+
+
+def test_r11_token_moved_from_mid_sentence_keeps_one_space_and_marks_shift():
+    source = f"{P}Chapter one begins"
+    marks = [Mark(9, 19, IT)]
+    d = decode("Kapitel <i>eins ⟦1⟧ beginnt</i>", marks, 1, source_text=source)
+    assert d.text == f"{P}Kapitel eins beginnt"
+    assert d.marks == [Mark(9, 21, IT)]
+
+
+def test_r11_tokens_already_at_their_edge_keep_their_whitespace():
+    d = decode("⟦1⟧ Kapitel ⟦2⟧", [], 2, source_text=f"{P} Chapter {P}")
+    assert d.text == f"{P} Kapitel {P}"
+    d = decode("⟦1⟧ ⟦2⟧Kapitel", [], 2, source_text=f"{P}{P}Chapter")
+    assert d.text == f"{P}{P}Kapitel"
 
 
 @pytest.mark.parametrize(
@@ -263,8 +295,9 @@ def test_r13_each_placeholder_gets_its_own_source_marks():
     source = f"a{P} b{P}"  # placeholder 1 is superscript, placeholder 2 is plain
     marks = [Mark(0, 1, B), Mark(1, 2, SUP)]
     d = decode("<b>⟦2⟧ B ⟦1⟧</b>", marks, 2, source_text=source)
-    assert d.text == f" B {P}{P}" and d.placeholders == [0, 1]  # R11 moves ⟦2⟧ to the end
-    assert d.marks == [Mark(0, 3, B), Mark(3, 4, SUP)]
+    # R11 moves ⟦2⟧ to the end and drops the space it leaves at the start
+    assert d.text == f"B {P}{P}" and d.placeholders == [0, 1]
+    assert d.marks == [Mark(0, 2, B), Mark(2, 3, SUP)]
 
 
 def test_r13_without_source_text_placeholder_marks_are_left_alone():
