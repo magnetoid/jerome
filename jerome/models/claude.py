@@ -2,6 +2,7 @@ import json
 
 import anthropic
 
+from jerome.errors import JeromeError
 from jerome.models.base import (
     CompletionResult,
     ModelOutputError,
@@ -35,7 +36,10 @@ class ClaudeProvider:
     @property
     def client(self) -> anthropic.Anthropic:
         if self._client is None:
-            # without a key the SDK reads ANTHROPIC_API_KEY from the environment itself
+            if not self._api_key:
+                # never let the SDK fall back to ANTHROPIC_API_KEY: Settings already read it,
+                # so a missing key here is a key the admin cleared
+                raise JeromeError("Anthropic API key is not set")
             self._client = anthropic.Anthropic(api_key=self._api_key)
         return self._client
 

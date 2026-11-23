@@ -9,6 +9,7 @@ x-app:
     JEROME_LANGUAGETOOL_URL: http://languagetool:8010
     ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
     JEROME_WEBHOOK_SECRET: ${JEROME_WEBHOOK_SECRET:-}
+    JEROME_SECRET_KEY: ${JEROME_SECRET_KEY:-}
   volumes: &id003
   - jerome-data:/data
 services:

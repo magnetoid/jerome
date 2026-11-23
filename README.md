@@ -130,8 +130,32 @@ Settings are read from `JEROME_*` environment variables and from `.env`.
 | `JEROME_TEXT_DAILY_COST_CAP` | `5` | Daily cost cap per API key for the short-text endpoint |
 | `JEROME_TEXT_RPM` | `30` | Requests per minute per key for the short-text endpoint |
 | `JEROME_MAX_UPLOAD_MB` | `50` | Maximum upload size |
+| `JEROME_SECRET_KEY` | unset | Fernet key that encrypts the secrets saved on the Settings page (see below). Lives only in the environment, never in the database |
 | `JEROME_PUBLIC_BASE_URL` | unset | Public address of Jerome (e.g. `https://jerome.example.com`) for the file links MCP tools return; unset, the request's own address |
 | `ANTHROPIC_API_KEY` | unset | Anthropic API key (no `JEROME_` prefix). Read from the environment or `.env`, so local runs find it too; never logged |
+
+## Settings page
+
+Super admins can open Settings in the web app to change the model, prices, the daily text
+cost cap, the text rate limit, the upload limit, the session length, the LanguageTool
+address and the public address without a restart, and to save the Anthropic key, the
+webhook secret and the OpenAI-compatible key. The same page creates and revokes API keys
+and lists the latest changes. A value saved there wins over the environment, which wins over
+the default; "Reset" goes back to the environment value. Changes reach the API and the
+worker within about 10 seconds.
+
+Secrets are stored encrypted, so a database backup alone does not reveal them. This needs
+`JEROME_SECRET_KEY` in the environment. Make one with:
+
+```bash
+uv run python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+
+The API and the worker both need the same `JEROME_SECRET_KEY`.
+
+Without it you can still clear a secret, but not save one. If the key is lost or changed,
+the saved secrets cannot be read: Jerome falls back to the environment values and the page
+marks them, so enter them again.
 
 ## Data directory
 

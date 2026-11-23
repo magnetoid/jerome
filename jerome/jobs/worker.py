@@ -8,6 +8,9 @@ nothing, so paid-for chunks are never thrown away or bought twice.
 A stop request (SIGTERM or SIGINT, via the ``stop`` event) is honoured between chunks: the
 chunk in flight is committed, then the task and its job go back to ``queued``.
 
+``WorkerDeps.refresh``, when set, brings the deps up to date with the settings before each
+task and each chunk, so a change made in the app reaches a running worker.
+
 Known limitation: there is no task lease or heartbeat. After a crash the job stays
 ``running``; resuming it would double-process a task a live worker may still hold, so it is
 refused: cancel it, then resume.
@@ -59,6 +62,20 @@ class WorkerDeps:
     webhook_secret: str | None
     now: Callable[[], datetime] = utcnow
     sleep_base: float = 10.0
+    # Returns the deps for the current settings (see jerome.core.settings_store.LiveRefresh).
+    refresh: Callable[["WorkerDeps"], "WorkerDeps"] | None = None
+
+
+def refreshed(deps: WorkerDeps) -> WorkerDeps:
+    """``deps`` brought up to date with the settings; the same deps if that fails."""
+    if deps.refresh is None:
+        return deps
+    try:
+        return deps.refresh(deps)
+    except Exception as exc:  # noqa: BLE001 - a settings problem must not stop the work
+        # only the type: the message could carry a setting, even a key
+        log.error("settings refresh failed (%s); keeping the current settings", type(exc).__name__)
+        return deps
 
 
 @dataclass
@@ -135,6 +152,7 @@ class _Paid:
 
     result: AiPassResult | None = None
     billed: Billed | None = None
+    deps: WorkerDeps | None = None  # what the chunk ran with: prices a failed call
 
 
 @dataclass
@@ -273,6 +291,8 @@ def _run_chapter(
         if stop is not None and stop.is_set():
             _requeue_for_stop(sf, task_id, plan)
             return
+        deps = refreshed(deps)
+        paid.deps = deps
         if not _precheck(sf, task_id, plan, deps):
             return
         paid.result = paid.billed = None
@@ -466,13 +486,15 @@ def _record_failure(
     sf: SessionFactory, task_id: int, exc: Exception, paid: _Paid, deps: WorkerDeps
 ) -> None:
     note = None
+    pricing = paid.deps or deps  # a billed call is priced as it ran, not as settings are now
+    deps = refreshed(deps)  # the notification is signed with the current webhook secret
     with sf() as s:
         job_id = s.scalar(select(JobTask.job_id).where(JobTask.id == task_id))
         job, task = _lock_job_task(s, job_id, task_id)
         billed = paid.billed or billed_from(exc)
         if billed is not None:  # the model call was billed: keep its spend on the books
-            configured = deps.registry.settings.models.get("ai", {}).get("model", "")
-            _usage_row(s, job, billed, deps.registry, configured)
+            configured = pricing.registry.settings.models.get("ai", {}).get("model", "")
+            _usage_row(s, job, billed, pricing.registry, configured)
         task.attempts += 1
         task.error = repr(exc)[:2000]
         if task.attempts >= MAX_ATTEMPTS:
@@ -503,6 +525,7 @@ def work_forever(
             if task_id is None:
                 stop.wait(poll_interval)
             else:
+                deps = refreshed(deps)
                 run_task(session_factory, task_id, deps, stop)
         except Exception:
             log.exception("worker loop error")

@@ -168,3 +168,74 @@ class AgentActionOut(BaseModel):
     summary: str
     before: Any
     after: Any
+
+
+class SettingOut(BaseModel):
+    key: str
+    value: Any
+    source: Literal["default", "environment", "app"]
+    updated_by: str | None
+    updated_at: datetime | None
+    unreadable: bool
+
+
+class SecretSettingOut(BaseModel):
+    """A secret is reported as set or not; its value is never part of any response."""
+
+    key: str
+    is_set: bool
+    source: Literal["default", "environment", "app"]
+    updated_by: str | None
+    updated_at: datetime | None
+    unreadable: bool
+
+
+class SystemSettingsOut(BaseModel):
+    database_url: str
+    data_dir: str
+    web_dir: str | None
+    trusted_proxies: list[str]
+    cookie_secure: bool
+    secret_storage: Literal["ready", "missing", "invalid"]
+
+
+class SettingsOut(BaseModel):
+    settings: list[SettingOut]
+    secrets: list[SecretSettingOut]
+    system: SystemSettingsOut
+
+
+class SettingPutIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    value: Any  # required; JSON null is allowed and means clear
+
+
+class SettingsAuditOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    at: datetime
+    actor: str
+    key: str
+    action: str
+    before: Any
+    after: Any
+
+
+class ApiKeyOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    created_at: datetime
+    revoked_at: datetime | None
+
+
+class ApiKeyCreateIn(BaseModel):
+    name: str
+
+
+class ApiKeyCreatedOut(BaseModel):
+    key: ApiKeyOut
+    token: str

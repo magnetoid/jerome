@@ -12,6 +12,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     Numeric,
     String,
     Text,
@@ -395,3 +396,37 @@ class TransferLink(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     received_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+SETTINGS_AUDIT_ACTIONS = ("set", "replaced", "cleared", "reset", "key_created", "key_revoked")
+
+
+class AppSetting(Base):
+    """An admin-edited runtime setting; a secret is stored only as Fernet ciphertext."""
+
+    __tablename__ = "app_settings"
+
+    key: Mapped[str] = mapped_column(String, primary_key=True)
+    value: Mapped[Any | None] = mapped_column(JSONB)
+    secret: Mapped[bytes | None] = mapped_column(LargeBinary)
+    updated_by: Mapped[str] = mapped_column(String)
+    updated_at: Mapped[datetime] = _ts()
+
+
+class SettingsAudit(Base):
+    """Who changed which setting or API key, and how; never holds a secret value."""
+
+    __tablename__ = "settings_audit"
+    __table_args__ = (
+        CheckConstraint(_in("action", SETTINGS_AUDIT_ACTIONS), name="ck_settings_audit_action"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+    actor: Mapped[str] = mapped_column(String)
+    key: Mapped[str] = mapped_column(String)
+    action: Mapped[str] = mapped_column(String)
+    before: Mapped[Any | None] = mapped_column(JSONB)
+    after: Mapped[Any | None] = mapped_column(JSONB)

@@ -34,6 +34,7 @@ describe("AppShell", () => {
     expect(screen.getByText("Jerome")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Projects" })).toHaveAttribute("href", "/");
     expect(screen.getByRole("link", { name: "Team" })).toHaveAttribute("href", "/team");
+    expect(screen.getByRole("link", { name: "Settings" })).toHaveAttribute("href", "/settings");
     expect(screen.getByRole("link", { name: "+ New project" })).toHaveAttribute("href", "/projects/new");
   });
 
@@ -42,6 +43,7 @@ describe("AppShell", () => {
     expect(await screen.findByText("home page")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Projects" })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Team" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Settings" })).not.toBeInTheDocument();
   });
 
   it("shows the Janus activity link to every member", async () => {

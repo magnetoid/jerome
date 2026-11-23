@@ -7,6 +7,7 @@ from fastapi import Depends, HTTPException, Request, Response, UploadFile
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
+from jerome.api.runtime import effective_for_app
 from jerome.config import Settings
 from jerome.core.keys import verify_api_key
 from jerome.core.sessions import resolve_session
@@ -30,19 +31,6 @@ def read_limited(file: UploadFile, limit: int) -> bytes:
     return b"".join(parts)
 
 
-def get_settings_dep(request: Request) -> Settings:
-    return request.app.state.settings
-
-
-def get_registry(request: Request) -> Registry:
-    return request.app.state.registry
-
-
-def get_worker_deps(request: Request) -> WorkerDeps:
-    state = request.app.state
-    return WorkerDeps(state.registry, state.lt_client, state.settings.webhook_secret)
-
-
 def get_session(request: Request) -> Iterator[Session]:
     """One transaction per request: commit on success, roll back on any exception."""
     with session_scope(request.app.state.engine) as session:
@@ -56,6 +44,24 @@ def get_session(request: Request) -> Iterator[Session]:
 # the same everywhere: FastAPI caches dependencies by callable and scope, so mixing scopes
 # would open two transactions in one request.
 SessionDep = Annotated[Session, Depends(get_session, scope="function")]
+
+
+def get_settings_dep(request: Request, session: SessionDep) -> Settings:
+    """The effective settings: app values over the environment, read through the request's
+    session (and kept for a few seconds). Brings app.state's registry and clients in step."""
+    return effective_for_app(request.app, session)
+
+
+SettingsDep = Annotated[Settings, Depends(get_settings_dep)]
+
+
+def get_registry(request: Request, _: SettingsDep) -> Registry:
+    return request.app.state.registry  # brought in step by get_settings_dep
+
+
+def get_worker_deps(request: Request, settings: SettingsDep) -> WorkerDeps:
+    state = request.app.state
+    return WorkerDeps(state.registry, state.lt_client, settings.webhook_secret)
 
 
 def get_storage(request: Request) -> Storage:
@@ -107,6 +113,7 @@ def current_principal(
     request: Request,
     response: Response,
     session: SessionDep,
+    settings: SettingsDep,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
 ) -> Principal:
     """Who is calling: an API key (Bearer) first, else the session cookie."""
@@ -122,7 +129,6 @@ def current_principal(
     # Cross-site guard: a browser only sends this custom header from our own pages.
     if request.method not in _SAFE_METHODS and request.headers.get(CLIENT_HEADER) != "web":
         raise HTTPException(status_code=403, detail="missing X-Jerome-Client header")
-    settings: Settings = request.app.state.settings
     user = resolve_session(session, token, days=settings.session_days, now=datetime.now(UTC))
     if user is None:
         raise _unauthorized("Session expired or ended; log in again")

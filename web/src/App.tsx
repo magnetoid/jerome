@@ -4,6 +4,7 @@ import AppShell from "@/components/AppShell";
 import LoginPage from "@/pages/LoginPage";
 import ChangePasswordPage from "@/pages/ChangePasswordPage";
 import TeamPage from "@/pages/TeamPage";
+import SettingsPage from "@/pages/SettingsPage";
 import ProjectsPage from "@/pages/ProjectsPage";
 import NewProjectPage from "@/pages/NewProjectPage";
 import ProjectPage from "@/pages/ProjectPage";
@@ -39,6 +40,7 @@ export default function App() {
             <Route path="/projects/:id/review/:chapterId?" element={<ReviewPage />} />
             <Route path="/activity" element={<ActivityPage />} />
             <Route path="/team" element={<TeamPage />} />
+            <Route path="/settings" element={<SettingsPage />} />
             <Route path="*" element={<Placeholder title="Page not found" />} />
           </Route>
         </Routes>

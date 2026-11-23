@@ -1,5 +1,9 @@
 import json
 
+from starlette.concurrency import run_in_threadpool
+
+from jerome.api.runtime import cached_for_app, refresh_if_due
+
 _MIB = 1024 * 1024
 
 
@@ -11,7 +15,8 @@ class BodyLimitMiddleware:
     """Pure-ASGI request-body limit, applied before the app reads or parses the body.
 
     The limit is ``max_upload_mb`` MiB plus 1 MiB of slack for multipart framing. Read from
-    ``app.state.settings`` per request. Streamed bodies without Content-Length are counted.
+    the effective settings, refreshed first when the cache is due (at most every few
+    seconds, in a worker thread). Streamed bodies without Content-Length are counted.
     """
 
     def __init__(self, app) -> None:
@@ -21,7 +26,10 @@ class BodyLimitMiddleware:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
-        limit = (scope["app"].state.settings.max_upload_mb + 1) * _MIB
+        app = scope["app"]
+        if app.state.settings_store.due:  # a raised limit must not be refused against a stale one
+            await run_in_threadpool(refresh_if_due, app)
+        limit = (cached_for_app(app).max_upload_mb + 1) * _MIB
         for key, value in scope["headers"]:
             if key == b"content-length":
                 try:

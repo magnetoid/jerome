@@ -12,6 +12,7 @@ from fastapi.exceptions import RequestValidationError
 from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import ValidationError
 
+from jerome.core.app_settings import InvalidSetting
 from jerome.errors import (
     Conflict,
     InvalidChangeError,
@@ -22,13 +23,14 @@ from jerome.errors import (
 
 INTERNAL = "error: internal error"
 
-# Same classes as the REST handlers in jerome.api.app (404, 409 and the 422s).
+# Same classes as the REST handlers in jerome.api.app (404, 409, 400 and the 422s).
 _CODES: dict[type[Exception], str] = {
     NotFound: "not_found",
     Conflict: "conflict",
     InvalidChangeError: "invalid",
     UnsupportedDocumentError: "invalid",
     UnknownModelPrice: "invalid",
+    InvalidSetting: "invalid",
 }
 
 
