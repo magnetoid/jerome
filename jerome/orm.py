@@ -60,7 +60,10 @@ class Base(DeclarativeBase):
 
 class Book(Base):
     __tablename__ = "books"
-    __table_args__ = (CheckConstraint(_in("format", ("docx", "epub")), name="ck_books_format"),)
+    __table_args__ = (
+        CheckConstraint(_in("format", ("docx", "epub")), name="ck_books_format"),
+        CheckConstraint(_in("work", ("proofread", "translate")), name="ck_books_work"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     title: Mapped[str] = mapped_column(String)
@@ -70,6 +73,10 @@ class Book(Base):
     auto_apply: Mapped[dict[str, Any]] = mapped_column(
         JSONB, server_default=sql_text(f"'{AUTO_APPLY_DEFAULT}'::jsonb")
     )
+    work: Mapped[str] = mapped_column(String, server_default="proofread")
+    source_book_id: Mapped[int | None] = mapped_column(ForeignKey("books.id", ondelete="SET NULL"))
+    is_source: Mapped[bool] = mapped_column(Boolean, server_default=sql_text("false"))
+    translated_title: Mapped[str | None] = mapped_column(String)
     created_at: Mapped[datetime] = _ts()
 
     chapters: Mapped[list["Chapter"]] = relationship(
@@ -120,6 +127,12 @@ class Chapter(Base):
 
 class Block(Base):
     __tablename__ = "blocks"
+    __table_args__ = (
+        CheckConstraint(
+            "translation_status IN ('pending', 'done', 'flagged', 'kept')",
+            name="ck_blocks_translation_status",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     chapter_id: Mapped[int] = mapped_column(
@@ -132,6 +145,11 @@ class Block(Base):
     text: Mapped[str] = mapped_column(Text)
     marks: Mapped[list[Any]] = mapped_column(JSONB, server_default=sql_text("'[]'::jsonb"))
     hash: Mapped[str] = mapped_column(String)
+    source_block_id: Mapped[int | None] = mapped_column(
+        ForeignKey("blocks.id", ondelete="SET NULL"), index=True
+    )
+    translation_status: Mapped[str | None] = mapped_column(String)
+    placeholders: Mapped[list[int] | None] = mapped_column(JSONB)
 
     chapter: Mapped[Chapter] = relationship(back_populates="blocks")
     segments: Mapped[list["Segment"]] = relationship(

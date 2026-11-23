@@ -12,6 +12,7 @@ class Category(StrEnum):
     PUNCTUATION = "punctuation"
     CONSISTENCY = "consistency"
     STYLE = "style"
+    TRANSLATION = "translation"
 
 
 class Severity(StrEnum):
