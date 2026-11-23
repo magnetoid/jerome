@@ -40,6 +40,7 @@ _ENTITIES = {"lt": "<", "gt": ">", "amp": "&", "#x27e6": "⟦", "#x27e7": "⟧"}
 _LINK_TAG = re.compile(r"a([1-9][0-9]*)")
 _TOKEN = re.compile(
     r"&(?P<entity>lt|gt|amp|#x27[eE][67]);"
+    r"|&(?P<bad_entity>[#A-Za-z][^;\s]{0,10});"
     r"|⟦(?P<placeholder>[0-9]+)⟧"
     r"|<(?P<close>/?)(?P<tag>[A-Za-z][^<>]*)>"
     r"|(?P<stray>[<⟦⟧" + PLACEHOLDER + r"])"
@@ -137,7 +138,8 @@ def decode(tagged: str, source_marks: list[Mark], placeholder_count: int) -> Dec
     """Map the model's tagged text back to text, marks and placeholders.
 
     Raises :class:`TagError` for a missing, repeated or out-of-range placeholder token, for
-    unbalanced or crossed tags, for an unknown or malformed tag, and for a stray ``⟦``,
+    unbalanced or crossed tags, for an unknown or malformed tag (including ``<!``), for an
+    unknown entity (``&`` + ``[#A-Za-z][^;\\s]{0,10};``, e.g. ``&quot;``), and for a stray ``⟦``,
     ``⟧`` or raw U+FFFC. A tag whose kind (or link index) the source does not have keeps its
     text and loses its mark, counted in ``marks_dropped``. Links get the source href by index.
     """
@@ -163,6 +165,8 @@ def decode(tagged: str, source_marks: list[Mark], placeholder_count: int) -> Dec
         pos = match.end()
         if entity := match.group("entity"):
             emit(_ENTITIES[entity.lower()])
+        elif bad := match.group("bad_entity"):
+            raise TagError(f"unknown entity &{bad}; in the reply")
         elif (number := match.group("placeholder")) is not None:
             n = int(number)
             if not 1 <= n <= placeholder_count or n - 1 in placeholders:
@@ -191,7 +195,7 @@ def decode(tagged: str, source_marks: list[Mark], placeholder_count: int) -> Dec
         else:
             stray = match.group("stray")
             nxt = tagged[pos : pos + 1]
-            if stray != "<" or nxt == "/" or nxt.isalpha():
+            if stray != "<" or nxt in ("/", "!") or nxt.isalpha():
                 raise TagError(f"stray or malformed {stray!r} in the reply")
             emit(stray)
     emit(tagged[pos:])

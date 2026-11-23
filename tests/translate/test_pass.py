@@ -145,3 +145,19 @@ def test_de_to_en_uses_its_own_prompt():
 def test_same_language_pair_is_rejected():
     with pytest.raises(UnsupportedLanguagePair):
         build_translate_request(EN, StyleSheet("en-US", "“”‘’", {}, []), chunk_of(1), [])
+
+
+def test_blank_reply_for_a_block_with_text_fails():
+    chunk = TranslateChunk(
+        [
+            item(1, "Hello"),
+            item(2, f"See{PLACEHOLDER}"),
+            item(3, PLACEHOLDER),
+            item(4, "  "),
+            item(5, "<b>"),
+        ]
+    )
+    replies = {1: " \n ", 2: "⟦1⟧ ", 3: "⟦1⟧", 4: "", 5: "<b></b>"}
+    r = run_translate_pass(chunk, EN, DE, [], FakeProvider([scripted(replies)]), "m", None)
+    assert r.failed == [1, 2, 5]
+    assert r.done[3].text == PLACEHOLDER and r.done[4].text == ""

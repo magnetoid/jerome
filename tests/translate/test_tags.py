@@ -163,3 +163,20 @@ def test_round_trip_is_lossless_for_random_mark_sets():
         d = decode(encode(text, marks), marks, count)
         assert (d.text, d.marks) == (text, normalize_marks(marks))
         assert d.placeholders == list(range(count)) and d.marks_dropped == 0
+
+
+@pytest.mark.parametrize(
+    "tagged",
+    ["a &quot;b&quot;", "it&#39;s", "a&nbsp;b", "&#X27E6;1&#X27E7;", "&LT;", "<!-- x -->", "a <!b"],
+)
+def test_unknown_entities_and_markup_declarations_raise(tagged):
+    with pytest.raises(TagError):
+        decode(tagged, [], placeholder_count=0)
+
+
+@pytest.mark.parametrize(
+    ("tagged", "text"),
+    [("A & B", "A & B"), ("&;", "&;"), ("x &", "x &"), ("& y;", "& y;"), ("&1;", "&1;")],
+)
+def test_bare_ampersand_stays_literal(tagged, text):
+    assert decode(tagged, [], placeholder_count=0).text == text

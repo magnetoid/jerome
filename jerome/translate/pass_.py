@@ -127,6 +127,11 @@ def build_translate_request(
     return system, "\n\n".join(parts)
 
 
+def _has_content(text: str) -> bool:
+    """Whether ``text`` has anything but whitespace and U+FFFC."""
+    return bool(text.replace(PLACEHOLDER, "").strip())
+
+
 def _is_int(v: object) -> bool:
     return isinstance(v, int) and not isinstance(v, bool)
 
@@ -141,8 +146,9 @@ def run_translate_pass(
     effort: str | None,
 ) -> TranslatePassResult:
     """One model call for the chunk. ModelRefusal and ModelOutputError propagate; nothing is
-    retried here. An item fails when the reply misses it, repeats it, or its tags or
-    placeholders don't come back intact. Ids the chunk does not have are ignored."""
+    retried here. An item fails when the reply misses it, repeats it, its tags or
+    placeholders don't come back intact, or the reply is blank for a source with text.
+    Ids the chunk does not have are ignored."""
     system, user = build_translate_request(source, target, chunk, context)
     result = provider.complete(
         model=model,
@@ -173,8 +179,13 @@ def run_translate_pass(
             failed.append(block_id)
             continue
         try:
-            done[block_id] = decode(texts[0], it.marks, it.text.count(PLACEHOLDER))
+            decoded = decode(texts[0], it.marks, it.text.count(PLACEHOLDER))
         except TagError:
             failed.append(block_id)
+            continue
+        if _has_content(it.text) and not _has_content(decoded.text):
+            failed.append(block_id)  # a blank reply would lose the block's text
+            continue
+        done[block_id] = decoded
     marks_dropped = sum(d.marks_dropped for d in done.values())
     return TranslatePassResult(done, failed, marks_dropped, result)
