@@ -1,0 +1,129 @@
+import pytest
+from cryptography.fernet import Fernet
+from pydantic import SecretStr
+
+from jerome.core.users import create_user
+from jerome.orm import AppSetting
+from tests.api.test_auth_api import PASSWORD, WEB, login
+
+
+@pytest.fixture(autouse=True)
+def _scrub_env(monkeypatch):
+    for name in ("JEROME_SECRET_KEY", "ANTHROPIC_API_KEY", "JEROME_WEBHOOK_SECRET"):
+        monkeypatch.delenv(name, raising=False)
+
+
+@pytest.fixture
+def with_secret_storage(web_client, test_settings):
+    web_client.app.state.settings = test_settings.model_copy(
+        update={"secret_key": SecretStr(Fernet.generate_key().decode())}
+    )
+
+
+def test_only_super_admin_on_web(web_client, session, auth):
+    assert web_client.get("/v1/settings", headers=auth).status_code == 403
+    create_user(session, "bo@x.org", "Bo", PASSWORD, role="member")
+    web_client.post("/v1/auth/login", json={"email": "bo@x.org", "password": PASSWORD})
+    assert web_client.get("/v1/settings").status_code == 403
+
+
+def test_get_lists_keys_in_order(web_client, session):
+    login(web_client, session)
+    body = web_client.get("/v1/settings").json()
+    assert [s["key"] for s in body["settings"]] == [
+        "models.ai",
+        "prices",
+        "text_daily_cost_cap",
+        "text_rpm",
+        "max_upload_mb",
+        "session_days",
+        "languagetool_url",
+        "public_base_url",
+    ]
+    assert [s["key"] for s in body["secrets"]] == [
+        "anthropic_api_key",
+        "webhook_secret",
+        "openai_compat_api_key",
+    ]
+    rpm = next(s for s in body["settings"] if s["key"] == "text_rpm")
+    assert rpm["value"] == 30 and rpm["source"] == "default" and rpm["unreadable"] is False
+    assert body["system"]["secret_storage"] == "missing"
+
+
+def test_put_validates_and_resets(web_client, session):
+    login(web_client, session)
+    assert (
+        web_client.put("/v1/settings/text_rpm", headers=WEB, json={"value": 0}).status_code == 400
+    )
+    r = web_client.put("/v1/settings/text_rpm", headers=WEB, json={"value": 12})
+    row = next(s for s in r.json()["settings"] if s["key"] == "text_rpm")
+    assert row["value"] == 12 and row["source"] == "app" and row["updated_by"] == "ana@x.org"
+    assert web_client.delete("/v1/settings/text_rpm", headers=WEB).status_code == 204
+    back = web_client.get("/v1/settings").json()["settings"]
+    assert next(s for s in back if s["key"] == "text_rpm")["source"] == "default"
+    r = web_client.put("/v1/settings/database_url", headers=WEB, json={"value": "x"})
+    assert r.status_code == 404
+    assert web_client.delete("/v1/settings/database_url", headers=WEB).status_code == 404
+
+
+def test_writes_invalidate_the_settings_cache(web_client, session, monkeypatch):
+    calls = []
+    monkeypatch.setattr(web_client.app.state.settings_store, "invalidate", lambda: calls.append(1))
+    login(web_client, session)
+    web_client.put("/v1/settings/text_rpm", headers=WEB, json={"value": 7})
+    web_client.delete("/v1/settings/text_rpm", headers=WEB)
+    assert len(calls) == 2
+
+
+def test_secret_never_returned(web_client, session, with_secret_storage):
+    login(web_client, session)
+    r = web_client.put(
+        "/v1/settings/anthropic_api_key", headers=WEB, json={"value": "sk-ant-SECRET-1"}
+    )
+    assert r.status_code == 200 and "sk-ant-SECRET-1" not in r.text
+    secret = next(s for s in r.json()["secrets"] if s["key"] == "anthropic_api_key")
+    assert secret["is_set"] is True and secret["source"] == "app" and "value" not in secret
+    for path in ("/v1/settings", "/v1/settings/audit"):
+        assert "sk-ant-SECRET-1" not in web_client.get(path).text
+    stored = session.get(AppSetting, "anthropic_api_key").secret
+    assert b"sk-ant-SECRET-1" not in stored
+
+
+def test_secret_value_must_be_string_or_null(web_client, session, with_secret_storage):
+    login(web_client, session)
+    r = web_client.put("/v1/settings/webhook_secret", headers=WEB, json={"value": 5})
+    assert r.status_code == 400
+
+
+def test_secret_without_storage_is_409_but_clear_works(web_client, session):
+    login(web_client, session)
+    r = web_client.put("/v1/settings/anthropic_api_key", headers=WEB, json={"value": "sk-x"})
+    assert r.status_code == 409
+    assert r.json()["detail"] == "secret storage is not set up: set JEROME_SECRET_KEY"
+    r = web_client.put("/v1/settings/anthropic_api_key", headers=WEB, json={"value": None})
+    assert r.status_code == 200
+
+
+def test_api_keys_lifecycle(web_client, session):
+    login(web_client, session)
+    r = web_client.post("/v1/api-keys", headers=WEB, json={"name": "janus"})
+    assert r.status_code == 201 and r.json()["token"].startswith("jk_")
+    token = r.json()["token"]
+    listing = web_client.get("/v1/api-keys")
+    assert token not in listing.text and "key_hash" not in listing.text
+    kid = r.json()["key"]["id"]
+    assert web_client.delete(f"/v1/api-keys/{kid}", headers=WEB).json()["revoked_at"]
+    assert (
+        web_client.get("/v1/books", headers={"Authorization": f"Bearer {token}"}).status_code == 401
+    )
+    again = web_client.post("/v1/api-keys", headers=WEB, json={"name": "janus"})
+    assert again.status_code == 409
+    assert again.json()["detail"] == "a key with this name existed; choose another name"
+    actions = [a["action"] for a in web_client.get("/v1/settings/audit").json()]
+    assert actions[:2] == ["key_revoked", "key_created"]
+
+
+def test_masked_database_url(web_client, session):
+    login(web_client, session)
+    system = web_client.get("/v1/settings").json()["system"]
+    assert "jerome:jerome@" not in system["database_url"] and "***" in system["database_url"]

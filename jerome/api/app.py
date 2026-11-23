@@ -11,6 +11,7 @@ from jerome.api import (
     routes_exports,
     routes_jobs,
     routes_projects,
+    routes_settings,
     routes_suggestions,
     routes_text,
     routes_users,
@@ -84,6 +85,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(routes_jobs.router, prefix="/v1", dependencies=auth)
     app.include_router(routes_text.router, prefix="/v1", dependencies=auth)
     app.include_router(routes_users.router, prefix="/v1", dependencies=auth)
+    app.include_router(routes_settings.router, prefix="/v1", dependencies=auth)
     app.include_router(routes_projects.router, prefix="/v1", dependencies=auth)
     app.include_router(routes_agent_actions.router, prefix="/v1", dependencies=auth)
     mount_mcp(app)  # /mcp, outside /v1, with its own Bearer-only auth
