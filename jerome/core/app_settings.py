@@ -60,7 +60,7 @@ class Effective:
 def _number(value: Any, label: str) -> int | float:
     if isinstance(value, bool) or not isinstance(value, int | float):
         raise InvalidSetting(f"{label} must be a number")
-    if not math.isfinite(value):
+    if isinstance(value, float) and not math.isfinite(value):
         raise InvalidSetting(f"{label} must be a finite number")
     return value
 
@@ -158,12 +158,18 @@ def _public_base_url(value: Any) -> str | None:
     if value is None or (isinstance(value, str) and not value.strip()):
         return None
     text = _url(value, "public_base_url")
+    if "?" in text or "#" in text:
+        raise InvalidSetting("public_base_url must be only scheme, host and optional port")
     parts = urlsplit(text)
     if parts.path or parts.query or parts.fragment or parts.username or parts.password:
         raise InvalidSetting("public_base_url must be only scheme, host and optional port")
     if parts.scheme == "http" and parts.hostname not in _LOCAL_HOSTS:
         raise InvalidSetting("public_base_url must use https (http only for localhost)")
-    return text
+    host = parts.hostname or ""
+    if ":" in host:
+        host = f"[{host}]"
+    port = f":{parts.port}" if parts.port is not None else ""
+    return f"{parts.scheme}://{host}{port}"
 
 
 _VALIDATORS: dict[str, Callable[[Any], Any]] = {
@@ -257,7 +263,12 @@ def overlay(base: Settings, rows: Sequence[AppSetting], box: SecretBox | None) -
             )
         else:
             plain = _decrypt(row, box)
-            if plain is None:
+            if plain == "":
+                secrets[key] = None
+                meta[key] = Meta(
+                    source="app", updated_by=row.updated_by, updated_at=row.updated_at, is_set=False
+                )
+            elif plain is None:
                 secrets[key] = env_value
                 meta[key] = Meta(
                     source="environment" if env_value else "default",

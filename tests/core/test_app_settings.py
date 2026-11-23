@@ -242,3 +242,29 @@ def test_overlay_cost_cap_and_public_url():
     assert value_of(eff.settings, "text_daily_cost_cap") == "7.5"
     assert value_of(eff.settings, "public_base_url") == "https://j.example.com"
     assert value_of(Settings(_env_file=None), "public_base_url") is None
+
+
+def test_validate_huge_int_is_invalid_not_a_crash():
+    entry = {"input": 10**400, "output": 1, "cache_read": 0, "cache_write": 0}
+    try:
+        validate("prices", {"m": entry})
+    except InvalidSetting:
+        pass
+
+
+def test_public_base_url_rebuilt_and_rejects_empty_markers():
+    assert validate("public_base_url", "HTTPS://X.Org:8443/") == "https://x.org:8443"
+    assert validate("public_base_url", "http://LOCALHOST:8000") == "http://localhost:8000"
+    assert validate("public_base_url", "http://[::1]:8000") == "http://[::1]:8000"
+    for bad in ("https://x.org?", "https://x.org#", "https://x.org/?", "https://x.org/#"):
+        with pytest.raises(InvalidSetting):
+            validate("public_base_url", bad)
+
+
+def test_overlay_empty_decrypted_secret_counts_as_not_set():
+    box = SecretBox(Fernet.generate_key().decode())
+    base = Settings(_env_file=None, webhook_secret="env-secret")
+    eff = overlay(base, [row("webhook_secret", secret=box.encrypt(""))], box)
+    assert eff.settings.webhook_secret is None
+    assert eff.meta["webhook_secret"].is_set is False
+    assert eff.meta["webhook_secret"].unreadable is False
