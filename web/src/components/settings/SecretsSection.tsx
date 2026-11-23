@@ -52,6 +52,20 @@ function SecretItem({ row, storageReady }: { row: SecretRow; storageReady: boole
     }
   }
 
+  async function reset() {
+    setBusy(true);
+    try {
+      await apiFetch(`/v1/settings/${row.key}`, { method: "DELETE" });
+      setText("");
+      toast.success("Reset to the fallback value");
+    } catch (err) {
+      errorToast(err);
+    } finally {
+      setBusy(false);
+      void refresh();
+    }
+  }
+
   return (
     <div role="group" aria-label={label} className="grid gap-2 rounded-lg border p-4">
       <div className="flex flex-wrap items-center gap-2">
@@ -85,6 +99,11 @@ function SecretItem({ row, storageReady }: { row: SecretRow; storageReady: boole
         >
           Clear
         </Button>
+        {row.source === "app" && (
+          <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => void reset()}>
+            Reset
+          </Button>
+        )}
       </div>
       <AlertDialog open={confirming} onOpenChange={setConfirming}>
         <AlertDialogContent>

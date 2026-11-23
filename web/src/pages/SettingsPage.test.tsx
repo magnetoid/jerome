@@ -153,6 +153,26 @@ describe("SettingsPage", () => {
     expect(JSON.parse(call(f, "PUT", "/v1/settings/anthropic_api_key")![1]!.body as string)).toEqual({ value: null });
   });
 
+  it("resets a secret that has an app value with DELETE", async () => {
+    const f = setup({ "DELETE /v1/settings/anthropic_api_key": () => new Response(null, { status: 204 }) }).f;
+    const user = userEvent.setup();
+    const group = await screen.findByRole("group", { name: "Anthropic API key" });
+    expect(within(await screen.findByRole("group", { name: "Webhook secret" })).queryByRole("button", { name: "Reset" })).toBeNull();
+    await user.click(within(group).getByRole("button", { name: "Reset" }));
+    await waitFor(() => expect(call(f, "DELETE", "/v1/settings/anthropic_api_key")).toBeTruthy());
+    await waitFor(() => expect(call(f, "GET", "/v1/settings/audit")).toBeTruthy());
+  });
+
+  it("shows an empty change cell when before and after are both null", async () => {
+    setup({
+      "GET /v1/settings/audit": json(200, [
+        { id: 9, at: "2026-11-20T10:00:00Z", actor: "ann@example.com", key: "api_key:ci", action: "created", before: null, after: null },
+      ]),
+    });
+    await screen.findByText("api_key:ci");
+    expect(screen.queryByText("none → none")).toBeNull();
+  });
+
   it("disables secrets when storage is off", async () => {
     setup({}, body({ storage: "missing" }));
     expect(

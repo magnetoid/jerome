@@ -76,7 +76,9 @@ export function AuditSection() {
                 <TableCell>{a.key}</TableCell>
                 <TableCell>{a.action}</TableCell>
                 <TableCell className="font-mono text-xs break-all">
-                  {SECRET_KEYS.includes(a.key) ? "" : `${show(a.before)} → ${show(a.after)}`}
+                  {SECRET_KEYS.includes(a.key) || (a.before == null && a.after == null)
+                    ? ""
+                    : `${show(a.before)} → ${show(a.after)}`}
                 </TableCell>
               </TableRow>
             ))}
