@@ -530,7 +530,7 @@ def test_retranslate_refuses_a_done_block_with_suggestions(
     assert blocks(session_factory, t)[0].text == "Erster."
 
 
-def test_estimate_counts_only_chunks_that_call_the_model(
+def test_estimate_counts_every_chunk_but_prices_only_pending_ones(
     session_factory, tmp_storage, test_settings
 ):
     data = make_epub([("Chapter One", ["A line."]), ("Chapter Two", [LONG, LONG, LONG])])
@@ -546,17 +546,21 @@ def test_estimate_counts_only_chunks_that_call_the_model(
     reg = registry_for(test_settings, FakeProvider([], token_count=1000))
     with session_factory() as s:
         est = estimate_translation(s, reg, t)
-    assert est.chapter_chunks == {chapter_two: 2}
-    assert est.chunks == sum(est.chapter_chunks.values()) == 2
+    assert est.chapter_chunks == {chapter_two: 3}  # every chunk, for progress
+    assert est.chunks == sum(est.chapter_chunks.values()) == 3
     price = reg.price("claude-opus-5-5")
-    assert est.per_pass["translate"].high == 2 * cost(price, Usage(1000, 1400))
+    assert est.per_pass["translate"].high == 2 * cost(price, Usage(1000, 1400))  # pending only
     assert est.total.high == est.per_pass["translate"].high
 
     provider = FakeProvider(echo())
     reg = registry_for(test_settings, provider)
-    start(session_factory, reg, t)
+    job_id = start(session_factory, reg, t)
     drain(session_factory, deps_for(reg))
-    assert len(provider.calls) == est.chunks  # the estimate counted the calls the job made
+    assert len(provider.calls) == 2  # the done chunk is skipped
+    with session_factory() as s:
+        task = s.scalars(select(JobTask).where(JobTask.job_id == job_id)).one()
+        total = job_row(session_factory, job_id).estimate["chapter_chunks"][str(task.chapter_id)]
+        assert task.chunks_done == total == 3  # progress never runs past its total
 
 
 def test_keep_source_only_for_docx(session_factory, tmp_storage, test_settings):
