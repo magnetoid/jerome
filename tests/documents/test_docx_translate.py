@@ -10,12 +10,13 @@ from lxml import etree
 
 from jerome.documents.changes import Change, apply_changes
 from jerome.documents.docx_reader import read_docx
-from jerome.documents.docx_translate import write_translated_docx
+from jerome.documents.docx_translate import TranslatedDocxError, write_translated_docx
 from jerome.documents.docx_writer import DocxWriteOptions, write_docx
 from jerome.documents.docx_xml import NS, merge_marks, qn
 from jerome.documents.model import PLACEHOLDER, Mark, MarkKind
 from jerome.documents.translated import TranslatedBlock
 from jerome.errors import InvalidChangeError
+from jerome.translate.tags import decode
 from tests.fixtures.docx_builders import (
     all_blocks,
     make_docx,
@@ -225,6 +226,55 @@ def test_random_marks_and_placeholder_orders_read_back_exactly(seed):
     assert names.count("footnoteReference") == 1 and names.count("tab") == 1
 
 
+def _decoded(src: bytes, replies: dict[str, str]) -> dict[str, TranslatedBlock]:
+    """TranslatedBlocks the way the translate pass makes them: decode with the source text."""
+    source = {b.key: b for b in all_blocks(src)}
+    out = {}
+    for key, reply in replies.items():
+        b = source[key]
+        d = decode(reply, b.marks, b.text.count(F), source_text=b.text)
+        out[key] = TranslatedBlock(d.text, d.marks, d.placeholders)
+    return out
+
+
+def test_decoded_placeholders_inside_bold_read_back_exactly():
+    body = (  # a tab inside bold, and a simple field between two bold runs
+        '<w:p><w:r><w:rPr><w:b/></w:rPr><w:t xml:space="preserve">Figure </w:t></w:r>'
+        '<w:fldSimple w:instr=" SEQ Figure "><w:r><w:t>1</w:t></w:r></w:fldSimple>'
+        '<w:r><w:rPr><w:b/></w:rPr><w:t xml:space="preserve"> shows</w:t><w:tab/>'
+        '<w:t>this</w:t></w:r><w:r><w:t xml:space="preserve"> today.</w:t></w:r></w:p>'
+    )
+    src = package_docx(body)
+    assert all_blocks(src)[0].text == f"Figure {F} shows{F}this today."
+    # the model merges the bold over both tokens
+    blocks = _decoded(src, {P0: "<b>Abbildung ⟦1⟧ zeigt⟦2⟧dies</b> heute."})
+    bold = [(m.start, m.end) for m in blocks[P0].marks]
+    assert bold == [(0, 10), (11, 22)]  # the field is not bold in the source, the tab is
+    out = write_translated_docx(src, blocks, language="de-DE", title=None)
+    assert readback(out) == expected(blocks)
+
+
+def test_decoded_footnote_reference_keeps_superscript():
+    body = (
+        '<w:p><w:r><w:t>Text</w:t></w:r><w:r><w:rPr><w:vertAlign w:val="superscript"/>'
+        '</w:rPr><w:footnoteReference w:id="1"/></w:r></w:p>'
+    )
+    notes = (
+        '<w:footnote w:id="1"><w:p><w:r><w:footnoteRef/></w:r><w:r><w:t xml:space="preserve">'
+        " A note.</w:t></w:r></w:p></w:footnote>"
+    )
+    src = package_docx(body, footnotes=notes)
+    assert all_blocks(src)[0].marks == [Mark(4, 5, MarkKind.SUPERSCRIPT)]
+    # the model drops the <sup> and moves the token to the front
+    blocks = _decoded(src, {P0: "⟦1⟧Der Text", f"{NOTES}#0": "⟦1⟧ Eine Anmerkung."})
+    assert blocks[P0].text == f"Der Text{F}"
+    assert blocks[P0].marks == [Mark(8, 9, MarkKind.SUPERSCRIPT)]
+    out = write_translated_docx(src, blocks, language="de-DE", title=None)
+    assert readback(out) == expected(blocks)
+    ref = body_paragraph(out).find(f".//{qn('w:footnoteReference')}").getparent()
+    assert ref.find(f"{qn('w:rPr')}/{qn('w:vertAlign')}").get(qn("w:val")) == "superscript"
+
+
 # --- structure ------------------------------------------------------------------------
 
 
@@ -271,13 +321,27 @@ def test_fields_across_paragraphs_stay_at_the_paragraph_edges():
     "key, text", [(P0, f"{F} Einleitung"), (f"{DOC}#1", f"Danach.{F}")], ids=["open", "continued"]
 )
 def test_text_cannot_move_into_a_field_across_paragraphs(key, text):
-    with pytest.raises(InvalidChangeError, match="field"):
+    # unreachable from decode(source_text=...), which keeps edge placeholders at their edge
+    with pytest.raises(TranslatedDocxError) as exc:
         write_translated_docx(
             _field_across_paragraphs(),
             {key: TranslatedBlock(text, [], None)},
             language="de-DE",
             title=None,
         )
+    assert list(exc.value.problems) == [key] and "field" in exc.value.problems[key]
+
+
+def test_decoded_edge_field_token_is_written():
+    src = _field_across_paragraphs()
+    source = {b.key: b for b in all_blocks(src)}
+    blocks = {}
+    for key, reply in [(P0, "⟦1⟧ Einleitung"), (f"{DOC}#1", "Danach.⟦1⟧")]:  # tokens moved
+        d = decode(reply, source[key].marks, 1, source_text=source[key].text)
+        blocks[key] = TranslatedBlock(d.text, d.marks, d.placeholders)
+    assert blocks[P0].text.endswith(F) and blocks[f"{DOC}#1"].text.startswith(F)
+    out = write_translated_docx(src, blocks, language="de-DE", title=None)
+    assert readback(out) == expected(blocks)
 
 
 def test_bookmarks_and_paragraph_properties_stay():
@@ -381,17 +445,38 @@ def test_update_fields_goes_before_later_settings():
     [
         {f"{DOC}#9": TranslatedBlock("x", [], None)},  # no such block
         {P0: TranslatedBlock("kein Platzhalter", [], None)},  # placeholder lost
-        {P0: TranslatedBlock(f"{F}a{F}", [], [0, 0])},  # not a permutation
+        {P0: TranslatedBlock(f"a{F}", [], [1])},  # not a permutation
+        {P0: TranslatedBlock(f" {F} ", [], None)},  # no text
         {P0: TranslatedBlock(f"a{F}\x01", [], None)},  # not XML
         {P0: TranslatedBlock(f"a{F}", [Mark(0, 1, MarkKind.LINK, "https://other.test")], None)},
         {P0: TranslatedBlock(f"a{F}", [Mark(0, 9, MarkKind.BOLD)], None)},  # out of range
     ],
-    ids=["key", "count", "order", "xml", "href", "range"],
+    ids=["key", "count", "order", "blank", "xml", "href", "range"],
 )
 def test_bad_translations_are_refused(blocks):
     src = make_docx(["Hello\tworld [l](https://x.test)."])
-    with pytest.raises(InvalidChangeError):
+    with pytest.raises(TranslatedDocxError) as exc:
         write_translated_docx(src, blocks, language="de-DE", title=None)
+    assert list(exc.value.problems) == list(blocks)
+    assert isinstance(exc.value, InvalidChangeError)
+
+
+def test_every_failing_key_is_reported_and_nothing_written():
+    src = make_docx(["One\ttab.", "Two.", "Three."])
+    blocks = {
+        f"{DOC}#2": TranslatedBlock("   ", [], None),
+        f"{DOC}#1": TranslatedBlock("Zwei.", [], None),  # fine
+        f"{DOC}#7": TranslatedBlock("x", [], None),
+        P0: TranslatedBlock("Eins ohne Tab.", [], None),
+    }
+    with pytest.raises(TranslatedDocxError) as exc:
+        write_translated_docx(src, blocks, language="de-DE", title=None)
+    problems = exc.value.problems
+    assert list(problems) == [f"{DOC}#2", f"{DOC}#7", P0]  # the caller's keys, in its order
+    assert problems[f"{DOC}#2"] == "translation has no text"
+    assert problems[f"{DOC}#7"] == "no block with this key"
+    assert "placeholders" in problems[P0]
+    assert all(key in str(exc.value) for key in problems)
 
 
 def test_bad_title_is_refused():

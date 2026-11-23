@@ -10,7 +10,6 @@ paragraphs keep their XML, and parts with nothing to change keep their original 
 Either mode can wrap blocks in bookmarks and set custom document properties.
 """
 
-import posixpath
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -34,15 +33,21 @@ from jerome.documents.docx_runs import (
 from jerome.documents.docx_xml import (
     DOCUMENT_PART,
     NS,
+    OFFICE_REL,
     ParagraphText,
+    int_or_zero,
     is_block_text,
     iter_paragraph_runs,
+    next_id,
     parse_xml,
     qn,
     read_package,
+    related_part,
+    serialize,
+    word_roots,
     write_package,
 )
-from jerome.errors import InvalidChangeError, UnsupportedDocumentError
+from jerome.errors import InvalidChangeError
 
 _R = qn("w:r")
 _T = qn("w:t")
@@ -84,7 +89,7 @@ def write_docx(
     blocks, trees = _find_blocks(package, set(changes) | set(options.bookmarks))
     ordered = {key: _validate(blocks[key][1], key, cs) for key, cs in changes.items()}
     if blocks:
-        patcher = _Patcher(options, _word_roots(package, trees))
+        patcher = _Patcher(options, word_roots(package, trees))
         dirty: set[str] = set()
         for key, (p, pt) in blocks.items():  # in document order, so new ids are too
             part = key.partition("#")[0]
@@ -96,7 +101,7 @@ def write_docx(
                 dirty.add(part)
         patcher.number_revisions([trees[part].getroot() for part in trees if part in dirty])
         for part in dirty:  # only these are re-serialized
-            package[part] = _serialize(trees[part])
+            package[part] = serialize(trees[part])
         if patcher.comments:
             _write_comments(package, patcher.comments)
     if options.custom_properties:
@@ -141,9 +146,9 @@ class _Patcher:
     def __init__(self, options: DocxWriteOptions, roots: list[etree._Element]):
         self.tracked = options.mode == "tracked"
         self.date = _iso(options.date)
-        self.next_revision = _next_id(roots, REVISIONS)
-        self.next_bookmark = _next_id(roots, _BOOKMARKS)
-        self.next_comment = _next_id(roots, _COMMENTS)
+        self.next_revision = next_id(roots, REVISIONS)
+        self.next_bookmark = next_id(roots, _BOOKMARKS)
+        self.next_comment = next_id(roots, _COMMENTS)
         self.comments: list[etree._Element] = []  # w:comment elements, in document order
 
     def paragraph(self, pt: ParagraphText, changes: list[Change]) -> None:
@@ -245,46 +250,16 @@ def _iso(date: datetime) -> str:
     return date.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _word_roots(
-    package: Mapping[str, bytes], trees: Mapping[str, etree._ElementTree]
-) -> list[etree._Element]:
-    """Every XML part directly in word/, where revision, bookmark and comment ids live."""
-    roots = []
-    for name, data in package.items():
-        folder, base = posixpath.split(name)
-        if folder == "word" and base.endswith(".xml"):
-            roots.append((trees[name] if name in trees else parse_xml(data, name)).getroot())
-    return roots
-
-
-def _next_id(roots: list[etree._Element], tags: tuple[str, ...]) -> int:
-    """One more than the largest w:id on ``tags`` elements (1 when there are none)."""
-    ids = [0]
-    for root in roots:
-        ids += [_int(el.get(_ID)) for el in root.iter(*tags)]
-    return max(ids) + 1
-
-
-def _int(value: str | None) -> int:
-    try:
-        return int(value or "")
-    except ValueError:
-        return 0
-
-
 # --- package parts --------------------------------------------------------------------
 
-_OFFICE_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
-_CONTENT_TYPES = "[Content_Types].xml"
 _CUSTOM_FMTID = "{D5CDD505-2E9C-101B-9397-08002B2CF9AE}"
-_DECLARATION = b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n'
 
 
 def _write_comments(package: dict[str, bytes], comments: list[etree._Element]) -> None:
-    part = _related_part(
+    part = related_part(
         package,
         DOCUMENT_PART,
-        f"{_OFFICE_REL}/comments",
+        f"{OFFICE_REL}/comments",
         "word/comments.xml",
         "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml",
     )
@@ -293,15 +268,15 @@ def _write_comments(package: dict[str, bytes], comments: list[etree._Element]) -
     else:
         tree = etree.ElementTree(etree.Element(qn("w:comments"), nsmap={"w": NS["w"]}))
     tree.getroot().extend(comments)
-    package[part] = _serialize(tree)
+    package[part] = serialize(tree)
 
 
 def _write_custom_properties(package: dict[str, bytes], properties: Mapping[str, str]) -> None:
     """Set string properties in docProps/custom.xml, replacing any of the same name."""
-    part = _related_part(
+    part = related_part(
         package,
         "",
-        f"{_OFFICE_REL}/custom-properties",
+        f"{OFFICE_REL}/custom-properties",
         "docProps/custom.xml",
         "application/vnd.openxmlformats-officedocument.custom-properties+xml",
     )
@@ -312,7 +287,7 @@ def _write_custom_properties(package: dict[str, bytes], properties: Mapping[str,
         tree = etree.ElementTree(etree.Element(qn("op:Properties"), nsmap=nsmap))
     root = tree.getroot()
     existing = {prop.get("name"): prop for prop in root.iterfind("op:property", NS)}
-    pid = max([1] + [_int(prop.get("pid")) for prop in existing.values()])  # pids start at 2
+    pid = max([1] + [int_or_zero(prop.get("pid")) for prop in existing.values()])  # pids start at 2
     for name, value in properties.items():
         prop = existing.get(name)
         if prop is None:
@@ -322,57 +297,4 @@ def _write_custom_properties(package: dict[str, bytes], properties: Mapping[str,
         for child in list(prop):
             prop.remove(child)
         etree.SubElement(prop, qn("vt:lpwstr")).text = value
-    package[part] = _serialize(tree)
-
-
-def _related_part(
-    package: dict[str, bytes], source: str, rel_type: str, default: str, content_type: str
-) -> str:
-    """The part ``source`` (``""`` for the package) relates to by ``rel_type``.
-
-    Adds the relationship, to ``default``, when there is none, and the part's content type
-    override when it is missing.
-    """
-    folder, name = posixpath.split(source)
-    rels_part = posixpath.join(folder, "_rels", f"{name}.rels")
-    if rels_part in package:
-        rels = parse_xml(package[rels_part], rels_part)
-    else:
-        rels = etree.ElementTree(etree.Element(qn("pr:Relationships"), nsmap={None: NS["pr"]}))
-    root = rels.getroot()
-    part = None
-    for rel in root.iterfind("pr:Relationship", NS):
-        if rel.get("Type") == rel_type and rel.get("TargetMode") != "External":
-            target = rel.get("Target", "")
-            part = target[1:] if target.startswith("/") else posixpath.join(folder, target)
-            part = posixpath.normpath(part)
-            break
-    if part is None:
-        part = default
-        ids = {rel.get("Id") for rel in root}
-        n = len(ids) + 1
-        while f"rId{n}" in ids:
-            n += 1
-        target = posixpath.relpath(default, folder or ".")
-        etree.SubElement(
-            root, qn("pr:Relationship"), {"Id": f"rId{n}", "Type": rel_type, "Target": target}
-        )
-        package[rels_part] = _serialize(rels)
-    _add_override(package, part, content_type)
-    return part
-
-
-def _add_override(package: dict[str, bytes], part: str, content_type: str) -> None:
-    if _CONTENT_TYPES not in package:
-        raise UnsupportedDocumentError(f"Not a DOCX file: {_CONTENT_TYPES} is missing")
-    tree = parse_xml(package[_CONTENT_TYPES], _CONTENT_TYPES)
-    root = tree.getroot()
-    name = f"/{part}"
-    if any(o.get("PartName", "").lower() == name.lower() for o in root.iterfind("ct:Override", NS)):
-        return
-    etree.SubElement(root, qn("ct:Override"), {"PartName": name, "ContentType": content_type})
-    package[_CONTENT_TYPES] = _serialize(tree)
-
-
-def _serialize(xml: etree._ElementTree) -> bytes:
-    return _DECLARATION + etree.tostring(xml, encoding="UTF-8")
+    package[part] = serialize(tree)

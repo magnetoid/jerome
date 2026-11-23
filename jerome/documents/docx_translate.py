@@ -17,23 +17,26 @@ from lxml import etree
 
 from jerome.documents.changes import NOT_XML
 from jerome.documents.docx_runs import REVISIONS, cut, text_run
-from jerome.documents.docx_writer import (
-    _OFFICE_REL,
-    _next_id,
-    _related_part,
-    _serialize,
-    _word_roots,
-)
 from jerome.documents.docx_xml import (
     DOCUMENT_PART,
     NS,
+    OBJECTS,
+    OFF,
+    OFFICE_REL,
+    TOGGLE_MARKS,
+    TRANSPARENT,
+    VERT_ALIGN_MARKS,
     ParagraphText,
     is_block_text,
     iter_paragraph_runs,
+    next_id,
     parse_xml,
     qn,
     read_package,
     read_rels,
+    related_part,
+    serialize,
+    word_roots,
     write_package,
 )
 from jerome.documents.model import PLACEHOLDER, Mark, MarkKind
@@ -54,24 +57,24 @@ _SDT = qn("w:sdt")
 _SDT_CONTENT = qn("w:sdtContent")
 _LAST_RENDERED = qn("w:lastRenderedPageBreak")
 
-# Containers the reader walks into (see docx_xml._Walker), and their property children.
-_CONTAINERS = {
-    qn(f"w:{tag}") for tag in "hyperlink smartTag customXml ins moveTo dir bdo sdt".split()
-} | {_SDT_CONTENT}
-_CONTAINER_PROPERTIES = {qn(f"w:{tag}") for tag in "smartTagPr customXmlPr sdtPr sdtEndPr".split()}
-# Paragraph-level placeholders (docx_xml._OBJECTS): they cannot carry run properties.
-_OBJECTS = {qn("w:fldSimple"), qn("m:oMath"), qn("m:oMathPara"), qn("mc:AlternateContent")}
+_U = qn("w:u")
 
-# Direct run properties that make marks, as docx_xml._run_marks reads them.
-_OFF = {"0", "false", "off"}
-_TOGGLES: dict[MarkKind, tuple[str, ...]] = {
-    MarkKind.BOLD: ("w:b",),
-    MarkKind.ITALIC: ("w:i",),
-    MarkKind.UNDERLINE: ("w:u",),
-    MarkKind.SMALLCAPS: ("w:smallCaps",),
-    MarkKind.STRIKE: ("w:strike", "w:dstrike"),
-}
-_VERT_ALIGNS = {MarkKind.SUPERSCRIPT: "superscript", MarkKind.SUBSCRIPT: "subscript"}
+# Containers the reader walks into (see docx_xml._Walker), and their property children.
+_CONTAINERS = TRANSPARENT | {_HYPERLINK, _SDT, _SDT_CONTENT}
+_CONTAINER_PROPERTIES = {qn(f"w:{tag}") for tag in "smartTagPr customXmlPr sdtPr sdtEndPr".split()}
+
+
+# Direct run properties that make marks, as docx_xml reads them: per kind, its properties
+# (the first is the one written), and the w:vertAlign value of each kind.
+def _toggles() -> dict[MarkKind, tuple[str, ...]]:
+    out: dict[MarkKind, tuple[str, ...]] = {MarkKind.UNDERLINE: (_U,)}
+    for tag, kind in TOGGLE_MARKS.items():
+        out[kind] = (*out.get(kind, ()), tag)
+    return out
+
+
+_TOGGLES = _toggles()
+_VERT_ALIGNS = {kind: value for value, kind in VERT_ALIGN_MARKS.items()}
 # The w:rPr child sequence of the schema (CT_RPr), so inserted toggles land where Word wants.
 _RPR_ORDER = {
     qn(f"w:{tag}"): n
@@ -111,10 +114,19 @@ def write_translated_docx(
     so a table of contents picks up the translated headings. ``title``, when given, becomes
     the core properties' ``dc:title``.
 
-    Raises InvalidChangeError for a key that names no block, and for a translation that
-    cannot be written: placeholders that do not match the source's, marks out of range or
-    linking to a target the source paragraph has no link to, characters XML cannot carry,
-    or text that would land inside a field reaching into another paragraph.
+    Precondition: each block comes from ``tags.decode(..., source_text=...)`` of its source
+    block. Placeholders at the source's edges are then at the same edges of the translation,
+    and each placeholder carries exactly its source marks. Given that, ``read_docx`` of the
+    result gives each block's text and marks exactly. Without it, a non-link mark over a
+    paragraph-level object (``w:fldSimple``, math) cannot be written, and a moved field token
+    that reaches into another paragraph is refused.
+
+    Raises InvalidChangeError for a title XML cannot carry, and TranslatedDocxError, listing
+    every failing key with its reason, for keys that name no block and for translations that
+    cannot be written: no text, placeholders that do not match the source's, marks out of
+    range or linking to a target the source paragraph has no link to, characters XML cannot
+    carry, or text that would land inside a field reaching into another paragraph. Nothing is
+    written unless every block can be.
     """
     if title is not None and NOT_XML.search(title):
         raise InvalidChangeError("title contains characters not allowed in XML")
@@ -123,18 +135,29 @@ def write_translated_docx(
         raise UnsupportedDocumentError(f"Not a Word document: {DOCUMENT_PART} is missing")
 
     found, trees = _find_blocks(package, set(blocks))
-    dirty: set[str] = set()
+    problems = {key: "no block with this key" for key in blocks if key not in found}
     links: dict[str, dict[str, str]] = {}
-    for key, (p, pt, incoming) in found.items():
+    rebuilds: list[tuple[_Rebuild, list[int]]] = []
+    for key, (p, pt, incoming) in found.items():  # check them all before changing any
         part = key.partition("#")[0]
         if part not in links:
             links[part] = read_rels(package, part)
-        _Rebuild(key, p, pt, incoming, links[part], language).write(blocks[key])
-        dirty.add(part)
+        rebuild = _Rebuild(key, p, pt, incoming, links[part], language, blocks[key])
+        try:
+            rebuilds.append((rebuild, rebuild.check()))
+        except _Refused as exc:
+            problems[key] = str(exc)
+    if problems:
+        raise TranslatedDocxError({key: problems[key] for key in blocks if key in problems})
+
+    dirty: set[str] = set()
+    for rebuild, order in rebuilds:
+        rebuild.write(order)
+        dirty.add(rebuild.key.partition("#")[0])
     if dirty:
         _number_revisions(package, trees, dirty)
         for part in dirty:
-            package[part] = _serialize(trees[part])
+            package[part] = serialize(trees[part])
 
     _set_default_language(package, language)
     _set_update_fields(package)
@@ -143,10 +166,24 @@ def write_translated_docx(
     return write_package(package, original)
 
 
+class TranslatedDocxError(InvalidChangeError):
+    """Translations that cannot be written. ``problems`` maps each failing key, as passed to
+    ``write_translated_docx``, to the reason, in the caller's order."""
+
+    def __init__(self, problems: Mapping[str, str]):
+        self.problems = dict(problems)
+        super().__init__("; ".join(f"{key}: {why}" for key, why in self.problems.items()))
+
+
+class _Refused(Exception):
+    """One block's translation cannot be written (the message says why)."""
+
+
 def _find_blocks(
     package: Mapping[str, bytes], keys: set[str]
 ) -> tuple[dict[str, tuple[etree._Element, ParagraphText, int]], dict[str, etree._ElementTree]]:
-    """For each key, its ``(w:p, text, fields open when it starts)``, and the parsed parts."""
+    """For each key that names a block, its ``(w:p, text, fields open when it starts)``, and
+    the parsed parts."""
     found: dict[str, tuple[etree._Element, ParagraphText, int]] = {}
     trees: dict[str, etree._ElementTree] = {}
     if keys:
@@ -158,8 +195,6 @@ def _find_blocks(
             story, open_fields = root, pt.open_fields
             if key in keys and is_block_text(pt.text):
                 found[key] = (p, pt, incoming)
-    if missing := keys - found.keys():
-        raise InvalidChangeError(f"No block with key {min(missing)!r}")
     return found, trees
 
 
@@ -167,12 +202,12 @@ def _number_revisions(
     package: Mapping[str, bytes], trees: Mapping[str, etree._ElementTree], dirty: set[str]
 ) -> None:
     """Number revisions in copied run properties (``copy_rpr`` leaves their w:id empty)."""
-    next_id = _next_id(_word_roots(package, trees), REVISIONS)
+    number = next_id(word_roots(package, trees), REVISIONS)
     for part in dirty:
         for el in trees[part].getroot().iter(*REVISIONS):
             if not el.get(_ID):
-                el.set(_ID, str(next_id))
-                next_id += 1
+                el.set(_ID, str(number))
+                number += 1
 
 
 # --- one paragraph --------------------------------------------------------------------
@@ -202,6 +237,7 @@ class _Rebuild:
         incoming: int,
         links: Mapping[str, str],
         language: str,
+        block: TranslatedBlock,
     ):
         self.key = key
         self.p = p
@@ -209,10 +245,12 @@ class _Rebuild:
         self.incoming = incoming  # complex fields open when the paragraph starts
         self.links = links
         self.language = language
+        self.block = block
+        self.hyperlinks = self._hyperlinks()
 
-    def write(self, block: TranslatedBlock) -> None:
-        hyperlinks = self._hyperlinks()
-        order = self._check(block, hyperlinks)
+    def write(self, order: list[int]) -> None:
+        """Rebuild the paragraph, with the placeholder order ``check`` returned."""
+        block, hyperlinks = self.block, self.hyperlinks
         sources = self._source_runs()
         units = self._isolate_units()
 
@@ -233,33 +271,31 @@ class _Rebuild:
 
     # --- checks
 
-    def _check(self, block: TranslatedBlock, hyperlinks: Mapping[str, etree._Element]) -> list[int]:
-        """The placeholder order, after checking the translation can be written."""
-        text, count = block.text, self.pt.text.count(PLACEHOLDER)
+    def check(self) -> list[int]:
+        """The placeholder order, after checking the translation can be written; raises
+        _Refused when it cannot. Changes nothing."""
+        block, text, count = self.block, self.block.text, self.pt.text.count(PLACEHOLDER)
         if NOT_XML.search(text):
-            raise InvalidChangeError(f"{self.key}: translation has characters not allowed in XML")
+            raise _Refused("translation has characters not allowed in XML")
+        if not is_block_text(text):
+            raise _Refused("translation has no text")
         if text.count(PLACEHOLDER) != count:
-            raise InvalidChangeError(
-                f"{self.key}: translation has {text.count(PLACEHOLDER)} placeholders,"
-                f" the source {count}"
+            raise _Refused(
+                f"translation has {text.count(PLACEHOLDER)} placeholders, the source {count}"
             )
         order = list(block.placeholders) if block.placeholders is not None else list(range(count))
         if sorted(order) != list(range(count)):
-            raise InvalidChangeError(f"{self.key}: placeholder order {order} is not a permutation")
+            raise _Refused(f"placeholder order {order} is not a permutation")
         for m in block.marks:
             if not 0 <= m.start <= m.end <= len(text):
-                raise InvalidChangeError(f"{self.key}: mark ({m.start}, {m.end}) is out of range")
-            if m.kind == MarkKind.LINK and m.href not in hyperlinks:
-                raise InvalidChangeError(f"{self.key}: the source has no link to {m.href!r}")
+                raise _Refused(f"mark ({m.start}, {m.end}) is out of range")
+            if m.kind == MarkKind.LINK and m.href not in self.hyperlinks:
+                raise _Refused(f"the source has no link to {m.href!r}")
         pieces = self.pt.pieces
         if pieces[0].node.tag == _R and not (text.startswith(PLACEHOLDER) and order[0] == 0):
-            raise InvalidChangeError(
-                f"{self.key}: the field continued from the previous paragraph must stay first"
-            )
+            raise _Refused("the field continued from the previous paragraph must stay first")
         if self.pt.open_fields and not (text.endswith(PLACEHOLDER) and order[-1] == count - 1):
-            raise InvalidChangeError(
-                f"{self.key}: the field continuing into the next paragraph must stay last"
-            )
+            raise _Refused("the field continuing into the next paragraph must stay last")
         return order
 
     # --- the source
@@ -370,7 +406,7 @@ class _Rebuild:
             el for el in self.p.iter(*_CONTAINERS) if el.tag != _SDT_CONTENT and self._is_walked(el)
         ]
         for container in reversed(containers):  # innermost first
-            if next(container.iter(_R, *_OBJECTS), None) is not None:
+            if next(container.iter(_R, *OBJECTS), None) is not None:
                 continue
             if container.tag == _SDT:
                 content = container.find(_SDT_CONTENT)
@@ -507,8 +543,7 @@ def _set_toggles(rpr: etree._Element, kinds: set[MarkKind]) -> None:
     A property set by a style is not a mark and is left alone. A run cannot be both
     superscript and subscript; superscript wins.
     """
-    for kind, names in _TOGGLES.items():
-        tags = {qn(name) for name in names}
+    for kind, tags in _TOGGLES.items():
         props = [child for child in rpr if child.tag in tags]
         on = any(_is_on(prop) for prop in props)
         if on != (kind in kinds):
@@ -516,7 +551,7 @@ def _set_toggles(rpr: etree._Element, kinds: set[MarkKind]) -> None:
                 rpr.remove(prop)
             if kind in kinds:
                 attrs = {_VAL: "single"} if kind == MarkKind.UNDERLINE else {}
-                _insert(rpr, etree.Element(qn(names[0]), attrs))
+                _insert(rpr, etree.Element(tags[0], attrs))
     want = next((v for k, v in _VERT_ALIGNS.items() if k in kinds), None)
     aligns = rpr.findall(_VERT_ALIGN)
     have = {a.get(_VAL) for a in aligns} & set(_VERT_ALIGNS.values())
@@ -528,9 +563,9 @@ def _set_toggles(rpr: etree._Element, kinds: set[MarkKind]) -> None:
 
 
 def _is_on(prop: etree._Element) -> bool:
-    if prop.tag == qn("w:u"):
+    if prop.tag == _U:
         return prop.get(_VAL) != "none"
-    return prop.get(_VAL) not in _OFF
+    return prop.get(_VAL) not in OFF
 
 
 def _insert(parent: etree._Element, el: etree._Element) -> None:
@@ -566,7 +601,7 @@ def _set_default_language(package: dict[str, bytes], language: str) -> None:
         lang = etree.Element(_LANG)
         _insert(rpr, lang)
     lang.set(_VAL, language)
-    package[part] = _serialize(tree)
+    package[part] = serialize(tree)
 
 
 def _child(parent: etree._Element, name: str, first: bool = False) -> etree._Element:
@@ -583,8 +618,8 @@ def _child(parent: etree._Element, name: str, first: bool = False) -> etree._Ele
 
 def _set_update_fields(package: dict[str, bytes]) -> None:
     """Add ``w:updateFields w:val="true"`` to the settings, creating the part if needed."""
-    part = _related_part(
-        package, DOCUMENT_PART, f"{_OFFICE_REL}/settings", "word/settings.xml", _SETTINGS_TYPE
+    part = related_part(
+        package, DOCUMENT_PART, f"{OFFICE_REL}/settings", "word/settings.xml", _SETTINGS_TYPE
     )
     if part in package:
         tree = parse_xml(package[part], part)
@@ -611,11 +646,11 @@ def _set_update_fields(package: dict[str, bytes]) -> None:
         else:
             root.append(update)
     update.set(_VAL, "true")
-    package[part] = _serialize(tree)
+    package[part] = serialize(tree)
 
 
 def _set_title(package: dict[str, bytes], title: str) -> None:
-    part = _related_part(package, "", _CORE_REL, "docProps/core.xml", _CORE_TYPE)
+    part = related_part(package, "", _CORE_REL, "docProps/core.xml", _CORE_TYPE)
     if part in package:
         tree = parse_xml(package[part], part)
     else:
@@ -626,4 +661,4 @@ def _set_title(package: dict[str, bytes], title: str) -> None:
     if el is None:
         el = etree.SubElement(root, qn("dc:title"), nsmap={"dc": NS["dc"]})
     el.text = title
-    package[part] = _serialize(tree)
+    package[part] = serialize(tree)
