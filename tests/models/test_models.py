@@ -361,5 +361,33 @@ def test_build_registry_hands_the_api_key_to_the_claude_provider(monkeypatch):
     assert seen == {"api_key": "test-key"}
     seen.clear()
     unset = build_registry(settings_with(anthropic_api_key="")).providers["anthropic"]
-    unset.client  # noqa: B018 - builds the client
-    assert seen == {"api_key": None}  # the SDK then reads ANTHROPIC_API_KEY itself
+    with pytest.raises(JeromeError, match="Anthropic API key is not set"):
+        unset.client  # noqa: B018 - never builds an SDK client without a key
+    assert seen == {}
+
+
+def test_cleared_app_key_beats_the_environment_key(monkeypatch):
+    from datetime import UTC, datetime
+
+    from cryptography.fernet import Fernet
+    from pydantic import SecretStr
+
+    from jerome.core.app_settings import overlay
+    from jerome.models.registry import build_registry
+    from jerome.orm import AppSetting
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-env-SENTINEL")
+    base = Settings(_env_file=None, secret_key=SecretStr(Fernet.generate_key().decode()))
+    assert base.anthropic_api_key is not None  # Settings read the environment key
+    cleared = AppSetting(
+        key="anthropic_api_key",
+        value=None,
+        secret=None,
+        updated_by="ana@x.org",
+        updated_at=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    effective = overlay(base, [cleared], None)
+    provider = build_registry(effective.settings).providers["anthropic"]
+    with pytest.raises(JeromeError, match="Anthropic API key is not set") as exc:
+        provider.client  # noqa: B018
+    assert "SENTINEL" not in str(exc.value)
