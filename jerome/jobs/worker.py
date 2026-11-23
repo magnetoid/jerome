@@ -484,6 +484,7 @@ def _record_failure(
     sf: SessionFactory, task_id: int, exc: Exception, paid: _Paid, deps: WorkerDeps
 ) -> None:
     note = None
+    deps = refreshed(deps)  # price and sign with the settings as they are now
     with sf() as s:
         job_id = s.scalar(select(JobTask.job_id).where(JobTask.id == task_id))
         job, task = _lock_job_task(s, job_id, task_id)

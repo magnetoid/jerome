@@ -134,15 +134,22 @@ class SettingsStore:
                 with session.begin_nested():  # a failure rolls back only this savepoint
                     rows = load_rows(session)
                     fingerprint = _fingerprint(rows)
+                changed = fingerprint != self._fingerprint
+                detached = [_detached(r) for r in rows] if changed else self._rows
+                effective = (
+                    overlay(self._base, detached, secret_box(self._base))
+                    if changed
+                    else self._effective
+                )
             except Exception:  # noqa: BLE001 - a failed read must never take a request down
                 log.exception("settings read failed; keeping the last settings")
                 self._due = True  # the next call retries at once
                 return self._effective
             self._last_read = self._clock()
-            if fingerprint != self._fingerprint:
-                self._rows = [_detached(r) for r in rows]
+            if changed:
+                self._rows = detached
                 self._fingerprint = fingerprint
-                self._effective = overlay(self._base, self._rows, secret_box(self._base))
+                self._effective = effective
                 self.version += 1
             return self._effective
 

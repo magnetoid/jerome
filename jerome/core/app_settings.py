@@ -76,6 +76,8 @@ def _url(value: Any, label: str, schemes: tuple[str, ...] = ("http", "https")) -
         raise InvalidSetting(f"{label} is not a valid URL") from exc
     if parts.scheme not in schemes or not parts.hostname:
         raise InvalidSetting(f"{label} must be an http or https URL with a host")
+    if parts.username or parts.password:
+        raise InvalidSetting(f"{label} must not contain a username or password")
     return text.rstrip("/")
 
 

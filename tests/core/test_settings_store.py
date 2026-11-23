@@ -150,3 +150,24 @@ def test_base_swap_after_session_closed_uses_saved_rows(session_factory):
         store.current(s)
     store.base = Settings(_env_file=None, cookie_secure=False)
     assert store.cached().settings.text_rpm == 9
+
+
+def test_failed_overlay_keeps_the_last_settings(session_factory, monkeypatch):
+    import jerome.core.settings_store as mod
+
+    now = [0.0]
+    store = SettingsStore(Settings(_env_file=None, text_rpm=40), clock=lambda: now[0])
+    with session_factory() as s:
+        store.current(s)
+        set_value(s, "text_rpm", 9, actor="a", base=store.base)
+        s.commit()
+
+        def boom(*a, **k):
+            raise RuntimeError("sentinel-secret")
+
+        monkeypatch.setattr(mod, "overlay", boom)
+        now[0] = 6.0
+        assert store.current(s).settings.text_rpm == 40
+        assert store.version == 0 and store._due is True
+        monkeypatch.undo()
+        assert store.current(s).settings.text_rpm == 9 and store.version == 1

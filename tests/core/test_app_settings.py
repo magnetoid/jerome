@@ -250,3 +250,15 @@ def test_overlay_empty_decrypted_secret_counts_as_not_set():
     assert eff.settings.webhook_secret is None
     assert eff.meta["webhook_secret"].is_set is False
     assert eff.meta["webhook_secret"].unreadable is False
+
+
+def test_urls_reject_embedded_credentials():
+    for bad in ("https://user:pw@lt.example.org", "http://user@lt.example.org:8010"):
+        with pytest.raises(InvalidSetting) as exc:
+            validate("languagetool_url", bad)
+        assert "pw" not in str(exc.value)
+    with pytest.raises(InvalidSetting):
+        validate(
+            "models.ai",
+            {"provider": "openai_compat", "model": "m", "base_url": "https://u:p@h.org/v1"},
+        )

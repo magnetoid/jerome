@@ -125,3 +125,27 @@ def test_live_refresh_rebuilds_registry_and_lt_when_their_inputs_change(session_
     # deps handed in again (say, the worker loop's older copy) get the rebuilt objects too
     again = refresh(deps)
     assert again.registry is fresh.registry and again.lt is fresh.lt
+
+
+def test_failure_webhook_is_signed_with_the_refreshed_secret(
+    session_factory, test_settings, lt_route, monkeypatch
+):
+    from tests.jobs.test_worker import HOOK
+
+    ids = build(session_factory, [[" ".join(["word"] * 1500)]], callback_url=HOOK)
+    sent = []
+    monkeypatch.setattr(
+        "jerome.jobs.worker.send_webhook", lambda url, event, payload, secret: sent.append(secret)
+    )
+    provider = FakeProvider([RuntimeError("x")] * 3)
+    registry = _registry(test_settings, provider, "claude-opus-5-5")
+    deps = WorkerDeps(
+        registry,
+        LanguageToolClient(LT),
+        "old-secret",
+        refresh=lambda d: replace(d, webhook_secret="new-secret"),
+    )
+    for _ in range(3):
+        run_task(session_factory, ids.task_id, deps)
+    assert job(session_factory, ids.job_id).status == "failed"
+    assert sent == ["new-secret"]
