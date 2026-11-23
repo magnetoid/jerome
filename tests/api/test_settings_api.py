@@ -175,3 +175,20 @@ def test_masked_database_url(web_client, session):
     login(web_client, session)
     system = web_client.get("/v1/settings").json()["system"]
     assert "jerome:jerome@" not in system["database_url"] and "***" in system["database_url"]
+
+
+def test_put_without_value_or_with_typo_is_422_and_keeps_secret(
+    web_client, session, with_secret_storage
+):
+    login(web_client, session)
+    url = "/v1/settings/anthropic_api_key"
+    assert web_client.put(url, headers=WEB, json={"value": "sk-ant-KEEP"}).status_code == 200
+    for body in ({}, {"secret": "x"}, {"value": "sk-ant-NEW", "extra": 1}):
+        assert web_client.put(url, headers=WEB, json=body).status_code == 422
+    secret = next(
+        s
+        for s in web_client.get("/v1/settings").json()["secrets"]
+        if s["key"] == "anthropic_api_key"
+    )
+    assert secret["is_set"] is True and secret["source"] == "app"
+    assert web_client.put("/v1/settings/public_base_url", headers=WEB, json={}).status_code == 422

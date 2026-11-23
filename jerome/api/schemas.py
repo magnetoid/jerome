@@ -206,7 +206,9 @@ class SettingsOut(BaseModel):
 
 
 class SettingPutIn(BaseModel):
-    value: Any = None
+    model_config = ConfigDict(extra="forbid")
+
+    value: Any  # required; JSON null is allowed and means clear
 
 
 class SettingsAuditOut(BaseModel):
