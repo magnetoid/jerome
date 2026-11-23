@@ -87,7 +87,9 @@ function TranslationStart({ project }: { project: Project }) {
       }}
     >
       <p className="text-sm">
-        {pending !== undefined ? `${plural(pending, "paragraph", "paragraphs")} to translate` : "The book is translated"}
+        {pending !== undefined
+          ? `${plural(pending, "paragraph", "paragraphs")} to translate`
+          : "Jerome translates the book"}
         {` from ${from} to ${variantLabel(project.variant)}, chapter by chapter. `}
         Proofreading waits for you to start it once the translation is done.
       </p>
@@ -121,13 +123,49 @@ function TranslationStart({ project }: { project: Project }) {
   );
 }
 
-function TranslatedSummary({ project, format }: Props) {
-  const bookId = String(project.id);
-  const client = useQueryClient();
-  const state = useQuery({
+function useTranslationState(bookId: string) {
+  return useQuery({
     queryKey: translationKey(bookId),
     queryFn: () => apiFetch<TranslationState>(`/v1/books/${bookId}/translation`),
   });
+}
+
+function TranslatedSummary({ project, format }: Props) {
+  const bookId = String(project.id);
+  const state = useTranslationState(bookId);
+  const counts = state.data?.counts ?? {};
+  const parts = [plural(counts.done ?? 0, "paragraph translated", "paragraphs translated")];
+  if (counts.flagged) parts.push(`${counts.flagged} flagged`);
+  if (counts.kept) parts.push(`${counts.kept} kept as the original`);
+
+  return (
+    <div className="space-y-6">
+      {state.isPending && <p className="text-sm text-muted-foreground">Loading the translation…</p>}
+      {state.isError && <p role="alert" className="text-sm text-destructive">{detailOf(state.error)}</p>}
+      {state.isSuccess && <p className="text-lg font-medium">{parts.join(" · ")}</p>}
+
+      <FlaggedParagraphs project={project} format={format} />
+
+      <section className="space-y-4 border-t pt-4">
+        <h2 className="text-lg font-medium">Proofreading</h2>
+        <p className="text-sm text-muted-foreground">
+          Proofreading runs on the translated text, in {variantLabel(project.variant)}.
+        </p>
+        <StartPanel bookId={bookId} openCount={project.open_count} flaggedCount={state.data?.flagged.length ?? 0} />
+      </section>
+    </div>
+  );
+}
+
+/**
+ * The paragraphs the translation flagged, with Translate again and (on DOCX) Keep original.
+ * Renders nothing while none are flagged. Shown at `translated` and at every later stage, since
+ * flagged paragraphs hold up the export until they are resolved.
+ */
+export function FlaggedParagraphs({ project, format }: Props) {
+  const bookId = String(project.id);
+  const client = useQueryClient();
+  const state = useTranslationState(bookId);
   const chapters = useQuery({
     queryKey: chaptersKey(bookId),
     queryFn: () => apiFetch<Chapter[]>(`/v1/books/${bookId}/chapters`),
@@ -162,11 +200,9 @@ function TranslatedSummary({ project, format }: Props) {
     onError: (e) => toast.error(detailOf(e)),
   });
 
-  const counts = state.data?.counts ?? {};
   const flagged = state.data?.flagged ?? [];
-  const parts = [plural(counts.done ?? 0, "paragraph translated", "paragraphs translated")];
-  if (counts.flagged) parts.push(`${counts.flagged} flagged`);
-  if (counts.kept) parts.push(`${counts.kept} kept as the original`);
+  if (flagged.length === 0) return null;
+
   const chapterName = (id: number) => {
     const c = chapters.data?.find((x) => x.id === id);
     return c ? `${c.ordinal}. ${c.title}` : "";
@@ -176,53 +212,37 @@ function TranslatedSummary({ project, format }: Props) {
   const docx = format === "docx";
 
   return (
-    <div className="space-y-6">
-      {state.isPending && <p className="text-sm text-muted-foreground">Loading the translation…</p>}
-      {state.isError && <p role="alert" className="text-sm text-destructive">{detailOf(state.error)}</p>}
-      {state.isSuccess && <p className="text-lg font-medium">{parts.join(" · ")}</p>}
-
-      {flagged.length > 0 && (
-        <section aria-labelledby="flagged-heading" className="space-y-3">
-          <h2 id="flagged-heading" className="text-lg font-medium">Paragraphs that could not be translated</h2>
-          <p className="text-sm text-muted-foreground">
-            {docx
-              ? "Each keeps its source text until it is translated again, or kept as the original to fix in the Word round trip."
-              : "Each keeps its source text until it is translated again."}
-          </p>
-          <ul aria-label="Flagged paragraphs" className="space-y-3">
-            {flagged.map((f) => (
-              <li key={f.block_id} className="space-y-2 rounded-md border p-3">
-                <p className="text-xs text-muted-foreground">{chapterName(f.chapter_id)}</p>
-                <blockquote
-                  lang={project.source_variant ?? undefined}
-                  className="border-l-2 pl-3 text-sm whitespace-pre-wrap"
-                >
-                  {f.source}
-                </blockquote>
-                <div className="flex flex-wrap gap-2">
-                  <Button size="sm" variant="outline" disabled={busy(f.block_id)} onClick={() => again.mutate(f.block_id)}>
-                    {again.isPending && again.variables === f.block_id ? "Translating…" : "Translate again"}
-                  </Button>
-                  {docx && (
-                    <Button size="sm" variant="ghost" disabled={busy(f.block_id)} onClick={() => keep.mutate(f.block_id)}>
-                      Keep original
-                    </Button>
-                  )}
-                </div>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-
-      <section className="space-y-4 border-t pt-4">
-        <h2 className="text-lg font-medium">Proofreading</h2>
-        <p className="text-sm text-muted-foreground">
-          Proofreading runs on the translated text, in {variantLabel(project.variant)}.
-        </p>
-        <StartPanel bookId={bookId} openCount={project.open_count} flaggedCount={flagged.length} />
-      </section>
-    </div>
+    <section aria-labelledby="flagged-heading" className="space-y-3">
+      <h2 id="flagged-heading" className="text-lg font-medium">Paragraphs that could not be translated</h2>
+      <p className="text-sm text-muted-foreground">
+        {docx
+          ? "Each keeps its source text until it is translated again, or kept as the original to fix in the Word round trip."
+          : "Each keeps its source text until it is translated again."}
+      </p>
+      <ul aria-label="Flagged paragraphs" className="space-y-3">
+        {flagged.map((f) => (
+          <li key={f.block_id} className="space-y-2 rounded-md border p-3">
+            <p className="text-xs text-muted-foreground">{chapterName(f.chapter_id)}</p>
+            <blockquote
+              lang={project.source_variant ?? undefined}
+              className="border-l-2 pl-3 text-sm whitespace-pre-wrap"
+            >
+              {f.source}
+            </blockquote>
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" variant="outline" disabled={busy(f.block_id)} onClick={() => again.mutate(f.block_id)}>
+                {again.isPending && again.variables === f.block_id ? "Translating…" : "Translate again"}
+              </Button>
+              {docx && (
+                <Button size="sm" variant="ghost" disabled={busy(f.block_id)} onClick={() => keep.mutate(f.block_id)}>
+                  Keep original
+                </Button>
+              )}
+            </div>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 

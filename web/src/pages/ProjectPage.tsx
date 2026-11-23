@@ -17,7 +17,7 @@ import JobsList from "@/components/project/JobsList";
 import ExportMenu from "@/components/project/ExportMenu";
 import ReviewUpload from "@/components/project/ReviewUpload";
 import SettingsTab from "@/components/project/SettingsTab";
-import TranslationPanel, { SourceBookLink } from "@/components/project/TranslationPanel";
+import TranslationPanel, { FlaggedParagraphs, SourceBookLink } from "@/components/project/TranslationPanel";
 import { PROJECTS_KEY, useProjects, type Project } from "@/hooks/useProjects";
 import { useBookJobs } from "@/hooks/useBookJobs";
 import { bookKey, detailOf } from "@/lib/jobs";
@@ -90,6 +90,13 @@ export default function ProjectPage() {
   // set_up and translated already show the proofreading start (or the translation's).
   const rerun = idle && project.stage !== "set_up" && project.stage !== "translated";
   const sourceId = book.data?.source_book_id;
+  const counts = project.work === "translate" ? project.translation ?? {} : {};
+  const flaggedCount = counts.flagged ?? 0;
+  // The server refuses to export a translation while any paragraph is pending or flagged.
+  const untranslated = (counts.pending ?? 0) + flaggedCount;
+  // translated shows the flagged paragraphs in its own panel; before it there are none to act on.
+  const laterFlagged =
+    flaggedCount > 0 && !["set_up", "translating", "translated"].includes(project.stage);
 
   return (
     <main className="mx-auto max-w-4xl space-y-6 p-4 sm:p-8">
@@ -127,8 +134,13 @@ export default function ProjectPage() {
               )
             )}
           </section>
+          {laterFlagged && (
+            <div className="border-t pt-4">
+              <FlaggedParagraphs project={project} format={format} />
+            </div>
+          )}
           <JobsList jobs={jobs} />
-          <ExportMenu bookId={id} format={format} />
+          <ExportMenu bookId={id} format={format} untranslated={untranslated} />
           {format === "docx" && <ReviewUpload bookId={id} />}
           <section className="border-t pt-4">
             <Button variant="destructive" onClick={() => setConfirmDelete(true)}>Delete project</Button>

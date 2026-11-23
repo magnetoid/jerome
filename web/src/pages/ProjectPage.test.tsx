@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { json } from "@/test-utils";
 import {
   activeJob, bodyOf, BOOK, callsTo, estimate, job, pageApi, project, renderPage, SOURCE_BOOK, STYLE,
-  TRANSLATED_BOOK, translateProject,
+  TRANSLATED_BOOK, TRANSLATION, translateProject,
 } from "@/components/project/fixtures";
 
 afterEach(() => {
@@ -429,5 +429,66 @@ describe("translate + proofread projects", () => {
       translateProject({ stage: "needs_attention" }));
     renderPage();
     expect(await screen.findByText(/Translation stopped because something went wrong/)).toBeInTheDocument();
+  });
+
+  it("export is disabled with the reason while blocks are flagged, and enabled once none are pending or flagged", async () => {
+    let counts: Record<string, number> = { done: 37, flagged: 2, kept: 1 };
+    pageApi({
+      ...books,
+      "GET /v1/projects": () => json(200, [translateProject({ stage: "to_review", open_count: 3, translation: counts })]),
+      "GET /v1/books/1/translation": () => json(200, TRANSLATION),
+    });
+    const { client } = renderPage();
+    expect(await screen.findByText("Export waits for 2 untranslated paragraphs.")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Word clean" })).not.toBeInTheDocument();
+    expect(screen.getByText("Word clean")).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByText("Word clean")).not.toHaveAttribute("href");
+
+    counts = { done: 40 };
+    await act(() => client.refetchQueries({ queryKey: ["projects"] }));
+    expect(await screen.findByRole("link", { name: "Word clean" }))
+      .toHaveAttribute("href", "/v1/books/1/export?format=docx-clean");
+    expect(screen.queryByText(/Export waits for/)).not.toBeInTheDocument();
+  });
+
+  it("export waits for pending paragraphs before the translation has run", async () => {
+    pageApi(books, translateProject({ translation: { pending: 1 } }));
+    renderPage();
+    expect(await screen.findByText("Export waits for 1 untranslated paragraph.")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Word clean" })).not.toBeInTheDocument();
+  });
+
+  it("the flagged list shows at to_review", async () => {
+    const f = pageApi({
+      ...books,
+      "GET /v1/books/1/translation": () => json(200, TRANSLATION),
+      "POST /v1/blocks/501/translate": () => json(200, {
+        id: 501, book_id: 1, chapter_id: 11, ordinal: 3, kind: "paragraph", text: "Das Schiff kam an.",
+        marks: [], translation_status: "done",
+      }),
+    }, translateProject({ stage: "to_review", open_count: 3, translation: TRANSLATION.counts }));
+    renderPage();
+    const list = await screen.findByRole("list", { name: "Flagged paragraphs" });
+    expect(within(list).getAllByRole("listitem")).toHaveLength(2);
+    expect(within(list).getAllByRole("button", { name: "Keep original" })).toHaveLength(2);
+    // The to_review summary is still there.
+    expect(screen.getByText(/AI applied 0 · 3 need you/)).toBeInTheDocument();
+    await userEvent.click(within(list).getAllByRole("button", { name: "Translate again" })[0]);
+    await waitFor(() => expect(callsTo(f, "POST", "/v1/blocks/501/translate")).toHaveLength(1));
+  });
+
+  it("no flagged list and no translation read at to_review when nothing is flagged", async () => {
+    const f = pageApi(books, translateProject({ stage: "to_review", open_count: 3, translation: { done: 40 } }));
+    renderPage();
+    expect(await screen.findByRole("link", { name: "Word clean" })).toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: "Flagged paragraphs" })).not.toBeInTheDocument();
+    expect(callsTo(f, "GET", "/v1/books/1/translation")).toHaveLength(0);
+  });
+
+  it("a proofread-only book's export is unchanged", async () => {
+    pageApi({}, project({ stage: "done", translation: null }));
+    renderPage();
+    expect(await screen.findByRole("link", { name: "Word clean" })).toHaveAttribute("href", "/v1/books/1/export?format=docx-clean");
+    expect(screen.queryByText(/Export waits for/)).not.toBeInTheDocument();
   });
 });
