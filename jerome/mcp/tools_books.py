@@ -33,9 +33,11 @@ SETTING = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempote
 
 @mcp.tool(annotations=READ_ONLY)
 def list_projects() -> list[dict]:
-    """List every book as a project: its stage (set_up, proofreading, needs_attention,
-    to_review or done), its active job, suggestion counts and latest activity. The same
-    JSON as GET /v1/projects. Each item's `id` is the `book_id` the other tools take."""
+    """List every book as a project: its stage (set_up, translating, translated,
+    proofreading, needs_attention, to_review or done), its active job, suggestion counts and
+    latest activity; a translated book also has its `source_variant` and `translation`
+    (paragraph counts per status). The same JSON as GET /v1/projects. Each item's `id` is
+    the `book_id` the other tools take."""
 
     def body(c: ToolContext) -> list[dict]:
         return rest_json(routes_projects.list_projects(c.session))

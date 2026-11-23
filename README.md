@@ -191,6 +191,49 @@ are kept and not paid for twice.
 4. Upload the file to `POST /v1/books/{id}/review-imports`. Jerome records your decisions.
 5. Export `docx-clean` (or `docx-tracked`) for the final text.
 
+## Translation
+
+Creating a project says what Jerome should do with the book: **Proofread only**, or
+**Translate and proofread** between English and German (any of en-US, en-GB, de-DE, de-AT,
+de-CH; the two must be different languages). Over REST, `POST /v1/books` takes
+`work=translate`, `variant` (the file's language), `target_variant` and an optional
+`translated_title`; the MCP `import_book` tool takes the same arguments.
+
+1. **Import.** The file becomes a hidden, read-only source book. The answer is the
+   translated book: same chapters and paragraphs, still empty. Work on that one; the source
+   is not listed, and jobs, settings, exports and deletes on it get a 409 that names the
+   translated book. Deleting the translated book deletes the source too.
+2. **Translate.** Estimate and start a job with `type: translate`
+   (`POST /v1/books/{id}/estimate` and `/jobs`, or the MCP `estimate_job` and `start_job`).
+   It translates every chapter, front matter included, and keeps formatting, links, notes
+   and images in place.
+3. **Proofread.** When the translation is done, estimate and start a proofreading job as
+   usual. It uses the translated book's style sheet, and the AI pass sees each paragraph's
+   source, so it can flag a meaning error under the category `translation`.
+4. **Review and export** as for any book. The export writes the translation, with the
+   accepted changes, into the original file's structure and sets the target language. The
+   review copy and the Word round trip work on the translation. Word asks to update the
+   document's fields when it opens an exported translated DOCX: that rebuilds the table of
+   contents from the translated headings.
+
+**Stages.** A translated book shows `set_up` until its translation starts, `translating`
+while the job runs, then `translated` until proofreading starts; from there the stages are
+the usual ones. A translation job that fails or pauses at its cost cap shows
+`needs_attention`.
+
+**Flagged paragraphs.** A paragraph whose translation cannot be used (its marks, links or
+placeholders did not come back intact, even on a retry) keeps its source text and is
+flagged; proofreading skips it. `GET /v1/books/{id}/translation` (MCP `get_translation`)
+lists them. Translate one again with `POST /v1/blocks/{id}/translate` (MCP
+`retranslate_block`, a paid call billed to the translation job), or, on a DOCX book only,
+accept it untranslated with `POST /v1/blocks/{id}/keep-source` (MCP `keep_source_block`) and
+fix it in Word. Export is refused while any paragraph is pending or flagged.
+
+**Model.** Translation has its own model pass, `translate`, set in `JEROME_MODELS` like `ai`
+(for example `{"ai": {...}, "translate": {"provider": "anthropic", "model":
+"claude-opus-5-5", "effort": "high"}}`). Its default is `claude-opus-5-5`, and a
+`local_only` book uses only a local model for it.
+
 ## Connecting Janus (MCP)
 
 Jerome is also an MCP server, so an AI agent such as Janus (or any MCP client) can do what

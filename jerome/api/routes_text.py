@@ -50,7 +50,7 @@ def get_text_limits(request: Request) -> TextLimits:
     return request.app.state.text_limits
 
 
-def _too_many(detail: str, wait: float) -> HTTPException:
+def too_many(detail: str, wait: float) -> HTTPException:
     seconds = 1 if math.isinf(wait) else max(1, math.ceil(wait))
     return HTTPException(status_code=429, detail=detail, headers={"Retry-After": str(seconds)})
 
@@ -65,9 +65,9 @@ def proofread_short_text(
     limits: Annotated[TextLimits, Depends(get_text_limits)],
 ):
     if (wait := limits.take(actor)) is not None:
-        raise _too_many("Rate limit exceeded", wait)
+        raise too_many("Rate limit exceeded", wait)
     if (wait := limits.check_daily(session, actor, settings.text_daily_cost_cap)) is not None:
-        raise _too_many("Daily cost cap reached", wait)
+        raise too_many("Daily cost cap reached", wait)
     try:
         result = proofread_text(
             session,

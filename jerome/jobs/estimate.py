@@ -10,7 +10,12 @@ from sqlalchemy.orm import Session
 
 from jerome.core.books import block_texts, get_book, list_chapters
 from jerome.core.style_sheets import get_style_sheet
-from jerome.core.translation import NO_TRANSLATION_MODEL, attach_sources, translate_items
+from jerome.core.translation import (
+    NO_TRANSLATION_MODEL,
+    attach_sources,
+    ensure_not_source,
+    translate_items,
+)
 from jerome.errors import Conflict, NotFound
 from jerome.models import Registry, Usage, cost
 from jerome.models.base import SystemPart
@@ -120,6 +125,7 @@ def estimate_job(
     passes: Sequence[PassName] = ALL_PASSES,
     chapter_ids: Sequence[int] | None = None,
 ) -> Estimate:
+    ensure_not_source(session, book_id)
     book = get_book(session, book_id)
     chapter_chunks: dict[int, list[Chunk]] = {
         cid: attach_sources(
@@ -164,7 +170,10 @@ def translation_chunks(session: Session, book_id: int, chapter_id: int) -> list[
 def estimate_translation(session: Session, registry: Registry, book_id: int) -> Estimate:
     """Cost of translating every pending block. Output is ``ceil(1.4 * input)`` tokens: a
     translation runs about as long as its source, German longer than English."""
+    ensure_not_source(session, book_id)
     book = get_book(session, book_id)
+    if book.work != "translate":
+        raise Conflict(f"book {book_id} is not a translation project")
     resolved = registry.for_pass("translate", local_only=book.local_only)
     if resolved is None:
         raise Conflict(NO_TRANSLATION_MODEL)

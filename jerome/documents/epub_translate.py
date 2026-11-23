@@ -61,7 +61,7 @@ from jerome.documents.model import PLACEHOLDER, Mark, MarkKind
 from jerome.documents.translated import TranslatedBlock
 from jerome.errors import InvalidChangeError
 
-__all__ = ["TranslatedEpubError", "write_translated_epub"]
+__all__ = ["TranslatedEpubError", "fit_epub_text", "write_translated_epub"]
 
 _XML_LANG = "{http://www.w3.org/XML/1998/namespace}lang"
 _OPF = f"{{{NS['opf']}}}"
@@ -93,7 +93,38 @@ _SMALLCAPS_STYLE = "font-variant: small-caps"
 # Text the reader would not give back as it is: XML whitespace it collapses or drops.
 _NOT_RENDERED = re.compile(r"[\t\n\r]|  |^ | $")
 
+_WHITESPACE = re.compile(r"[ \t\n\r]+")
+
 _Item = tuple[MarkKind, str | None]  # a mark kind, with its href for a link
+
+
+def fit_epub_text(text: str, marks: list[Mark]) -> tuple[str, list[Mark]]:
+    """``text`` as ``read_epub`` would give it back: each run of XML whitespace (spaces,
+    tabs, newlines) becomes one space, and the ends are stripped. The marks are moved with
+    their text; a mark left with no text is dropped. Other characters, placeholders
+    included, are kept, so the placeholder order does not change.
+
+    ``write_translated_epub`` refuses whitespace the reader would collapse; a translation
+    fitted with this first is written as it is."""
+    out: list[str] = []
+    new_at = [0] * (len(text) + 1)  # each old offset's new offset
+    pos = 0
+    for run in [*_WHITESPACE.finditer(text), None]:
+        start, end = (run.start(), run.end()) if run else (len(text), len(text))
+        for i in range(pos, start):
+            new_at[i] = len(out)
+            out.append(text[i])
+        inner = run is not None and 0 < start and end < len(text)
+        # an inner run keeps its first character, as a space; the rest of it goes
+        for i in range(start, end):
+            new_at[i] = len(out) + (inner and i > start)
+        if inner:
+            out.append(" ")
+        pos = end
+    new_at[len(text)] = len(out)
+    shifted = [Mark(new_at[m.start], new_at[m.end], m.kind, m.href) for m in marks]
+    fitted = "".join(out)
+    return fitted, [m for m in shifted if m.start < m.end]
 
 
 def write_translated_epub(

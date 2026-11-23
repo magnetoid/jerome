@@ -10,7 +10,11 @@ from lxml import etree
 from jerome.documents.changes import Change, apply_changes
 from jerome.documents.docx_xml import merge_marks
 from jerome.documents.epub_reader import read_epub
-from jerome.documents.epub_translate import TranslatedEpubError, write_translated_epub
+from jerome.documents.epub_translate import (
+    TranslatedEpubError,
+    fit_epub_text,
+    write_translated_epub,
+)
 from jerome.documents.epub_writer import write_epub
 from jerome.documents.model import PLACEHOLDER, Mark, MarkKind
 from jerome.documents.translated import TranslatedBlock
@@ -566,3 +570,35 @@ def test_every_failing_block_is_reported_once():
 def test_bad_metadata_is_refused(kw):
     with pytest.raises(InvalidChangeError):
         translate(make_epub([("C", ["Hello."])]), {}, **kw)
+
+
+# --- fitting text to what the reader gives back ---------------------------------------
+
+
+def test_fit_epub_text_collapses_whitespace_and_shifts_marks():
+    text = "  Ein\n\t Satz  hier. "
+    start = text.index("Satz")
+    marks = [
+        Mark(start, start + 4, MarkKind.ITALIC),
+        Mark(0, len(text), MarkKind.BOLD),
+        Mark(start + 4, start + 5, MarkKind.UNDERLINE),  # one of two collapsed spaces
+        Mark(start + 5, start + 6, MarkKind.STRIKE),  # the other: nothing left of it
+    ]
+    fitted, shifted = fit_epub_text(text, marks)
+    assert fitted == "Ein Satz hier."
+    assert shifted == [
+        Mark(4, 8, MarkKind.ITALIC),
+        Mark(0, 14, MarkKind.BOLD),
+        Mark(8, 9, MarkKind.UNDERLINE),
+    ]
+    assert fit_epub_text(fitted, shifted) == (fitted, shifted)
+    src = make_epub([("One", ["a"])])
+    out = translate(src, {f"{CH1}#1": TranslatedBlock(fitted, shifted[:1], None)})
+    assert readback(out)[f"{CH1}#1"] == (fitted, shifted[:1])  # written, not refused
+
+
+def test_fit_epub_text_keeps_placeholders_and_other_spaces():
+    text = f"{F}  Satz\u00a0mit {F} "
+    fitted, marks = fit_epub_text(text, [Mark(0, 1, MarkKind.SUPERSCRIPT)])
+    assert fitted == f"{F} Satz\u00a0mit {F}"
+    assert marks == [Mark(0, 1, MarkKind.SUPERSCRIPT)]

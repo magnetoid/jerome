@@ -17,6 +17,7 @@ from jerome.api import (
     routes_settings,
     routes_suggestions,
     routes_text,
+    routes_translation,
     routes_users,
 )
 from jerome.api.auth import LoginThrottle
@@ -98,6 +99,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(routes_suggestions.router, prefix="/v1", dependencies=auth)
     app.include_router(routes_exports.router, prefix="/v1", dependencies=auth)
     app.include_router(routes_jobs.router, prefix="/v1", dependencies=auth)
+    app.include_router(routes_translation.router, prefix="/v1", dependencies=auth)
     app.include_router(routes_text.router, prefix="/v1", dependencies=auth)
     app.include_router(routes_users.router, prefix="/v1", dependencies=auth)
     app.include_router(routes_settings.router, prefix="/v1", dependencies=auth)

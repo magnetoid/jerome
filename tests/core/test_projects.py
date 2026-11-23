@@ -33,6 +33,44 @@ def test_derive_stage_table(active, latest, open_n, completed, stage):
     )
 
 
+@pytest.mark.parametrize(
+    ("active", "latest_type", "latest", "pending", "open_n", "completed", "stage"),
+    [
+        (True, "translate", "running", 5, 0, 0, "translating"),
+        (False, "translate", "failed", 5, 0, 0, "needs_attention"),
+        (False, "translate", "paused_cost_cap", 5, 0, 0, "needs_attention"),
+        (False, None, None, 5, 0, 0, "set_up"),
+        (False, "translate", "cancelled", 2, 0, 0, "set_up"),
+        (False, "translate", "completed", 0, 0, 1, "translated"),
+        (True, "proofread", "running", 0, 0, 1, "proofreading"),
+        (False, "proofread", "completed", 0, 3, 2, "to_review"),
+        (False, "proofread", "completed", 0, 0, 2, "done"),
+    ],
+)
+def test_derive_stage_of_a_translated_book(
+    active, latest_type, latest, pending, open_n, completed, stage
+):
+    assert (
+        derive_stage(
+            active_job=active,
+            latest_job_status=latest,
+            open_count=open_n,
+            completed_jobs=completed,
+            work="translate",
+            latest_job_type=latest_type,
+            pending_blocks=pending,
+        )
+        == stage
+    )
+
+
+def test_translation_stages_apply_only_to_translated_books():
+    args = {"active_job": False, "latest_job_status": None, "open_count": 0, "completed_jobs": 0}
+    assert derive_stage(**args, pending_blocks=5) == "set_up"
+    completed = {**args, "latest_job_status": "completed", "completed_jobs": 1}
+    assert derive_stage(**completed, latest_job_type="translate") == "done"
+
+
 def _book(session, book_factory, title, chapters=1, blocks=1, created_at=None):
     book = book_factory(title=title)
     if created_at:
@@ -103,6 +141,7 @@ def test_projects_list_one_request_shape_and_order(session, book_factory):
     assert set(by["A"]) == {
         "id", "title", "format", "variant", "stage", "open_count", "auto_applied_count",
         "decided_count", "active_job", "last_activity", "created_at",
+        "work", "source_variant", "translation",
     }  # fmt: skip
     assert (by["A"]["open_count"], by["A"]["auto_applied_count"], by["A"]["decided_count"]) == (
         1,

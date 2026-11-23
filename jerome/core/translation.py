@@ -9,8 +9,15 @@ from sqlalchemy import delete, func, insert, select
 from sqlalchemy.orm import Session, aliased
 
 from jerome.core.auto_apply import DEFAULT_POLICY, AutoApplyPolicy
+from jerome.documents.docx_translate import TranslatedDocxError, write_translated_docx
+from jerome.documents.epub_translate import (
+    TranslatedEpubError,
+    fit_epub_text,
+    write_translated_epub,
+)
 from jerome.documents.model import BlockKind, Mark, MarkKind
 from jerome.documents.segments import block_spans
+from jerome.documents.translated import TranslatedBlock
 from jerome.errors import Conflict, NotFound, UnsupportedLanguagePair
 from jerome.models import ModelOutputError, ModelRefusal, Registry
 from jerome.orm import (
@@ -91,6 +98,92 @@ def translation_counts(session: Session, book_id: int) -> dict[str, int]:
         .group_by(Block.translation_status)
     )
     return {status: n for status, n in rows}
+
+
+def flagged_blocks(session: Session, book_id: int) -> list[dict[str, Any]]:
+    """The book's flagged blocks in book order: ``block_id``, ``chapter_id`` and the
+    ``source`` text."""
+    src = aliased(Block)
+    rows = session.execute(
+        select(Block.id, Block.chapter_id, src.text)
+        .join(src, src.id == Block.source_block_id)
+        .join(Chapter, Chapter.id == Block.chapter_id)
+        .where(Block.book_id == book_id, Block.translation_status == "flagged")
+        .order_by(Chapter.ordinal, Block.ordinal)
+    )
+    return [{"block_id": i, "chapter_id": c, "source": text} for i, c, text in rows]
+
+
+def translated_base(session: Session, storage: Storage, book: Book) -> bytes:
+    """The original file of ``book``'s source with every block translated: the base text that
+    exports and review copies of a translated book are made on.
+
+    Done and kept blocks are written with their stored text and marks. Raises Conflict
+    while any block is pending or flagged, and when the writer refuses blocks, listing
+    their ids."""
+    rows = session.execute(
+        select(
+            Block.id,
+            Block.source_ref,
+            Block.text,
+            Block.marks,
+            Block.placeholders,
+            Block.translation_status,
+        )
+        .join(Chapter, Chapter.id == Block.chapter_id)
+        .where(Block.book_id == book.id)
+        .order_by(Chapter.ordinal, Block.ordinal)
+    ).all()
+    waiting = [r.id for r in rows if r.translation_status in ("pending", "flagged")]
+    if waiting:
+        if any(r.translation_status == "pending" for r in rows):
+            hint = "let the translation job finish"
+        elif book.format == "docx":
+            hint = "translate them again or keep their source text"
+        else:
+            hint = "translate them again; an EPUB paragraph cannot keep its source text"
+        raise Conflict(
+            f"{len(waiting)} paragraphs are not translated yet: blocks {waiting[:10]}; {hint}"
+        )
+    blocks = {
+        r.source_ref: TranslatedBlock(r.text, marks_from_json(r.marks), r.placeholders)
+        for r in rows
+    }
+    by_key = {r.source_ref: r.id for r in rows}
+    source = source_of(session, book)
+    original = storage.read_original(source.id)
+    style = session.scalars(select(StyleSheetRow).where(StyleSheetRow.book_id == book.id)).one()
+    try:
+        if book.format == "docx":
+            return write_translated_docx(
+                original, blocks, language=style.variant, title=book.translated_title
+            )
+        chapters = session.execute(
+            select(Chapter.source_ref, Chapter.title).where(
+                Chapter.book_id == book.id, Chapter.source_ref.is_not(None)
+            )
+        )
+        return write_translated_epub(
+            original,
+            blocks,
+            language=style.variant,
+            title=book.translated_title,
+            toc_labels={ref: title for ref, title in chapters},
+        )
+    except (TranslatedDocxError, TranslatedEpubError) as exc:
+        ids = [by_key[key] for key in exc.problems]
+        first = next(iter(exc.problems.values()))
+        raise Conflict(
+            f"{len(ids)} paragraphs cannot be written: blocks {ids[:10]} ({first})"
+        ) from exc
+
+
+def original_for(session: Session, storage: Storage, book: Book) -> bytes:
+    """The file a book's exports are made on: the translated base for a translated book, the
+    stored original otherwise."""
+    if book.work == "translate":
+        return translated_base(session, storage, book)
+    return storage.read_original(book.id)
 
 
 def import_for_translation(
@@ -267,13 +360,18 @@ def store_translation(
     source_language: Language,
 ) -> None:
     """Write ``decoded`` to ``block`` as ``done``, or, when it is None, the source text and
-    marks as ``flagged``. Its segments are rebuilt."""
+    marks as ``flagged``. Its segments are rebuilt.
+
+    On an EPUB book the translation's whitespace is first collapsed the way the EPUB reader
+    collapses it (``fit_epub_text``), so the stored text is what the export reads back."""
     if decoded is None:
         text, marks, placeholders = item.text, item.marks, None
         block.translation_status = "flagged"
         lang = source_language  # the stored text is still in the source language
     else:
         text, marks = decoded.text, decoded.marks
+        if session.get(Book, block.book_id).format == "epub":
+            text, marks = fit_epub_text(text, marks)
         identity = decoded.placeholders == list(range(len(decoded.placeholders)))
         placeholders = None if identity else list(decoded.placeholders)
         block.translation_status = "done"

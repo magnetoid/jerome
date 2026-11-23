@@ -1,7 +1,9 @@
 from dataclasses import asdict
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, File, Form, Response, UploadFile
+from fastapi.exceptions import RequestValidationError
+from sqlalchemy.orm import Session
 
 from jerome.api.deps import SessionDep, get_settings_dep, get_storage, read_limited
 from jerome.api.schemas import (
@@ -13,7 +15,7 @@ from jerome.api.schemas import (
     StyleSheetUpdate,
 )
 from jerome.config import Settings
-from jerome.core import books, style_sheets
+from jerome.core import books, style_sheets, translation
 from jerome.core.auto_apply import (
     DEFAULT_POLICY,
     OFF_POLICY,
@@ -22,6 +24,7 @@ from jerome.core.auto_apply import (
     policy_to_json,
     set_policy,
 )
+from jerome.orm import Book
 from jerome.storage import Storage
 from jerome.types import Variant
 
@@ -29,6 +32,61 @@ router = APIRouter()
 
 StorageDep = Annotated[Storage, Depends(get_storage)]
 SettingsDep = Annotated[Settings, Depends(get_settings_dep)]
+
+
+Work = Literal["proofread", "translate"]
+
+
+def import_upload(
+    session: Session,
+    storage: Storage,
+    *,
+    filename: str,
+    data: bytes,
+    variant: Variant,
+    title: str | None,
+    local_only: bool,
+    auto_apply: bool,
+    work: Work,
+    target_variant: Variant | None,
+    translated_title: str | None,
+) -> Book:
+    """Import an upload as POST /v1/books does. With ``work="translate"``, ``variant`` is the
+    source language, ``target_variant`` is required, and the translated book is returned."""
+    policy = DEFAULT_POLICY if auto_apply else OFF_POLICY
+    if work == "proofread":
+        return books.import_book(
+            session,
+            storage,
+            filename=filename,
+            data=data,
+            variant=variant,
+            title=title,
+            local_only=local_only,
+            auto_apply=policy,
+        )
+    if target_variant is None:
+        raise RequestValidationError(
+            [
+                {
+                    "loc": ("body", "target_variant"),
+                    "msg": "target_variant is required to translate",
+                    "type": "missing",
+                }
+            ]
+        )
+    return translation.import_for_translation(
+        session,
+        storage,
+        filename=filename,
+        data=data,
+        source_variant=variant,
+        target_variant=target_variant,
+        translated_title=translated_title,
+        title=title,
+        local_only=local_only,
+        auto_apply=policy,
+    )
 
 
 @router.post("/books", status_code=201, response_model=BookOut)
@@ -41,9 +99,12 @@ def upload_book(
     title: Annotated[str | None, Form()] = None,
     local_only: Annotated[bool, Form()] = False,
     auto_apply: Annotated[bool, Form()] = True,
+    work: Annotated[Work, Form()] = "proofread",
+    target_variant: Annotated[Variant | None, Form()] = None,
+    translated_title: Annotated[str | None, Form()] = None,
 ):
     data = read_limited(file, settings.max_upload_mb * 1024 * 1024)
-    return books.import_book(
+    return import_upload(
         session,
         storage,
         filename=file.filename or "upload",
@@ -51,7 +112,10 @@ def upload_book(
         variant=variant,
         title=title,
         local_only=local_only,
-        auto_apply=DEFAULT_POLICY if auto_apply else OFF_POLICY,
+        auto_apply=auto_apply,
+        work=work,
+        target_variant=target_variant,
+        translated_title=translated_title,
     )
 
 
