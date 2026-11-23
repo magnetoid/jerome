@@ -65,7 +65,7 @@ def registry_inputs(settings: Settings) -> tuple:
     """What build_registry depends on, comparable with ==. Never shows the API key."""
     key = settings.anthropic_api_key.get_secret_value() if settings.anthropic_api_key else None
     return (
-        json.dumps(settings.models, sort_keys=True, default=str),
+        _Hidden(json.dumps(settings.models, sort_keys=True, default=str)),  # may hold a key
         json.dumps(settings.prices, sort_keys=True, default=str),
         _Hidden(key),
     )
@@ -115,13 +115,15 @@ class SettingsStore:
         with self._lock:
             if not self._due and self._clock() - self._last_read < self._interval:
                 return self._effective
+            self._due = False  # cleared first so an invalidate() during the read is kept
             try:
-                rows = load_rows(session)
-                fingerprint = _fingerprint(rows)
+                with session.begin_nested():  # a failure rolls back only this savepoint
+                    rows = load_rows(session)
+                    fingerprint = _fingerprint(rows)
             except Exception:  # noqa: BLE001 - a failed read must never take a request down
                 log.exception("settings read failed; keeping the last settings")
-                return self._effective  # still due: the next call retries
-            self._due = False
+                self._due = True  # the next call retries at once
+                return self._effective
             self._last_read = self._clock()
             if fingerprint != self._fingerprint:
                 self._rows = [_detached(r) for r in rows]

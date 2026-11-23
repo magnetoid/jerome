@@ -1,9 +1,20 @@
+from contextlib import nullcontext
+
+from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 
 from jerome.config import Settings
 from jerome.core.settings_changes import set_value
 from jerome.core.settings_store import SettingsStore, registry_inputs
 from jerome.proofread.text import TextLimits
+
+
+class Broken:
+    def begin_nested(self):
+        return nullcontext()
+
+    def scalars(self, *a, **k):
+        raise OperationalError("x", {}, Exception())
 
 
 def test_store_sees_change_after_interval(session_factory):
@@ -36,20 +47,12 @@ def test_invalidate_reads_at_once(session_factory):
 
 
 def test_store_keeps_last_settings_when_read_fails():
-    class Broken:
-        def scalars(self, *a, **k):
-            raise OperationalError("x", {}, Exception())
-
     store = SettingsStore(Settings(_env_file=None, text_rpm=40))
     store.invalidate()
     assert store.current(Broken()).settings.text_rpm == 40
 
 
 def test_failed_read_is_retried_on_the_next_call(session_factory):
-    class Broken:
-        def scalars(self, *a, **k):
-            raise OperationalError("x", {}, Exception())
-
     now = [0.0]
     store = SettingsStore(Settings(_env_file=None), clock=lambda: now[0])
     with session_factory() as s:
@@ -81,6 +84,44 @@ def test_registry_inputs_compare_by_value():
     assert registry_inputs(a) == registry_inputs(b)
     assert registry_inputs(a) != registry_inputs(Settings(_env_file=None, anthropic_api_key="k2"))
     assert "k1" not in repr(registry_inputs(a))
+
+
+def test_registry_inputs_hide_and_track_the_compat_key():
+    def make(key):
+        return Settings(
+            _env_file=None, models={"ai": {"provider": "openai_compat", "api_key": key}}
+        )
+
+    assert "sentinel" not in repr(registry_inputs(make("sentinel")))
+    assert registry_inputs(make("sentinel")) == registry_inputs(make("sentinel"))
+    assert registry_inputs(make("sentinel")) != registry_inputs(make("other"))
+
+
+def test_invalidate_during_a_read_is_not_lost(monkeypatch):
+    import jerome.core.settings_store as mod
+
+    store = SettingsStore(Settings(_env_file=None))
+
+    class Sess:
+        def begin_nested(self):
+            return nullcontext()
+
+    def slow_read(session):
+        store.invalidate()  # another thread asks for a re-read mid-read
+        return []
+
+    monkeypatch.setattr(mod, "load_rows", slow_read)
+    store.current(Sess())
+    assert store._due is True
+
+
+def test_failed_read_leaves_the_callers_session_usable(session, monkeypatch):
+    import jerome.core.settings_store as mod
+
+    monkeypatch.setattr(mod, "load_rows", lambda s: s.execute(text("select * from no_such_table")))
+    store = SettingsStore(Settings(_env_file=None, text_rpm=40))
+    assert store.current(session).settings.text_rpm == 40
+    assert session.execute(text("select 1")).scalar() == 1
 
 
 def test_set_rpm_keeps_counters():
