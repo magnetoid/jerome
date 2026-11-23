@@ -15,6 +15,7 @@ from jerome.types import BlockText, Candidate, Category, Severity, Source, Style
 class Chunk:
     blocks: list[BlockText]
     context: BlockText | None
+    sources: dict[int, str] | None = None  # block id -> its source paragraph (translated books)
 
 
 @dataclass
@@ -92,6 +93,14 @@ def _style_text(style: StyleSheet) -> str:
     return f"{heading}:\n" + json.dumps(sheet, ensure_ascii=False, sort_keys=True, indent=2)
 
 
+def _translation_check(style: StyleSheet) -> str:
+    return (
+        resources.files("jerome.proofread")
+        .joinpath("prompts", f"translation_check_{style.language}.md")
+        .read_text(encoding="utf-8")
+    )
+
+
 _REMINDER = (
     "Reminder: U+FFFC marks an inline object. It must never appear in `original` or "
     "`replacement`. Only propose corrections for the <block> elements above."
@@ -103,13 +112,21 @@ def build_request(style: StyleSheet, chunk: Chunk) -> tuple[list[SystemPart], st
         SystemPart(_instructions(style), cache=True),
         SystemPart(_style_text(style), cache=True),
     ]
+    if chunk.sources is not None:
+        system.append(SystemPart(_translation_check(style), cache=True))
+    sources = chunk.sources or {}
     parts: list[str] = []
     if chunk.context is not None:
         parts.append(
             f'<context_block id="{chunk.context.id}" read_only="true">\n'
             f"{chunk.context.text}\n</context_block>"
         )
-    parts.extend(f'<block id="{b.id}">\n{b.text}\n</block>' for b in chunk.blocks)
+    for b in chunk.blocks:
+        if b.id in sources:
+            parts.append(
+                f'<source_block for="{b.id}" read_only="true">\n{sources[b.id]}\n</source_block>'
+            )
+        parts.append(f'<block id="{b.id}">\n{b.text}\n</block>')
     parts.append(_REMINDER)
     return system, "\n\n".join(parts)
 
@@ -305,6 +322,10 @@ def run_ai_pass(
     )
     try:
         candidates, dropped = parse_suggestions(result.data, chunk)
+        if chunk.sources is None:  # nothing to compare against: a translation flag is unfounded
+            kept = [c for c in candidates if c.category != Category.TRANSLATION]
+            dropped += len(candidates) - len(kept)
+            candidates = kept
     except ModelOutputError as exc:  # the call was billed even though its output is unusable
         raise ModelOutputError(
             str(exc), usage=result.usage, model=result.model, provider=result.provider

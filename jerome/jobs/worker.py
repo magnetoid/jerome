@@ -39,6 +39,7 @@ from jerome.core.style_sheets import get_style_sheet
 from jerome.core.suggestions import add_candidates
 from jerome.core.translation import (
     NO_TRANSLATION_MODEL,
+    attach_sources,
     context_from,
     missing_marks,
     previous_pairs,
@@ -262,7 +263,7 @@ def _start(sf: SessionFactory, task_id: int, deps: WorkerDeps) -> _Plan | None:
             plan.source_style = get_style_sheet(s, book.source_book_id)
         elif task.kind == "chapter":
             texts = block_texts(s, job.book_id, task.chapter_id, proofreadable_only=True)
-            plan.chunks = chunk_blocks(texts)
+            plan.chunks = attach_sources(s, book, chunk_blocks(texts))
         s.commit()
         return plan
 

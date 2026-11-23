@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from jerome.core.books import block_texts, get_book, list_chapters
 from jerome.core.style_sheets import get_style_sheet
-from jerome.core.translation import NO_TRANSLATION_MODEL, translate_items
+from jerome.core.translation import NO_TRANSLATION_MODEL, attach_sources, translate_items
 from jerome.errors import Conflict, NotFound
 from jerome.models import Registry, Usage, cost
 from jerome.models.base import SystemPart
@@ -122,7 +122,11 @@ def estimate_job(
 ) -> Estimate:
     book = get_book(session, book_id)
     chapter_chunks: dict[int, list[Chunk]] = {
-        cid: chunk_blocks(block_texts(session, book_id, cid, proofreadable_only=True))
+        cid: attach_sources(
+            session,
+            book,
+            chunk_blocks(block_texts(session, book_id, cid, proofreadable_only=True)),
+        )
         for cid in included_chapter_ids(session, book_id, chapter_ids)
     }
     all_chunks = [c for chunks in chapter_chunks.values() for c in chunks]

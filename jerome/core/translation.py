@@ -23,6 +23,7 @@ from jerome.orm import (
     StyleSheetRow,
     Suggestion,
 )
+from jerome.proofread.ai_pass import Chunk
 from jerome.storage import Storage
 from jerome.translate.pass_ import TranslateChunk, TranslateItem, run_translate_pass
 from jerome.translate.tags import Decoded, normalize_marks
@@ -57,6 +58,29 @@ def ensure_not_source(session: Session, book_id: int) -> None:
         f"book {book_id} is the source of translated book {translated_id}; "
         f"work on book {translated_id}"
     )
+
+
+def source_texts(session: Session, block_ids: list[int] | set[int]) -> dict[int, str]:
+    """Translated block id -> the text of its source block. Blocks without one are absent."""
+    if not block_ids:
+        return {}
+    src = aliased(Block)
+    rows = session.execute(
+        select(Block.id, src.text)
+        .join(src, Block.source_block_id == src.id)
+        .where(Block.id.in_(block_ids))
+    )
+    return {i: text for i, text in rows}
+
+
+def attach_sources(session: Session, book: Book, chunks: list[Chunk]) -> list[Chunk]:
+    """Give the chunks of a translated book the source paragraph of each block, so the
+    proofreading pass can compare them. Other books' chunks are returned untouched."""
+    if book.work != "translate":
+        return chunks
+    for chunk in chunks:
+        chunk.sources = source_texts(session, [b.id for b in chunk.blocks])
+    return chunks
 
 
 def translation_counts(session: Session, book_id: int) -> dict[str, int]:
