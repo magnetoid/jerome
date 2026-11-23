@@ -42,6 +42,7 @@ __all__ = [
     "is_block_text",
     "iter_epub_blocks",
     "local_name",
+    "own_marks",
     "parse_content_document",
     "read_container",
 ]
@@ -440,6 +441,19 @@ def _style_marks(style: str) -> list[MarkKind]:
     return kinds
 
 
+def own_marks(el: etree._Element) -> list[tuple[MarkKind, str | None]]:
+    """The marks ``el`` itself makes over its content: from its name (``b``, ``i``, ...),
+    as a link (``a`` with an ``href``, which is the mark's href), and from its ``style``."""
+    name = local_name(el)
+    marks: list[tuple[MarkKind, str | None]] = []
+    if name in _ELEMENT_MARKS:
+        marks.append((_ELEMENT_MARKS[name], None))
+    if name == "a" and el.get("href"):
+        marks.append((MarkKind.LINK, el.get("href")))
+    marks += [(kind, None) for kind in _style_marks(el.get("style") or "")]
+    return marks
+
+
 def _is_placeholder(el: etree._Element) -> bool:
     name = local_name(el)
     if name == "a":
@@ -478,13 +492,8 @@ class _Collector:
                     self.walk(child)
             self.text(child.tail, child, "tail")
         end = len(self.atoms)
-        name = local_name(el)
-        if name in _ELEMENT_MARKS:
-            self.ranges.append((start, end, _ELEMENT_MARKS[name], None))
-        if name == "a" and el.get("href"):
-            self.ranges.append((start, end, MarkKind.LINK, el.get("href")))
-        for kind in _style_marks(el.get("style") or ""):
-            self.ranges.append((start, end, kind, None))
+        for kind, href in own_marks(el):
+            self.ranges.append((start, end, kind, href))
 
 
 def element_text(el: etree._Element) -> ParagraphText:
