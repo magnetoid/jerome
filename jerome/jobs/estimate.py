@@ -176,11 +176,10 @@ def estimate_translation(session: Session, registry: Registry, book_id: int) -> 
     chapter_chunks: dict[int, int] = {}
     low = high = Decimal(0)
     sys_tokens: int | None = None
-    n = 0
+    first = True
     for cid in pending_chapter_ids(session, book_id):
-        chunks = translation_chunks(session, book_id, cid)
-        chapter_chunks[cid] = len(chunks)
-        for chunk in chunks:
+        called = 0  # chunks the job will call the model for: those with a pending block
+        for chunk in translation_chunks(session, book_id, cid):
             items = [it for it in chunk.items if it.block_id in pending]
             if not items:
                 continue
@@ -189,8 +188,9 @@ def estimate_translation(session: Session, registry: Registry, book_id: int) -> 
             output_tokens = -(-input_tokens * 14 // 10)  # ceil(1.4 * input)
             full = cost(price, Usage(input_tokens, output_tokens))
             high += full
-            if n == 0:
+            if first:  # the first call writes the cache
                 low += full
+                first = False
             else:
                 if sys_tokens is None:  # the system prefix is identical for every chunk
                     sys_tokens = _count(provider, config.model, system, "")
@@ -198,6 +198,7 @@ def estimate_translation(session: Session, registry: Registry, book_id: int) -> 
                 low += cost(
                     price, Usage(input_tokens - cached, output_tokens, cache_read_tokens=cached)
                 )
-            n += 1
+            called += 1
+        chapter_chunks[cid] = called
     total = CostRange(low, high)
-    return Estimate(n, {"translate": total}, CostRange(low, high), chapter_chunks)
+    return Estimate(sum(chapter_chunks.values()), {"translate": total}, total, chapter_chunks)

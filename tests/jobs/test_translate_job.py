@@ -482,6 +482,83 @@ def test_retranslate_flagged_block_bills_latest_translate_job(
             retranslate_block(s, reg, b3, actor="a")
 
 
+def test_retranslate_refused_after_the_call_still_records_the_spend(
+    session_factory, tmp_storage, test_settings
+):
+    t, (_, b2, _), provider, reg, job_id = _flagged_book(
+        session_factory, tmp_storage, test_settings
+    )
+    cost_before = job_row(session_factory, job_id).cost_actual
+    rows_before = len(usage_rows(session_factory, job_id))
+    reply = scripted({b2: "Zweiter."})
+
+    def job_started_during_call(kwargs):
+        with session_factory() as other:  # another client starts a job on the book meanwhile
+            create_job(
+                other, reg, t, passes=["ai"], max_cost=Decimal(1), callback_url=None, actor="b"
+            )
+            other.commit()
+        return reply(kwargs)
+
+    provider.responses = [job_started_during_call]
+    with session_factory() as s:
+        with pytest.raises(Conflict, match="active job"):
+            retranslate_block(s, reg, b2, actor="a")
+        s.rollback()  # as the API does on an error
+    assert job_row(session_factory, job_id).cost_actual == cost_before + CALL_COST
+    assert len(usage_rows(session_factory, job_id)) == rows_before + 1
+    block = blocks(session_factory, t)[1]
+    assert (block.text, block.translation_status) == ("Second para.", "flagged")
+
+
+def test_retranslate_refuses_a_done_block_with_suggestions(
+    session_factory, tmp_storage, test_settings
+):
+    from tests.fixtures.suggestions import add_one
+
+    t, (b1, _, _), provider, reg, job_id = _flagged_book(
+        session_factory, tmp_storage, test_settings
+    )
+    with session_factory() as s:
+        add_one(s, s.get(Block, b1), 0, 6, "Erster", "Erste")
+        s.commit()
+    calls = len(provider.calls)
+    with session_factory() as s:
+        with pytest.raises(Conflict, match="suggestions"):
+            retranslate_block(s, reg, b1, actor="a")
+    assert len(provider.calls) == calls  # refused before any model call
+    assert blocks(session_factory, t)[0].text == "Erster."
+
+
+def test_estimate_counts_only_chunks_that_call_the_model(
+    session_factory, tmp_storage, test_settings
+):
+    data = make_epub([("Chapter One", ["A line."]), ("Chapter Two", [LONG, LONG, LONG])])
+    t = imported(session_factory, tmp_storage, data=data, filename="b.epub")
+    rows = blocks(session_factory, t)
+    with session_factory() as s:
+        # chapter one is done; in chapter two, the second chunk's only block is done
+        for b in (rows[0], rows[1], rows[4]):
+            block = s.get(Block, b.id)
+            block.text, block.translation_status = "Fertig.", "done"
+        s.commit()
+        chapter_two = rows[2].chapter_id
+    reg = registry_for(test_settings, FakeProvider([], token_count=1000))
+    with session_factory() as s:
+        est = estimate_translation(s, reg, t)
+    assert est.chapter_chunks == {chapter_two: 2}
+    assert est.chunks == sum(est.chapter_chunks.values()) == 2
+    price = reg.price("claude-opus-5-5")
+    assert est.per_pass["translate"].high == 2 * cost(price, Usage(1000, 1400))
+    assert est.total.high == est.per_pass["translate"].high
+
+    provider = FakeProvider(echo())
+    reg = registry_for(test_settings, provider)
+    start(session_factory, reg, t)
+    drain(session_factory, deps_for(reg))
+    assert len(provider.calls) == est.chunks  # the estimate counted the calls the job made
+
+
 def test_keep_source_only_for_docx(session_factory, tmp_storage, test_settings):
     t, (b1, b2, _), _, _, _ = _flagged_book(session_factory, tmp_storage, test_settings)
     with session_factory() as s:

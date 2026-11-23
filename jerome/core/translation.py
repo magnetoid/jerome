@@ -3,7 +3,7 @@
 import hashlib
 import logging
 from collections import Counter
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from sqlalchemy import delete, func, insert, select
 from sqlalchemy.orm import Session, aliased
@@ -27,6 +27,9 @@ from jerome.storage import Storage
 from jerome.translate.pass_ import TranslateChunk, TranslateItem, run_translate_pass
 from jerome.translate.tags import Decoded, normalize_marks
 from jerome.types import DEFAULT_QUOTES, Variant
+
+if TYPE_CHECKING:
+    from jerome.jobs.worker import Billed
 
 log = logging.getLogger(__name__)
 
@@ -302,32 +305,55 @@ def _translated_block(session: Session, block_id: int) -> tuple[Block, Book]:
     return block, book
 
 
-def retranslate_block(session: Session, registry: Registry, block_id: int, *, actor: str) -> Block:
-    """Translate one flagged or done block again, now, with the context a chunk gets. The call
-    is billed to the book's latest translate job. When the reply cannot be used, the block
-    keeps what it had: a flagged block stays flagged."""
-    # the worker imports this module (through books), so its billing helpers load late
-    from jerome.core.style_sheets import get_style_sheet
-    from jerome.jobs.worker import Billed, billed_from, usage_row
-
-    block, book = _translated_block(session, block_id)
+def _check_retranslatable(session: Session, block: Block, book: Book) -> None:
     if block.translation_status not in ("flagged", "done"):
-        raise Conflict(f"block {block_id} is {block.translation_status}; it cannot be translated")
+        raise Conflict(f"block {block.id} is {block.translation_status}; it cannot be translated")
     if _active_job(session, book.id) is not None:
         raise Conflict(f"book {book.id} has an active job; translate the block once it is done")
     has_suggestions = session.scalar(
-        select(func.count()).select_from(Suggestion).where(Suggestion.block_id == block_id)
+        select(func.count()).select_from(Suggestion).where(Suggestion.block_id == block.id)
     )
     if has_suggestions:  # their offsets point into the current text
-        raise Conflict(f"block {block_id} has proofreading suggestions; it cannot be translated")
-    job = session.scalars(
-        select(Job)
+        raise Conflict(f"block {block.id} has proofreading suggestions; it cannot be translated")
+
+
+def _bill_apart(
+    session: Session, registry: Registry, job_id: int, billed: "Billed", configured: str
+) -> None:
+    """Record a billed call on the job in a transaction of its own, committed now, so the
+    spend stays on the books whatever happens to the caller's transaction."""
+    from jerome.jobs.worker import usage_row
+
+    with Session(bind=session.get_bind()) as other:
+        stmt = select(Job).where(Job.id == job_id).with_for_update()
+        job = other.scalars(stmt).one()
+        job.cost_actual = job.cost_actual + usage_row(
+            other, billed, registry, configured, job_id=job_id, pass_name="translate"
+        )
+        other.commit()
+
+
+def retranslate_block(session: Session, registry: Registry, block_id: int, *, actor: str) -> Block:
+    """Translate one flagged or done block again, now, with the context a chunk gets.
+
+    No row lock is held during the model call. The call is billed to the book's latest
+    translate job in a transaction of its own, so the spend is kept even when the write is
+    refused. Then the job and the block are locked (job first, like the worker), the checks
+    run again, and the block is written. When the reply cannot be used, the block keeps what
+    it had: a flagged block stays flagged."""
+    # the worker imports this module (through books), so its billing helpers load late
+    from jerome.core.style_sheets import get_style_sheet
+    from jerome.jobs.worker import Billed, billed_from
+
+    block, book = _translated_block(session, block_id)
+    _check_retranslatable(session, block, book)
+    job_id = session.scalar(
+        select(Job.id)
         .where(Job.book_id == book.id, Job.type == "translate")
         .order_by(Job.id.desc())
         .limit(1)
-        .with_for_update()
-    ).first()
-    if job is None:
+    )
+    if job_id is None:
         raise Conflict(f"book {book.id} has no translation job")
     chosen = registry.for_pass("translate", local_only=book.local_only)
     if chosen is None:
@@ -359,9 +385,16 @@ def retranslate_block(session: Session, registry: Registry, block_id: int, *, ac
         billed = Billed(res.result.usage, res.result.model, res.result.provider)
         decoded = res.done.get(block.id)
     if billed is not None:
-        job.cost_actual = job.cost_actual + usage_row(
-            session, billed, registry, cfg.model, job_id=job.id, pass_name="translate"
-        )
+        _bill_apart(session, registry, job_id, billed, cfg.model)
+
+    lock = {"populate_existing": True}
+    session.scalars(
+        select(Job).where(Job.id == job_id).with_for_update().execution_options(**lock)
+    ).one()
+    block = session.scalars(
+        select(Block).where(Block.id == block_id).with_for_update().execution_options(**lock)
+    ).one()
+    _check_retranslatable(session, block, book)  # something may have changed during the call
     if decoded is not None:
         store_translation(
             session,
