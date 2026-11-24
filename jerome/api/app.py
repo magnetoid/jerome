@@ -39,7 +39,7 @@ from jerome.errors import (
 )
 from jerome.mcp.server import mount_mcp
 from jerome.models.registry import build_registry
-from jerome.proofread.languagetool import LanguageToolClient
+from jerome.proofread.languagetool import lt_client
 from jerome.proofread.text import TextLimits
 
 _ERROR_STATUS: dict[type[Exception], int] = {
@@ -81,7 +81,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(title="Jerome", lifespan=_lifespan)
     app.state.settings = settings
     app.state.registry = build_registry(settings)
-    app.state.lt_client = LanguageToolClient(settings.languagetool_url)
+    app.state.lt_client = lt_client(settings)
     app.state.text_limits = TextLimits(settings.text_rpm)
     install_settings(app, settings)  # app values from the database, laid on these settings
     app.state.engine = make_engine(settings.database_url)

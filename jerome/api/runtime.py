@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from jerome.config import Settings
 from jerome.core.settings_store import SettingsStore, registry_inputs
 from jerome.models.registry import build_registry
-from jerome.proofread.languagetool import LanguageToolClient
+from jerome.proofread.languagetool import lt_client, lt_inputs
 
 log = logging.getLogger(__name__)
 
@@ -28,7 +28,7 @@ def install(app: FastAPI, settings: Settings) -> None:
     state.settings_lock = threading.Lock()  # sync routes run on several threads
     state.settings_synced_version = state.settings_store.version
     state.synced_registry_inputs = registry_inputs(settings)
-    state.synced_languagetool_url = settings.languagetool_url
+    state.synced_lt_inputs = lt_inputs(settings)
     state.synced_text_rpm = settings.text_rpm
 
 
@@ -53,9 +53,9 @@ def _sync(app: FastAPI) -> Settings:
                 )
             else:
                 state.synced_registry_inputs = inputs
-        if settings.languagetool_url != state.synced_languagetool_url:
-            state.lt_client = LanguageToolClient(settings.languagetool_url)
-            state.synced_languagetool_url = settings.languagetool_url
+        if lt_inputs(settings) != state.synced_lt_inputs:
+            state.lt_client = lt_client(settings)
+            state.synced_lt_inputs = lt_inputs(settings)
         if settings.text_rpm != state.synced_text_rpm:
             state.text_limits.set_rpm(settings.text_rpm)
             state.synced_text_rpm = settings.text_rpm

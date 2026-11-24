@@ -192,3 +192,54 @@ def test_real_languagetool_finds_german_typo():  # needs docker compose language
         [BlockText(1, "Das ist ein Fehlr.")], STYLE_DE, LanguageToolClient(LT_URL)
     )
     assert any(x.original == "Fehlr" for x in c)
+
+
+def test_premium_credentials_only_when_both_are_set(respx_mock):
+    route = lt_route(respx_mock, [])
+    LanguageToolClient(BASE, username="ana@x.org", api_key="lt-key").check([{"text": "x"}], "en-US")
+    form = parse_form(route)
+    assert (form["username"], form["apiKey"]) == ("ana@x.org", "lt-key")
+    LanguageToolClient(BASE, username="ana@x.org").check([{"text": "x"}], "en-US")
+    assert "username" not in parse_form(route) and "apiKey" not in parse_form(route)
+
+
+def test_429_waits_for_retry_after_then_succeeds(respx_mock):
+    respx_mock.post(f"{BASE}/v2/check").mock(
+        side_effect=[
+            httpx.Response(429, headers={"Retry-After": "7"}),
+            httpx.Response(429, headers={"Retry-After": "999"}),
+            httpx.Response(429, headers={"Retry-After": "soon"}),
+            httpx.Response(200, json={"matches": [lt_match(0, 1)]}),
+        ]
+    )
+    waits = []
+    c = LanguageToolClient(BASE, sleep=waits.append)
+    assert len(c.check([{"text": "x"}], "en-US")) == 1
+    assert waits == [7.0, 60.0, 5.0]
+
+
+def test_429_gives_up_after_three_retries(respx_mock):
+    respx_mock.post(f"{BASE}/v2/check").respond(429)
+    waits = []
+    with pytest.raises(httpx.HTTPStatusError):
+        LanguageToolClient(BASE, sleep=waits.append).check([{"text": "x"}], "en-US")
+    assert len(waits) == 3
+
+
+def test_lt_inputs_hide_the_key_and_lt_client_uses_settings(respx_mock):
+    from pydantic import SecretStr
+
+    from jerome.config import Settings
+    from jerome.proofread.languagetool import lt_client, lt_inputs
+
+    s = Settings(
+        _env_file=None,
+        languagetool_url=BASE,
+        languagetool_username="ana@x.org",
+        languagetool_api_key=SecretStr("lt-key"),
+    )
+    assert "lt-key" not in repr(lt_inputs(s))
+    assert lt_inputs(s) != lt_inputs(s.model_copy(update={"languagetool_api_key": None}))
+    route = lt_route(respx_mock, [])
+    lt_client(s).check([{"text": "x"}], "en-US")
+    assert parse_form(route)["apiKey"] == "lt-key"
