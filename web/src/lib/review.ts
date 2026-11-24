@@ -32,7 +32,15 @@ export interface Suggestion {
   decided_by: string | null;
   /** Where the decision came from: "web", "api", "auto" or "mcp" (Janus). */
   decided_channel: string | null;
+  /** The AI's view of a LanguageTool mark, once asked for in review; null until then. */
+  ai_verdict: AiVerdict | null;
+  /** The AI's text for the same span; only with "better". */
+  ai_replacement: string | null;
+  ai_reason: string | null;
+  ai_model: string | null;
 }
+
+export type AiVerdict = "correct" | "not_an_error" | "better";
 
 export interface ReviewBlock {
   id: number;
@@ -188,6 +196,18 @@ export const canAccept = (s: Suggestion) => s.status === "open";
 export const canReject = (s: Suggestion) =>
   s.status === "open" || s.status === "accepted" || s.status === "edited";
 export const canEdit = (s: Suggestion) => s.status === "open" || s.auto_applied;
+/** An open mark LanguageTool made alone, not yet checked by the AI. */
+export const canAskAi = (s: Suggestion) =>
+  s.status === "open" && s.source === "languagetool" && !s.agreed && s.ai_verdict === null;
+/** The AI's own fix can be used: it found a better text and the mark is still open. */
+export const canUseAiFix = (s: Suggestion) =>
+  s.status === "open" && s.ai_verdict === "better" && s.ai_replacement !== null;
+
+export const AI_VERDICT_LABELS: Record<AiVerdict, string> = {
+  correct: "AI: LanguageTool is right",
+  not_an_error: "AI: not an error",
+  better: "AI suggests a better fix",
+};
 
 /** The chapter to open without one in the URL: the first with open items, else the first. */
 export const defaultChapter = (chapters: ChapterSummary[]) =>

@@ -10,6 +10,10 @@ class Conflict(JeromeError):
     pass
 
 
+class AiCheckError(JeromeError):
+    """The AI gave no usable verdict on a LanguageTool mark (the call is still billed)."""
+
+
 class UnsupportedDocumentError(JeromeError):
     pass
 

@@ -15,6 +15,7 @@ from pydantic import ValidationError
 from jerome.core.app_settings import InvalidSetting
 from jerome.core.publication import InvalidPublication
 from jerome.errors import (
+    AiCheckError,
     Conflict,
     InvalidChangeError,
     NotFound,
@@ -36,6 +37,7 @@ _CODES: dict[type[Exception], str] = {
     InvalidSetting: "invalid",
     UnsupportedLanguagePair: "invalid",
     InvalidPublication: "invalid",
+    AiCheckError: "unavailable",  # 502: no usable verdict from the AI
     ProviderListError: "unavailable",  # 502: the provider failed
 }
 

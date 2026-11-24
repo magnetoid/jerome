@@ -24,7 +24,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
-from jerome.types import Category, Role, Severity, Source, Status
+from jerome.types import AI_VERDICTS, Category, Role, Severity, Source, Status
 
 JOB_STATUSES = ("queued", "running", "paused_cost_cap", "cancelled", "failed", "completed")
 ACTIVE_JOB_STATUSES = ("queued", "running", "paused_cost_cap")
@@ -251,6 +251,7 @@ class Suggestion(Base):
         CheckConstraint(_in("category", Category), name="ck_suggestions_category"),
         CheckConstraint(_in("severity", Severity), name="ck_suggestions_severity"),
         CheckConstraint(_in("source", Source), name="ck_suggestions_source"),
+        CheckConstraint(_in("ai_verdict", AI_VERDICTS), name="ck_suggestions_ai_verdict"),
         Index("ix_suggestions_block_id_status", "block_id", "status"),
     )
 
@@ -276,6 +277,11 @@ class Suggestion(Base):
     disputed: Mapped[bool] = mapped_column(Boolean, server_default=sql_text("false"))
     alternative: Mapped[str | None] = mapped_column(Text)
     rule: Mapped[str | None] = mapped_column(String)
+    # the AI's view of a LanguageTool-only mark, asked for in review (None until asked)
+    ai_verdict: Mapped[str | None] = mapped_column(String)
+    ai_replacement: Mapped[str | None] = mapped_column(Text)  # only for "better"
+    ai_reason: Mapped[str | None] = mapped_column(Text)
+    ai_model: Mapped[str | None] = mapped_column(String)
     created_at: Mapped[datetime] = _ts()
 
 

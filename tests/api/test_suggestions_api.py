@@ -7,7 +7,7 @@ from tests.fixtures.suggestions import add_one
 
 KEYS = {
     "chapter_id", "agreed", "disputed", "alternative", "rule", "auto_applied", "decided_by",
-    "decided_channel",
+    "decided_channel", "ai_verdict", "ai_replacement", "ai_reason", "ai_model",
     "id", "book_id", "block_id", "start", "end", "original", "replacement", "category",
     "severity", "source", "explanation", "status", "final_text", "job_id", "model", "created_at",
 }  # fmt: skip
@@ -18,6 +18,9 @@ def test_accept_route(client, auth, session, block):
     r = client.post(f"/v1/suggestions/{s.id}/accept", headers=auth)
     assert r.status_code == 200
     assert set(r.json()) == KEYS and r.json()["status"] == "accepted"
+    assert [r.json()[k] for k in ("ai_verdict", "ai_replacement", "ai_reason", "ai_model")] == [
+        None
+    ] * 4
     assert client.post(f"/v1/suggestions/{s.id}/accept", headers=auth).status_code == 409
     assert client.post(f"/v1/suggestions/{s.id}/undo", headers=auth).json()["status"] == "open"
     assert (

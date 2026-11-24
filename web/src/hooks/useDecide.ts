@@ -39,7 +39,8 @@ export function withDecision(suggestions: Suggestion[], row: Suggestion): Sugges
   });
 }
 
-function patch(data: InfiniteData<ReviewPageData> | undefined, row: Suggestion) {
+/** The cached review pages with ``row`` in place. */
+export function patchRow(data: InfiniteData<ReviewPageData> | undefined, row: Suggestion) {
   if (!data) return data;
   return {
     ...data,
@@ -71,7 +72,7 @@ export function useDecide(bookId: string, { onDecided, onConflict }: Handlers = 
         json: action === "edit" ? { replacement } : undefined,
       }),
     onSuccess: (row, vars) => {
-      client.setQueriesData<InfiniteData<ReviewPageData>>({ queryKey: reviewKey(bookId) }, (d) => patch(d, row));
+      client.setQueriesData<InfiniteData<ReviewPageData>>({ queryKey: reviewKey(bookId) }, (d) => patchRow(d, row));
       onDecided?.(row, vars);
     },
     onError: (err, vars) => {

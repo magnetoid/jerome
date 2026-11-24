@@ -206,7 +206,13 @@ def test_check_constraints_reject_bad_vocabulary(session, book_factory):
             session.flush()
         sp.rollback()
 
-    s = Suggestion(**good)
+    sp = session.begin_nested()
+    session.add(Suggestion(**good, ai_verdict="maybe"))
+    with pytest.raises(IntegrityError):
+        session.flush()
+    sp.rollback()
+
+    s = Suggestion(**good, ai_verdict="better", ai_replacement="h", ai_reason="r", ai_model="m")
     session.add(s)
     session.flush()
     for field in ("previous_status", "new_status"):

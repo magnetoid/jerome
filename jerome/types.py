@@ -25,6 +25,9 @@ class Severity(StrEnum):
         return {"high": 3, "medium": 2, "low": 1}[self.value]
 
 
+AI_VERDICTS = ("correct", "not_an_error", "better")  # the AI's view of a LanguageTool mark
+
+
 class Source(StrEnum):
     LANGUAGETOOL = "languagetool"
     MODEL = "model"
