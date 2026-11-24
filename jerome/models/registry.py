@@ -8,6 +8,15 @@ from jerome.models.claude import ClaudeProvider
 from jerome.models.openai_compat import OpenAICompatProvider
 from jerome.models.pricing import DEFAULT_PRICES, Price
 
+# OpenAI-compatible services Jerome knows by name; each has its own key setting.
+PRESET_BASE_URLS: dict[str, str] = {
+    "openai": "https://api.openai.com/v1",
+    "gemini": "https://generativelanguage.googleapis.com/v1beta/openai",
+    "mistral": "https://api.mistral.ai/v1",
+    "openrouter": "https://openrouter.ai/api/v1",
+}
+HOSTED_PROVIDERS: tuple[str, ...] = tuple(PRESET_BASE_URLS)
+
 
 @dataclass(frozen=True)
 class PassConfig:
@@ -49,8 +58,16 @@ def build_registry(settings: Settings) -> Registry:
     key = settings.anthropic_api_key.get_secret_value() if settings.anthropic_api_key else None
     providers: dict[str, Provider] = {"anthropic": ClaudeProvider(api_key=key or None)}
     for cfg in settings.models.values():
-        if cfg.get("provider") == "openai_compat":
+        name = cfg.get("provider")
+        if name == "openai_compat":
             providers["openai_compat"] = OpenAICompatProvider(
                 base_url=cfg["base_url"], api_key=cfg.get("api_key")
+            )
+        elif name in PRESET_BASE_URLS:
+            providers[name] = OpenAICompatProvider(
+                base_url=PRESET_BASE_URLS[name],
+                api_key=cfg.get("api_key"),
+                name=name,
+                require_key=True,
             )
     return Registry(settings, providers)

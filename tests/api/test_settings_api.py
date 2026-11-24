@@ -40,12 +40,19 @@ def test_get_lists_keys_in_order(web_client, session):
         "max_upload_mb",
         "session_days",
         "languagetool_url",
+        "languagetool_username",
         "public_base_url",
     ]
     assert [s["key"] for s in body["secrets"]] == [
         "anthropic_api_key",
         "webhook_secret",
         "openai_compat_api_key",
+        "openai_api_key",
+        "gemini_api_key",
+        "mistral_api_key",
+        "openrouter_api_key",
+        "deepl_api_key",
+        "languagetool_api_key",
     ]
     rpm = next(s for s in body["settings"] if s["key"] == "text_rpm")
     assert rpm["value"] == 30 and rpm["source"] == "default" and rpm["unreadable"] is False
