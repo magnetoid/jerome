@@ -19,9 +19,10 @@ from jerome.publish.build import finished_file as _finished_file
 @mcp.tool()
 def publish_book(book_id: int, format: PublishFormat) -> dict[str, Any]:
     """Make a book's finished file for readers and shops (`book_id` from `list_books`):
-    `epub-book` (an EPUB 3 ebook) or `pdf-book` (a print-ready PDF at the book's trim
-    size). It uses the publication details (`get_publication`; an author is required) and
-    the cover, and costs no model money. A translated book must be fully translated first.
+    `epub-book` (an EPUB 3 ebook) or `pdf-book` (a PDF for digital sale, at the book's
+    trim size; not a print-ready PDF). It uses the publication details (`get_publication`;
+    an author is required) and the cover, and costs no model money. A translated book must
+    be fully translated first.
     It runs as a job, like `start_job`: poll `get_job` until `status` is `completed`, then
     call `finished_file`; its `stats.warnings` lists what to look at (no cover, open
     suggestions, parts left out). A book has at most one active job. Logged in the Janus

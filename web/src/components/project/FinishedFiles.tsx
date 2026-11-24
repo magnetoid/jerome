@@ -28,7 +28,7 @@ export default function FinishedFiles({ bookId, untranslated = 0 }: Props) {
     <section className="space-y-2">
       <h2 className="text-lg font-medium">Finished files</h2>
       <p className="text-sm text-muted-foreground">
-        An EPUB for ebook shops and a print PDF, made from the reviewed text with the details above.
+        An EPUB and a PDF for ebook shops, made from the reviewed text with the details above.
       </p>
       <div className="flex flex-wrap gap-2">
         {FORMATS.map((f) => (
