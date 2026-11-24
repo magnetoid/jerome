@@ -549,7 +549,12 @@ def _check_retranslatable(session: Session, block: Block, book: Book) -> None:
 
 
 def _bill_apart(
-    session: Session, registry: Registry, job_id: int, billed: "Billed", configured: str
+    session: Session,
+    registry: Registry,
+    job_id: int,
+    billed: "Billed",
+    configured: str,
+    pass_name: str = "translate",
 ) -> None:
     """Record a billed call on the job in a transaction of its own, committed now, so the
     spend stays on the books whatever happens to the caller's transaction."""
@@ -559,7 +564,7 @@ def _bill_apart(
         stmt = select(Job).where(Job.id == job_id).with_for_update()
         job = other.scalars(stmt).one()
         job.cost_actual = job.cost_actual + usage_row(
-            other, billed, registry, configured, job_id=job_id, pass_name="translate"
+            other, billed, registry, configured, job_id=job_id, pass_name=pass_name
         )
         other.commit()
 
