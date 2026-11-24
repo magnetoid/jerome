@@ -10,7 +10,7 @@ import codecs
 import posixpath
 import re
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from html.entities import html5
 from typing import Literal
 from urllib.parse import unquote, urldefrag
@@ -120,6 +120,14 @@ class EpubPackage:
     order: list[str]
     title: str | None = None
     language: str | None = None
+    creators: list[str] = field(default_factory=list)
+    publisher: str | None = None
+    date: str | None = None
+    rights: str | None = None
+    # epub:type (cover, titlepage, copyright-page, toc, ...) -> document path, from the nav
+    # landmarks and the EPUB 2 guide (guide types mapped to their epub:type names)
+    landmarks: dict[str, str] = field(default_factory=dict)
+    cover_item: str | None = None  # manifest id of the cover image
 
 
 def parse_xml_root(data: bytes, part: str) -> etree._Element:
@@ -171,16 +179,65 @@ def read_container(data: bytes) -> EpubPackage:
     if not spine:
         raise UnsupportedDocumentError("Not a usable EPUB: its spine is empty")
 
+    def metas(tag: str) -> list[str]:
+        found = opf.iterfind(f"{{{NS['opf']}}}metadata/{{{NS['dc']}}}{tag}")
+        texts = (" ".join("".join(el.itertext()).split()) for el in found)
+        return [t for t in texts if t]
+
     def meta(tag: str) -> str | None:
-        el = opf.find(f"{{{NS['opf']}}}metadata/{{{NS['dc']}}}{tag}")
-        text = " ".join("".join(el.itertext()).split()) if el is not None else ""
-        return text or None
+        return next(iter(metas(tag)), None)
 
     package = EpubPackage(
         opf_path, manifest, spine, [], files, list(files), meta("title"), meta("language")
     )
+    package.creators, package.publisher, package.date, package.rights = (
+        metas("creator"),
+        meta("publisher"),
+        meta("date"),
+        meta("rights"),
+    )
     package.nav_points = _read_toc(package, spine_el.get("toc") if spine_el is not None else None)
+    package.landmarks = _guide(opf, opf_path) | _landmarks(package)
+    package.cover_item = _cover_item(opf, manifest)
     return package
+
+
+_GUIDE_TYPES = {"title-page": "titlepage", "copyright-page": "copyright-page", "toc": "toc"}
+
+
+def _guide(opf: etree._Element, opf_path: str) -> dict[str, str]:
+    found: dict[str, str] = {}
+    for ref in opf.iterfind(f"{{{NS['opf']}}}guide/{{{NS['opf']}}}reference"):
+        kind = (ref.get("type") or "").lower()
+        kind = _GUIDE_TYPES.get(kind, kind)
+        if kind and ref.get("href"):
+            found.setdefault(kind, resolve_href(opf_path, ref.get("href", ""))[0])
+    return found
+
+
+def _landmarks(package: "EpubPackage") -> dict[str, str]:
+    found: dict[str, str] = {}
+    for item in (m for m in package.manifest.values() if "nav" in m.properties):
+        if item.path not in package.files:
+            continue
+        root = parse_content_document(package.files[item.path], item.path).root
+        for nav in (el for el in root.iter() if local_name(el) == "nav"):
+            if "landmarks" not in epub_type(nav):
+                continue
+            for a in (el for el in nav.iter() if local_name(el) == "a" and el.get("href")):
+                for kind in epub_type(a):
+                    found.setdefault(kind, resolve_href(item.path, a.get("href", ""))[0])
+    return found
+
+
+def _cover_item(opf: etree._Element, manifest: dict[str, "ManifestItem"]) -> str | None:
+    for item in manifest.values():
+        if "cover-image" in item.properties:
+            return item.id
+    for meta in opf.iterfind(f"{{{NS['opf']}}}metadata/{{{NS['opf']}}}meta"):
+        if meta.get("name") == "cover" and meta.get("content") in manifest:
+            return meta.get("content")
+    return None
 
 
 CONTENT_TYPES = frozenset({"application/xhtml+xml", "text/html"})

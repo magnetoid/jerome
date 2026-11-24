@@ -13,6 +13,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import ValidationError
 
 from jerome.core.app_settings import InvalidSetting
+from jerome.core.publication import InvalidPublication
 from jerome.errors import (
     Conflict,
     InvalidChangeError,
@@ -33,6 +34,7 @@ _CODES: dict[type[Exception], str] = {
     UnknownModelPrice: "invalid",
     InvalidSetting: "invalid",
     UnsupportedLanguagePair: "invalid",
+    InvalidPublication: "invalid",
 }
 
 

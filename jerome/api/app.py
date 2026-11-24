@@ -15,6 +15,8 @@ from jerome.api import (
     routes_exports,
     routes_jobs,
     routes_projects,
+    routes_publication,
+    routes_publish,
     routes_settings,
     routes_suggestions,
     routes_text,
@@ -28,6 +30,7 @@ from jerome.api.runtime import install as install_settings
 from jerome.api.web import mount_web
 from jerome.config import Settings, get_settings
 from jerome.core.app_settings import InvalidSetting
+from jerome.core.publication import InvalidPublication
 from jerome.db import make_engine
 from jerome.errors import (
     Conflict,
@@ -50,6 +53,7 @@ _ERROR_STATUS: dict[type[Exception], int] = {
     UnknownModelPrice: 422,
     InvalidSetting: 400,
     UnsupportedLanguagePair: 400,
+    InvalidPublication: 422,
 }
 
 
@@ -97,9 +101,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(routes_auth.router, prefix="/v1")
     auth = [Depends(current_principal)]
     app.include_router(routes_books.router, prefix="/v1", dependencies=auth)
+    app.include_router(routes_publication.router, prefix="/v1", dependencies=auth)
     app.include_router(routes_suggestions.router, prefix="/v1", dependencies=auth)
     app.include_router(routes_exports.router, prefix="/v1", dependencies=auth)
     app.include_router(routes_jobs.router, prefix="/v1", dependencies=auth)
+    app.include_router(routes_publish.router, prefix="/v1", dependencies=auth)
     app.include_router(routes_translation.router, prefix="/v1", dependencies=auth)
     app.include_router(routes_text.router, prefix="/v1", dependencies=auth)
     app.include_router(routes_users.router, prefix="/v1", dependencies=auth)

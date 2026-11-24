@@ -6,7 +6,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { PROJECTS_KEY } from "@/hooks/useProjects";
 import { money } from "@/lib/format";
-import { chaptersKey, detailOf, jobKey, jobNoun, jobsKey, type Chapter, type Job } from "@/lib/jobs";
+import {
+  chaptersKey, detailOf, jobKey, jobNoun, jobsKey, latestReviewJob, type Chapter, type Job,
+} from "@/lib/jobs";
 
 interface Props {
   bookId: string;
@@ -34,7 +36,7 @@ export default function AttentionPanel({ bookId, activeJobId }: Props) {
   const [raised, setRaised] = useState("");
 
   const source = activeJobId !== null ? active : jobs;
-  const job = activeJobId !== null ? active.data : jobs.data?.[0];
+  const job = activeJobId !== null ? active.data : latestReviewJob(jobs.data);
 
   const resume = useMutation({
     mutationFn: () => {

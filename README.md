@@ -113,7 +113,9 @@ uv run pytest -q
 
 CLI: `jerome keys create NAME`, `jerome db-upgrade`, `jerome import PATH --variant en-US
 [--local-only]`, `jerome proofread BOOK_ID --max-cost 5 [--passes ai]` (prints the estimate and
-asks before creating the job), `jerome export BOOK_ID --format docx-review -o review.docx`.
+asks before creating the job), `jerome export BOOK_ID --format docx-review -o review.docx`, `jerome publish BOOK_ID
+--format pdf-book -o book.pdf` (makes the finished file here, without a job, and prints its
+warnings).
 
 ## Configuration
 
@@ -272,6 +274,48 @@ contents too, and `GET /v1/books/{id}/translation` lists its chapter in
 (for example `{"ai": {...}, "translate": {"provider": "anthropic", "model":
 "claude-opus-5-5", "effort": "high"}}`). Its default is `claude-opus-5-5`, and a
 `local_only` book uses only a local model for it.
+
+## Finished files
+
+Besides the working exports, Jerome makes the files a book is sold as:
+
+- **`epub-book`**, an EPUB 3 ebook. A Word-born book gets an EPUB written by Jerome, with
+  its own cover, title, copyright and contents pages and the chapters split at Heading 1.
+  An EPUB-born book keeps its publisher's design: its clean export with the publication
+  details and cover written in.
+- **`pdf-book`**, a PDF for digital sale, in EB Garamond at the book's trim size (6×9 in,
+  5.5×8.5 in, 5×8 in or A5), with running heads, page numbers, footnotes at the foot of the
+  page, hyphenation for English and German, bookmarks and metadata. It is not a print-ready
+  PDF: there is no PDF/X, bleed, CMYK or crop marks.
+
+**Publication details.** Under Publication on the project page (`GET`/`PUT
+/v1/books/{id}/publication`, MCP `get_publication`/`update_publication`): authors (required,
+in display order), translator, publisher, an ISBN-13 for each of the EPUB and the PDF, year,
+rights line (by default `© year authors`), description and trim size. A translated book
+publishes with its translated title and its target language. **The cover** (`PUT
+/v1/books/{id}/cover` with a file, MCP `set_cover`) must be a JPEG or PNG at least 1400 px on
+its long side; a refused image keeps the earlier cover.
+
+**Making one.** Make EPUB / Make PDF on the project page, `POST /v1/books/{id}/publish` with
+`{"format": "epub-book"}` or `"pdf-book"`, or MCP `publish_book`. It runs as a job of type
+`publish` that costs no model money; a book has at most one active job. When it completes,
+`GET /v1/jobs/{id}/file` (MCP `finished_file`, a download link) serves the file, named with
+the job's id, so every run keeps its own. It is refused for a hidden source book, for a
+translation while any paragraph is pending or flagged, and without an author. Rendering
+stops after 15 minutes, and a book with more than 200 MB of images is refused.
+
+**Left out.** Jerome makes its own front pages, so the manuscript's are left out: a Word
+table of contents, and an EPUB's cover, title page, copyright page and table of contents
+(found by landmarks, `epub:type` or the EPUB 2 guide), when Jerome writes the file.
+
+**The text check.** Before a file is made, its text is compared with the reviewed text
+(the clean export), ignoring only spacing and soft hyphens. Any other difference fails the job at once and
+names the place; it cannot be overridden. Such a difference is a fault in Jerome: report it.
+
+**Warnings** go on the job (`stats.warnings`) and on the project page: no cover, the parts
+left out, suggestions still open, chapters not proofread, a dropped image (a linked image or
+one of an unknown type, never fetched), and EPUBCheck's errors where EPUBCheck is installed.
+They never stop the job: you decide when a book is ready.
 
 ## Connecting Janus (MCP)
 

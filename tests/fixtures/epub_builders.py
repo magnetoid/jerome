@@ -13,6 +13,7 @@ from xml.sax.saxutils import escape, quoteattr
 
 from jerome.documents.epub_reader import read_epub
 from jerome.documents.model import Mark, ParsedBlock, ParsedBook
+from tests.fixtures.images import make_png
 
 _DECL = '<?xml version="1.0" encoding="UTF-8"?>\n'
 _XHTML_NS = 'xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"'
@@ -80,6 +81,14 @@ def make_epub(
     cluttered: bool = False,
     title: str = "Test Book",
     language: str = "en",
+    creators: list[str] | None = None,
+    publisher: str | None = None,
+    date: str | None = None,
+    cover: bytes | None = None,
+    landmarks: bool = False,
+    front_pages: bool = False,
+    notes: dict[int, str] | None = None,
+    images: bool = False,
 ) -> bytes:
     """Build an EPUB. Each chapter's title is its first block, an ``h1``.
 
@@ -87,10 +96,23 @@ def make_epub(
     the TOC does not list; ``two_in_one_file`` puts all chapters in one file, the TOC
     pointing at ``#c<n>`` anchors; ``front_matter`` adds a titlepage document first
     (``epub:type="titlepage"``, not in the TOC).
+
+    ``cover`` adds a PNG cover image item (``cover-image``, ``<meta name="cover">``) and a
+    plain ``cover.xhtml`` showing it, first in the spine. ``landmarks`` adds a landmarks nav
+    (cover and toc) and puts ``nav.xhtml`` in the spine. ``front_pages`` adds a copyright
+    page known only from the EPUB 2 guide, and a dedication (``epub:type="dedication"``).
+    ``notes`` maps footnote numbers to text: each ``[^n]`` links to an
+    ``<aside epub:type="footnote">`` at the end of its chapter, whose number links back.
+    ``images`` puts a small PNG picture after each chapter heading.
     """
     files: dict[str, str] = {}  # file name in OEBPS -> xhtml
+    binary: dict[str, tuple[bytes, str]] = {}  # file name in OEBPS -> (data, manifest props)
     spine: list[str] = []
     targets: list[str] = []  # TOC href per chapter
+    if cover is not None:
+        binary["images/cover.png"] = (cover, "cover-image")
+        files["cover.xhtml"] = _page('<div><img src="images/cover.png" alt="Cover"/></div>')
+        spine.append("cover.xhtml")
 
     def heading(i: int, name: str) -> str:
         return f'<h1 id="c{i}">{_inline(name, cluttered)}</h1>'
@@ -98,14 +120,42 @@ def make_epub(
     def paragraphs(lines: list[str]) -> str:
         return "".join(f"<p>{_inline(line, cluttered)}</p>" for line in lines)
 
+    def with_notes(body: str) -> str:
+        if notes is None:
+            return body
+        asides = []
+        for n in re.findall(r'href="notes\.xhtml#n(\d+)"', body):
+            body = body.replace(f'href="notes.xhtml#n{n}"', f'id="r{n}" href="#n{n}"', 1)
+            asides.append(
+                f'<aside epub:type="footnote" id="n{n}"><p><a href="#r{n}">{n}</a> '
+                f"{_inline(notes[int(n)], cluttered)}</p></aside>"
+            )
+        return body + "".join(asides)
+
+    def picture(i: int) -> str:
+        if not images:
+            return ""
+        binary[f"images/pic{i}.png"] = (make_png(5, 4), "")
+        return f'<p><img src="images/pic{i}.png" alt="Picture {i}"/></p>'
+
     if front_matter:
         files["titlepage.xhtml"] = _page(
             '<section epub:type="titlepage"><h1>Title Page</h1><p>By Nobody</p></section>'
         )
         spine.append("titlepage.xhtml")
+    if front_pages:
+        files["copyright.xhtml"] = _page("<p>Copyright 2026 Nobody.</p>")
+        files["dedication.xhtml"] = _page(
+            '<section epub:type="dedication"><p>For my mother.</p></section>'
+        )
+        spine += ["copyright.xhtml", "dedication.xhtml"]
+    front_count = len(spine)
     if two_in_one_file:
-        body = "".join(
-            heading(i, name) + paragraphs(lines) for i, (name, lines) in enumerate(chapters, 1)
+        body = with_notes(
+            "".join(
+                heading(i, name) + picture(i) + paragraphs(lines)
+                for i, (name, lines) in enumerate(chapters, 1)
+            )
         )
         files["book.xhtml"] = _page(body)
         spine.append("book.xhtml")
@@ -113,7 +163,9 @@ def make_epub(
     else:
         for i, (name, lines) in enumerate(chapters, 1):
             half = (len(lines) + 1) // 2 if split_chapter else len(lines)
-            files[f"ch{i}.xhtml"] = _page(heading(i, name) + paragraphs(lines[:half]))
+            files[f"ch{i}.xhtml"] = _page(
+                with_notes(heading(i, name) + picture(i) + paragraphs(lines[:half]))
+            )
             spine.append(f"ch{i}.xhtml")
             targets.append(f"ch{i}.xhtml")
             if split_chapter:
@@ -121,13 +173,27 @@ def make_epub(
                 spine.append(f"ch{i}b.xhtml")
 
     manifest = [f'<item id="{n}" href="{n}" media-type="application/xhtml+xml"/>' for n in files]
+    manifest += [
+        f'<item id="{n.replace("/", "-")}" href="{n}" media-type="image/png"'
+        + (f' properties="{props}"' if props else "")
+        + "/>"
+        for n, (_, props) in binary.items()
+    ]
     toc_attr = ""
     if toc == "nav":
         items = "".join(
             f"<li><a href={quoteattr(t)}>{escape(name)}</a></li>"
             for t, (name, _) in zip(targets, chapters, strict=True)
         )
-        files["nav.xhtml"] = _page(f'<nav epub:type="toc"><ol>{items}</ol></nav>')
+        marks = ""
+        if landmarks:
+            marks = (
+                '<nav epub:type="landmarks"><ol>'
+                + ('<li><a epub:type="cover" href="cover.xhtml">Cover</a></li>' if cover else "")
+                + '<li><a epub:type="toc" href="nav.xhtml">Contents</a></li></ol></nav>'
+            )
+            spine.insert(front_count, "nav.xhtml")
+        files["nav.xhtml"] = _page(f'<nav epub:type="toc"><ol>{items}</ol></nav>{marks}')
         manifest.append(
             '<item id="nav.xhtml" href="nav.xhtml" media-type="application/xhtml+xml" '
             'properties="nav"/>'
@@ -151,8 +217,20 @@ def make_epub(
         '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
         '<dc:identifier id="id">urn:uuid:jerome-test</dc:identifier>'
         f"<dc:title>{escape(title)}</dc:title>"
-        f"<dc:language>{language}</dc:language></metadata>"
-        f"<manifest>{''.join(manifest)}</manifest><spine{toc_attr}>{itemrefs}</spine></package>"
+        f"<dc:language>{language}</dc:language>"
+        + "".join(f"<dc:creator>{escape(c)}</dc:creator>" for c in creators or [])
+        + (f"<dc:publisher>{escape(publisher)}</dc:publisher>" if publisher else "")
+        + (f"<dc:date>{escape(date)}</dc:date>" if date else "")
+        + ('<meta name="cover" content="images-cover.png"/>' if cover else "")
+        + "</metadata>"
+        f"<manifest>{''.join(manifest)}</manifest><spine{toc_attr}>{itemrefs}</spine>"
+        + (
+            '<guide><reference type="copyright-page" title="Copyright" '
+            'href="copyright.xhtml"/></guide>'
+            if front_pages
+            else ""
+        )
+        + "</package>"
     )
     container = (
         f'{_DECL}<container version="1.0" '
@@ -164,11 +242,12 @@ def make_epub(
         "META-INF/container.xml": container,
         "OEBPS/content.opf": opf,
         **{f"OEBPS/{n}": xml for n, xml in files.items()},
+        **{f"OEBPS/{n}": data for n, (data, _) in binary.items()},
     }
     return _zip(entries)
 
 
-def _zip(entries: dict[str, str]) -> bytes:
+def _zip(entries: dict[str, str | bytes]) -> bytes:
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
         info = zipfile.ZipInfo("mimetype", date_time=(2026, 1, 1, 0, 0, 0))
@@ -176,16 +255,16 @@ def _zip(entries: dict[str, str]) -> bytes:
         for name, xml in entries.items():
             info = zipfile.ZipInfo(name, date_time=(2026, 1, 1, 0, 0, 0))
             info.compress_type = zipfile.ZIP_DEFLATED
-            zf.writestr(info, xml.encode("utf-8"))
+            zf.writestr(info, xml.encode("utf-8") if isinstance(xml, str) else xml)
     return buf.getvalue()
 
 
 def edit_entry(data: bytes, name: str, fn: Callable[[str], str]) -> bytes:
     """Rebuild the EPUB with ``fn`` applied to the text of entry ``name``."""
     with zipfile.ZipFile(io.BytesIO(data)) as zf:
-        entries = {i.filename: zf.read(i).decode("utf-8") for i in zf.infolist()}
+        entries: dict[str, str | bytes] = {i.filename: zf.read(i) for i in zf.infolist()}
     del entries["mimetype"]
-    entries[name] = fn(entries[name])
+    entries[name] = fn(entries[name].decode("utf-8"))
     return _zip(entries)
 
 

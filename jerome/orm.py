@@ -29,6 +29,8 @@ from jerome.types import Category, Role, Severity, Source, Status
 JOB_STATUSES = ("queued", "running", "paused_cost_cap", "cancelled", "failed", "completed")
 ACTIVE_JOB_STATUSES = ("queued", "running", "paused_cost_cap")
 TASK_STATUSES = ("queued", "running", "done", "failed")
+TASK_KINDS = ("chapter", "consistency", "publish")
+TRIM_SIZES = ("6x9in", "5.5x8.5in", "5x8in", "a5")
 CHANNELS = ("api", "word", "system", "web", "auto", "mcp")
 
 
@@ -63,6 +65,7 @@ class Book(Base):
     __table_args__ = (
         CheckConstraint(_in("format", ("docx", "epub")), name="ck_books_format"),
         CheckConstraint(_in("work", ("proofread", "translate")), name="ck_books_work"),
+        CheckConstraint(_in("trim_size", TRIM_SIZES), name="ck_books_trim_size"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -77,6 +80,17 @@ class Book(Base):
     source_book_id: Mapped[int | None] = mapped_column(ForeignKey("books.id", ondelete="SET NULL"))
     is_source: Mapped[bool] = mapped_column(Boolean, server_default=sql_text("false"))
     translated_title: Mapped[str | None] = mapped_column(String)
+    # Publication details for the finished files (jerome.core.publication)
+    authors: Mapped[list[Any]] = mapped_column(JSONB, server_default=sql_text("'[]'::jsonb"))
+    translator: Mapped[str | None] = mapped_column(String)
+    publisher: Mapped[str | None] = mapped_column(String)
+    isbn_epub: Mapped[str | None] = mapped_column(String)
+    isbn_pdf: Mapped[str | None] = mapped_column(String)
+    year: Mapped[int | None] = mapped_column(Integer)
+    rights: Mapped[str | None] = mapped_column(String)
+    description: Mapped[str | None] = mapped_column(Text)
+    cover_type: Mapped[str | None] = mapped_column(String)
+    trim_size: Mapped[str] = mapped_column(String, server_default="6x9in")
     created_at: Mapped[datetime] = _ts()
 
     chapters: Mapped[list["Chapter"]] = relationship(
@@ -210,7 +224,7 @@ class Job(Base):
 class JobTask(Base):
     __tablename__ = "job_tasks"
     __table_args__ = (
-        CheckConstraint(_in("kind", ("chapter", "consistency")), name="ck_job_tasks_kind"),
+        CheckConstraint(_in("kind", TASK_KINDS), name="ck_job_tasks_kind"),
         CheckConstraint(_in("status", TASK_STATUSES), name="ck_job_tasks_status"),
         Index("ix_job_tasks_status_not_before", "status", "not_before"),
     )

@@ -19,13 +19,22 @@ dependencies = [
     "argon2-cffi>=25.1.0",
     "mcp==2.3.0",
     "cryptography>=50.0.2",
+    "weasyprint>=68",
+    "pillow>=10",  # cover checks; WeasyPrint needs it too
+    "mammoth>=1.11",
 ]
 
 [project.scripts]
 jerome = "jerome.cli:app"
 
 [dependency-groups]
-dev = ["pytest", "respx", "ruff", "python-docx"]
+dev = [
+    "pytest",
+    "respx",
+    "ruff",
+    "python-docx",
+    "pypdf>=6",
+]
 
 [build-system]
 requires = ["hatchling"]

@@ -20,6 +20,37 @@ class BookOut(BaseModel):
     translated_title: str | None
 
 
+class PublicationOut(BaseModel):
+    title: str
+    language: str
+    authors: list[str]
+    translator: str | None
+    publisher: str | None
+    isbn_epub: str | None
+    isbn_pdf: str | None
+    year: int | None
+    rights: str
+    description: str | None
+    trim_size: str
+    has_cover: bool
+
+
+class PublicationIn(BaseModel):
+    """Fields to change; a field sent as null is cleared, a field left out is kept."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    authors: list[str] | None = None
+    translator: str | None = None
+    publisher: str | None = None
+    isbn_epub: str | None = None
+    isbn_pdf: str | None = None
+    year: int | None = None
+    rights: str | None = None
+    description: str | None = None
+    trim_size: str | None = None
+
+
 class ChapterOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

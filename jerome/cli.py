@@ -91,6 +91,7 @@ def worker(poll_interval: float = 1.0) -> None:
     from jerome.jobs.worker import WorkerDeps, work_forever
     from jerome.models import build_registry
     from jerome.proofread.languagetool import lt_client
+    from jerome.storage import Storage
 
     settings = get_settings()
     engine = make_engine(settings.database_url)
@@ -101,6 +102,7 @@ def worker(poll_interval: float = 1.0) -> None:
         webhook_secret=settings.webhook_secret,
         # app values from the database reach the worker before each task and chunk
         refresh=LiveRefresh(SettingsStore(settings), session_factory),
+        storage=Storage(settings.data_dir),
     )
     stop = threading.Event()
 
@@ -125,6 +127,39 @@ def _registry():
     from jerome.models.registry import build_registry
 
     return build_registry(get_settings())
+
+
+@app.command()
+def publish(
+    book_id: int,
+    format: Annotated[str, typer.Option(help="epub-book or pdf-book")],
+    output: Annotated[Path | None, typer.Option("-o", "--output")] = None,
+) -> None:
+    """Make a book's finished EPUB or PDF here, without a job, and write it to a file."""
+    from jerome.publish.build import PUBLISH_FORMATS, prepare, render
+    from jerome.storage import Storage
+
+    if format not in PUBLISH_FORMATS:
+        choices = " or ".join(PUBLISH_FORMATS)
+        typer.echo(f"Error: unknown format {format!r}; use {choices}", err=True)
+        raise typer.Exit(2)
+    settings = get_settings()
+    engine = make_engine(settings.database_url)
+    try:
+        with session_scope(engine) as session:
+            prepared = prepare(session, Storage(settings.data_dir), book_id, format)  # type: ignore[arg-type]
+        data, _media_type = render(prepared)
+    except JeromeError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(2) from exc
+    finally:
+        engine.dispose()
+    for warning in prepared.warnings:
+        typer.echo(f"warning: {warning}", err=True)
+    # "-book": never the manuscript's own name, which may sit in this directory
+    target = output or Path(f"{prepared.filename_stem}-book.{prepared.extension}")
+    target.write_bytes(data)
+    typer.echo(str(target))
 
 
 @app.command("db-upgrade")

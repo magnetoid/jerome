@@ -417,3 +417,30 @@ def test_projects_list_carries_the_channel_of_a_janus_decision(session, book_fac
     session.flush()
     assert list_projects(session)[0]["last_activity"]["channel"] == "mcp"
     assert list_projects(session)[0]["last_activity"]["actor"] == "janus-desktop"
+
+
+def test_publish_jobs_are_not_review_stages(session, book_factory):
+    book = book_factory()
+    proofread = Job(
+        book_id=book.id,
+        type="proofread",
+        status="completed",
+        passes=["ai"],
+        max_cost=1,
+        created_by="a",
+        created_at=T0,
+    )
+    publish = Job(
+        book_id=book.id,
+        type="publish",
+        status="running",
+        passes=["pdf-book"],
+        max_cost=0,
+        created_by="a",
+        created_at=T0 + timedelta(hours=1),
+    )
+    publish.tasks.append(JobTask(kind="publish"))
+    session.add_all([proofread, publish])
+    session.flush()
+    (row,) = list_projects(session)
+    assert row["stage"] == "done" and row["active_job"] is None

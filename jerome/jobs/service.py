@@ -19,6 +19,7 @@ from jerome.jobs.estimate import (
 )
 from jerome.models import Registry
 from jerome.orm import ACTIVE_JOB_STATUSES, Block, Job, JobTask
+from jerome.publish.build import PublishFormat, check_publishable
 
 RESUMABLE = ("cancelled", "failed", "paused_cost_cap")
 
@@ -39,15 +40,26 @@ def _lock_job(session: Session, job_id: int) -> Job:
     return job
 
 
-def _active_job_id(session: Session, book_id: int, *, exclude: int | None = None) -> int | None:
-    stmt = select(Job.id).where(Job.book_id == book_id, Job.status.in_(ACTIVE_JOB_STATUSES))
-    if exclude is not None:
-        stmt = stmt.where(Job.id != exclude)
-    return session.scalars(stmt).first()
-
-
 def _already_active(book_id: int, what: str = "an active proofreading job") -> Conflict:
     return Conflict(f"book {book_id} already has {what}")
+
+
+_ACTIVE_WHAT = {
+    "proofread": "an active proofreading job",
+    "translate": "an active job",
+    "publish": "an active job making a finished file",
+}
+
+
+def _active_conflict(session: Session, book_id: int, *, exclude: int | None = None):
+    """The Conflict for the book's one active job slot, naming the job that holds it."""
+    stmt = select(Job.type).where(Job.book_id == book_id, Job.status.in_(ACTIVE_JOB_STATUSES))
+    if exclude is not None:
+        stmt = stmt.where(Job.id != exclude)
+    kind = session.scalars(stmt).first()
+    return (
+        None if kind is None else _already_active(book_id, _ACTIVE_WHAT.get(kind, "an active job"))
+    )
 
 
 def create_job(
@@ -64,8 +76,8 @@ def create_job(
     ensure_not_source(session, book_id)
     if get_book(session, book_id).work == "translate" and _has_pending(session, book_id):
         raise Conflict("translate the book before proofreading it")
-    if _active_job_id(session, book_id) is not None:
-        raise _already_active(book_id)
+    if (conflict := _active_conflict(session, book_id)) is not None:
+        raise conflict
     included = included_chapter_ids(session, book_id, chapter_ids)
     if not included:  # no task to claim: the job would sit queued and hold the book's slot
         raise Conflict(f"book {book_id} has no chapters to proofread in this job")
@@ -93,7 +105,7 @@ def _add(session: Session, job: Job) -> Job:
         with session.begin_nested():
             session.add(job)
     except IntegrityError as exc:  # lost a race for the one-active-job slot
-        what = "an active job" if job.type == "translate" else "an active proofreading job"
+        what = "an active proofreading job" if job.type == "proofread" else "an active job"
         raise _already_active(job.book_id, what) from exc
     session.refresh(job)
     return job
@@ -120,8 +132,8 @@ def create_translation_job(
     chapters = pending_chapter_ids(session, book_id)
     if not chapters:
         raise Conflict(f"book {book_id} has nothing left to translate")
-    if _active_job_id(session, book_id) is not None:
-        raise _already_active(book_id, "an active job")
+    if (conflict := _active_conflict(session, book_id)) is not None:
+        raise conflict
     estimate = estimate_translation(session, registry, book_id)
     job = Job(
         book_id=book_id,
@@ -136,6 +148,33 @@ def create_translation_job(
     )
     for chapter_id in chapters:
         job.tasks.append(JobTask(kind="chapter", chapter_id=chapter_id))
+    return _add(session, job)
+
+
+def create_publish_job(
+    session: Session,
+    book_id: int,
+    *,
+    fmt: PublishFormat,
+    callback_url: str | None,
+    actor: str,
+) -> Job:
+    """A job that makes one finished file (``fmt``). It costs no model money."""
+    check_publishable(session, book_id)
+    if (conflict := _active_conflict(session, book_id)) is not None:
+        raise conflict
+    job = Job(
+        book_id=book_id,
+        type="publish",
+        status="queued",
+        passes=[fmt],
+        chapter_ids=None,
+        max_cost=Decimal(0),
+        estimate=None,
+        callback_url=callback_url,
+        created_by=actor,
+    )
+    job.tasks.append(JobTask(kind="publish"))
     return _add(session, job)
 
 
@@ -158,8 +197,8 @@ def resume_job(session: Session, job_id: int, *, max_cost: Decimal | None = None
         )
     if job.status not in RESUMABLE:
         raise Conflict(f"job {job_id} is {job.status} and cannot be resumed")
-    if _active_job_id(session, job.book_id, exclude=job.id) is not None:
-        raise _already_active(job.book_id)
+    if (conflict := _active_conflict(session, job.book_id, exclude=job.id)) is not None:
+        raise conflict
     tasks = session.scalars(
         select(JobTask)
         .where(JobTask.job_id == job.id)

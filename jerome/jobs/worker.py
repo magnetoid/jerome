@@ -64,6 +64,9 @@ from jerome.proofread.ai_pass import AiPassResult, Chunk, chunk_blocks, run_ai_p
 from jerome.proofread.consistency import consistency_candidates
 from jerome.proofread.languagetool import LanguageToolClient, languagetool_candidates
 from jerome.proofread.merge import merge_candidates
+from jerome.publish.build import prepare, render
+from jerome.publish.model import PublishError
+from jerome.storage import Storage
 from jerome.translate.pass_ import TranslateChunk, TranslateItem, run_translate_pass
 from jerome.translate.tags import Decoded
 from jerome.types import BlockText, Candidate, StyleSheet
@@ -88,6 +91,7 @@ class WorkerDeps:
     sleep_base: float = 10.0
     # Returns the deps for the current settings (see jerome.core.settings_store.LiveRefresh).
     refresh: Callable[["WorkerDeps"], "WorkerDeps"] | None = None
+    storage: Storage | None = None  # where publish jobs read books and keep finished files
 
 
 def refreshed(deps: WorkerDeps) -> WorkerDeps:
@@ -230,6 +234,8 @@ def run_task(
             return
         if plan.kind == "consistency":
             _run_consistency(session_factory, task_id, plan, deps)
+        elif plan.kind == "publish":
+            _run_publish(session_factory, task_id, plan, deps)
         else:
             _run_chapter(session_factory, task_id, plan, deps, paid, stop)
     except Exception as exc:
@@ -689,6 +695,54 @@ def _run_consistency(sf: SessionFactory, task_id: int, plan: _Plan, deps: Worker
             auto_applied=apply_clear_cut(s, added.rows, plan.policy),
         )
         note = _complete_task(s, job, task, deps)
+        s.commit()
+    _send(note, deps)
+
+
+def _run_publish(sf: SessionFactory, task_id: int, plan: _Plan, deps: WorkerDeps) -> None:
+    """Make the finished file: prepare it in a short session, render it with no session
+    open, then keep it, named with the job's id so every run keeps its own file. A file that
+    cannot be made (PublishError) or a book that may not be published (Conflict) fails the
+    job at once: trying again would give the same answer. It spends no model money, so
+    there is no cost cap to check."""
+    storage = deps.storage
+    if storage is None:
+        raise RuntimeError("this worker has no storage, so it cannot run publish jobs")
+    try:
+        with sf() as s:
+            prepared = prepare(s, storage, plan.book_id, plan.passes[0])
+            s.commit()
+        data, _media_type = render(prepared)
+    except (PublishError, Conflict) as exc:
+        _fail_at_once(sf, task_id, plan, str(exc), deps)
+        return
+    name = f"{prepared.filename_stem}-{plan.job_id}.{prepared.extension}"
+    note = None
+    with sf() as s:
+        job, task = _lock_job_task(s, plan.job_id, task_id)
+        if task.status == "done" or job.status not in ACTIVE:  # cancelled while it rendered
+            s.commit()
+            return
+        storage.save_export(plan.book_id, name, data)
+        job.stats = {"file": name, "warnings": prepared.warnings}
+        note = _complete_task(s, job, task, deps)
+        s.commit()
+    _send(note, deps)
+
+
+def _fail_at_once(sf: SessionFactory, task_id: int, plan: _Plan, message: str, deps: WorkerDeps):
+    deps = refreshed(deps)
+    note = None
+    with sf() as s:
+        job, task = _lock_job_task(s, plan.job_id, task_id)
+        task.attempts += 1
+        task.error = message[:2000]
+        task.status = "failed"
+        task.finished_at = deps.now()
+        if job.status in ACTIVE:
+            job.status = "failed"
+            job.finished_at = deps.now()
+            note = _notification(job, "job.failed")
         s.commit()
     _send(note, deps)
 

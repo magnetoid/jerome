@@ -130,6 +130,27 @@ describe("needs attention", () => {
   });
 });
 
+describe("publish jobs on the project page", () => {
+  it("a newer finished-file job does not hide the failed proofreading job", async () => {
+    const failed = job({
+      status: "failed",
+      tasks: [{ id: 2, kind: "chapter", chapter_id: 12, status: "failed", chunks_done: 1, chunks_total: 6, attempts: 3, error: "model overloaded" }],
+    });
+    const made = job({
+      id: 40, type: "publish", status: "completed", passes: ["epub-book"], max_cost: "0", cost_actual: "0",
+      stats: { file: "sea-40.epub", warnings: [] },
+      tasks: [{ id: 6, kind: "publish", chapter_id: null, status: "done", chunks_done: 0, chunks_total: null, attempts: 1, error: null }],
+    });
+    pageApi({ "GET /v1/books/1/jobs": () => json(200, [made, failed]) },
+      project({ stage: "needs_attention", active_job: null }));
+    renderPage();
+    expect(await screen.findByText(/Proofreading stopped because something went wrong/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Download sea-40.epub" })).toHaveAttribute("href", "/v1/jobs/40/file");
+    expect(await screen.findByRole("heading", { name: "Publication" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Make PDF" })).toBeEnabled();
+  });
+});
+
 describe("resume after a cancel (F3)", () => {
   it.each(["to_review", "done", "set_up"])("offers Resume when the newest job was cancelled (%s)", async (stage) => {
     const f = pageApi({
