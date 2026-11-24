@@ -44,12 +44,40 @@ class PubBook:
     warnings: list[str] = field(default_factory=list)
 
 
+_WORDS = {
+    "en": {
+        "chapter": "Chapter {n}",
+        "contents": "Contents",
+        "translated_by": "Translated by {name}",
+        "cover": "Cover",
+        "title_page": "Title page",
+        "copyright": "Copyright",
+    },
+    "de": {
+        "chapter": "Kapitel {n}",
+        "contents": "Inhalt",
+        "translated_by": "Übersetzt von {name}",
+        "cover": "Umschlag",
+        "title_page": "Titelseite",
+        "copyright": "Impressum",
+    },
+}
+
+
+def word(language: str, key: str, **values: object) -> str:
+    """A word Jerome puts in the finished files, in the book's language (English when
+    Jerome does not know the language)."""
+    words = _WORDS.get(language.split("-")[0].lower(), _WORDS["en"])
+    return words[key].format(**values)
+
+
 def chapter_labels(pub: PubBook) -> list[str]:
     """Each chapter's contents label: its title, else ``Chapter {n}`` counting the chapters
-    in the contents, else "the text before the first chapter"."""
+    in the contents; "the opening pages" for untitled text before the first chapter."""
     labels, n = [], 0
     for chapter in pub.chapters:
         n += chapter.in_toc
         title = " ".join((chapter.title or "").split())
-        labels.append(title or (f"Chapter {n}" if chapter.in_toc else "the opening pages"))
+        untitled = word(pub.language, "chapter", n=n) if chapter.in_toc else "the opening pages"
+        labels.append(title or untitled)
     return labels
