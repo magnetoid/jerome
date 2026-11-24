@@ -9,6 +9,7 @@ two streams, each in reading order.
 
 from lxml import etree
 
+from jerome.documents.epub_xml import IGNORED, element_text, is_block_text, iter_epub_blocks
 from jerome.documents.model import PLACEHOLDER, BlockKind, ParsedBook
 from jerome.publish.model import NOTE_CLASS, PubBook, PublishTextError, chapter_labels
 
@@ -17,43 +18,68 @@ _SHY = "­"
 _WORDS_BEFORE, _WORDS_AFTER = 4, 8
 
 
-def check_text(pub: PubBook, parsed: ParsedBook, *, documents: set[str] | None = None) -> None:
-    """Raise PublishTextError at the first difference. ``documents`` limits the reviewed
-    blocks to those whose key is in one of the given parts (an EPUB's spine paths)."""
+def check_text(
+    pub: PubBook,
+    parsed: ParsedBook,
+    *,
+    documents: set[str] | None = None,
+    notes: set[str] | None = None,
+) -> None:
+    """Raise PublishTextError at the first difference.
+
+    ``documents`` limits the reviewed blocks to those whose key is in one of the given parts
+    (an EPUB's spine paths); ``notes`` names blocks that became notes (an EPUB's asides).
+    The finished text is read the way the reviewed file was: all of it for a Word file,
+    an EPUB's leaf blocks for an EPUB (text outside them was never reviewed).
+    """
     body_blocks, note_blocks = [], []
     for chapter in parsed.chapters:
         for block in chapter.blocks:
             if documents is not None and block.key.partition("#")[0] not in documents:
                 continue
-            (note_blocks if block.kind == BlockKind.FOOTNOTE else body_blocks).append(block.text)
+            is_note = block.kind == BlockKind.FOOTNOTE or block.key in (notes or ())
+            (note_blocks if is_note else body_blocks).append(block.text)
 
     labels = chapter_labels(pub)
     body, notes, starts = [], [], []
     for chapter in pub.chapters:
         starts.append(len(_compact(" ".join(body))[0]))
-        text, chapter_notes = _texts(chapter.html)
+        text, chapter_notes = _texts(chapter.html, by_blocks=parsed.format == "epub")
         body.append(text)
         notes += chapter_notes
     _compare(" ".join(body), " ".join(body_blocks), labels, starts)
     _compare(" ".join(notes), " ".join(note_blocks), ["the footnotes"], [0])
 
 
-def _texts(html: str) -> tuple[str, list[str]]:
-    """The fragment's text outside notes, and each note's text."""
+def _texts(html: str, *, by_blocks: bool) -> tuple[str, list[str]]:
+    """The fragment's text outside notes, and each note's text. Text in ``IGNORED``
+    elements and in foreign (SVG, MathML) elements is not text, as in Jerome's readers."""
     root = etree.fromstring(f"<div>{html}</div>".encode())
     notes: list[str] = []
+    for span in [el for el in root.iter("span") if el.get("class") == NOTE_CLASS]:
+        if span.getparent() is None:
+            continue
+        notes.append(_walk(span))
+        parent, prev = span.getparent(), span.getprevious()
+        if prev is not None:
+            prev.tail = (prev.tail or "") + (span.tail or "")
+        else:
+            parent.text = (parent.text or "") + (span.tail or "")
+        parent.remove(span)
+    if not by_blocks:
+        return _walk(root), notes
+    blocks = (element_text(el).text for _, el in iter_epub_blocks(root) if el is not root)
+    return " ".join(t for t in blocks if is_block_text(t)), notes
 
-    def walk(el: etree._Element) -> str:
-        parts = [el.text or ""]
-        for child in el:
-            if isinstance(child.tag, str) and child.get("class") == NOTE_CLASS:
-                notes.append("".join(child.itertext()))
-            elif isinstance(child.tag, str):
-                parts.append(" " + walk(child) + " ")
-            parts.append(child.tail or "")
-        return "".join(parts)
 
-    return walk(root), notes
+def _walk(el: etree._Element) -> str:
+    parts = [el.text or ""]
+    for child in el:
+        if isinstance(child.tag, str) and not child.tag.startswith("{"):
+            if child.tag not in IGNORED:
+                parts.append(" " + _walk(child) + " ")
+        parts.append(child.tail or "")
+    return "".join(parts)
 
 
 def _compact(text: str) -> tuple[str, list[int], str]:

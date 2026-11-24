@@ -5,6 +5,9 @@ from dataclasses import dataclass, field
 from jerome.errors import JeromeError
 
 NOTE_CLASS = "jr-note"  # <span class="jr-note">…</span>: a footnote, at its reference point
+# <span class="jr-drop">…</span> inside a note: the source's own note number or back-link,
+# kept so the text check sees it, and hidden in the finished files
+DROP_CLASS = "jr-drop"
 
 
 class PublishError(JeromeError):
