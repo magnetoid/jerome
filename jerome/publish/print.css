@@ -1,0 +1,71 @@
+/* Jerome's print stylesheet for finished PDFs (WeasyPrint). __SIZE__, __WIDTH__, __HEIGHT__
+   and __IMG_HEIGHT__ are filled in from the book's trim size. */
+
+@font-face { font-family: "EB Garamond"; src: url("fonts/EBGaramond-Regular.ttf");
+  font-weight: normal; font-style: normal; }
+@font-face { font-family: "EB Garamond"; src: url("fonts/EBGaramond-Italic.ttf");
+  font-weight: normal; font-style: italic; }
+@font-face { font-family: "EB Garamond"; src: url("fonts/EBGaramond-Bold.ttf");
+  font-weight: bold; font-style: normal; }
+@font-face { font-family: "EB Garamond"; src: url("fonts/EBGaramond-BoldItalic.ttf");
+  font-weight: bold; font-style: italic; }
+
+@page {
+  size: __SIZE__;
+  margin: 0.75in 0.65in;
+  @bottom-center { content: counter(page); font: 9pt "EB Garamond"; }
+  @footnote { border-top: 0.4pt solid #666; padding-top: 4pt; margin-top: 8pt; }
+}
+@page :left { @top-center { content: string(bookhead, first-except);
+  font: italic 9pt "EB Garamond"; } }
+@page :right { @top-center { content: string(chapter, first-except);
+  font: italic 9pt "EB Garamond"; } }
+@page front { @top-center { content: none; } @bottom-center { content: none; } }
+@page cover { margin: 0; @top-center { content: none; } @bottom-center { content: none; } }
+
+html { font-family: "EB Garamond", serif; font-size: 11pt; line-height: 1.35; }
+body { margin: 0; }
+p { margin: 0; text-indent: 1.2em; text-align: justify; hyphens: auto;
+  widows: 2; orphans: 2; }
+h1 + p, h2 + p, h3 + p, h4 + p, blockquote p:first-child, li p, td p,
+.titlepage p, .copyright p, .front p:first-child { text-indent: 0; }
+h1, h2, h3, h4, h5, h6 { bookmark-level: none; hyphens: manual; break-after: avoid;
+  font-weight: normal; line-height: 1.2; }
+h1 { font-size: 18pt; text-align: center; margin: 1.1in 0 0.45in; }
+h2 { font-size: 14pt; margin: 0.35in 0 0.15in; }
+h3 { font-size: 12pt; font-style: italic; margin: 0.25in 0 0.1in; }
+h4, h5, h6 { font-size: 11pt; font-style: italic; margin: 0.2in 0 0.08in; }
+blockquote { margin: 0.5em 1.5em; font-size: 10.5pt; }
+ul, ol { margin: 0.4em 0 0.4em 1.4em; padding: 0; }
+table { border-collapse: collapse; width: 100%; margin: 0.6em 0; font-size: 10pt; }
+td, th { border: 0.4pt solid #888; padding: 2pt 4pt; vertical-align: top; }
+img { max-width: 100%; max-height: __IMG_HEIGHT__; }
+p > img:only-child { display: block; margin: 0.4em auto; }
+sup, sub { line-height: 0; }
+a { color: inherit; text-decoration: none; }
+
+.cover { page: cover; break-after: page; margin: 0; }
+.cover img { display: block; width: __WIDTH__; height: __HEIGHT__; max-height: none;
+  object-fit: contain; }
+.titlepage, .copyright, .contents { page: front; break-before: page; }
+.titlepage { text-align: center; padding-top: 1.6in; }
+.titlepage .book-title { font-size: 24pt; margin: 0 0 0.4in; }
+.titlepage p { text-align: center; margin: 0.12in 0; }
+.titlepage .author { font-size: 14pt; }
+.copyright { padding-top: 4.5in; font-size: 9pt; }
+.copyright p { text-align: left; margin: 0.06in 0; }
+.contents h2 { text-align: center; font-size: 16pt; margin: 0.8in 0 0.4in; }
+.contents ol { list-style: none; margin: 0; padding: 0; }
+.contents li { margin: 0.08in 0; }
+.contents a::after { content: leader(".") target-counter(attr(href), page); }
+
+.front, .chapter { break-before: page; counter-reset: footnote; }
+.chapter { string-set: chapter attr(data-title), bookhead attr(data-book); }
+.chapter[data-toc] { bookmark-level: 1; bookmark-label: attr(data-title); }
+
+.footnote { float: footnote; font-size: 9pt; line-height: 1.25; text-align: left;
+  text-indent: 0; hyphens: manual; font-style: normal; font-weight: normal; }
+.footnote::footnote-call { content: counter(footnote); vertical-align: super;
+  font-size: 7pt; line-height: 0; }
+.footnote::footnote-marker { content: counter(footnote) ". "; }
+.jr-drop { display: none; }
