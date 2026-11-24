@@ -237,7 +237,7 @@ def test_provider_models_super_admin_only(web_client, session, auth):
     assert r.status_code == 403
     create_user(session, "bo@x.org", "Bo", PASSWORD, role="member")
     web_client.post("/v1/auth/login", json={"email": "bo@x.org", "password": PASSWORD})
-    assert web_client.get(MODELS_URL, params={"provider": "openai"}).status_code == 403
+    assert web_client.get(MODELS_URL, params={"provider": "openai"}, headers=WEB).status_code == 403
 
 
 def test_provider_models_with_app_key(web_client, session, with_secret_storage, respx_mock):
@@ -246,7 +246,7 @@ def test_provider_models_with_app_key(web_client, session, with_secret_storage, 
     route = respx_mock.get("https://api.openai.com/v1/models").respond(
         200, json={"data": [{"id": "gpt-5"}, {"id": "text-embedding-3-small"}]}
     )
-    r = web_client.get(MODELS_URL, params={"provider": "openai"})
+    r = web_client.get(MODELS_URL, params={"provider": "openai"}, headers=WEB)
     assert r.status_code == 200, r.text
     assert r.json() == {"provider": "openai", "models": [{"id": "gpt-5", "name": "gpt-5"}]}
     assert route.calls.last.request.headers["authorization"] == "Bearer sk-SECRET-9"
@@ -261,14 +261,14 @@ def test_provider_models_with_environment_key(web_client, session, test_settings
     route = respx_mock.get("https://api.anthropic.com/v1/models").respond(
         200, json={"data": [{"id": "claude-opus-5-5", "display_name": "Claude Opus 5.5"}]}
     )
-    r = web_client.get(MODELS_URL, params={"provider": "anthropic"})
+    r = web_client.get(MODELS_URL, params={"provider": "anthropic"}, headers=WEB)
     assert r.status_code == 200 and r.json()["models"][0]["id"] == "claude-opus-5-5"
     assert route.calls.last.request.headers["x-api-key"] == "sk-ant-ENV"
 
 
 def test_provider_models_without_key_is_409(web_client, session):
     login(web_client, session)
-    r = web_client.get(MODELS_URL, params={"provider": "xai"})
+    r = web_client.get(MODELS_URL, params={"provider": "xai"}, headers=WEB)
     assert r.status_code == 409 and r.json()["detail"] == "Set the xAI key under Secrets first"
 
 
@@ -277,7 +277,9 @@ def test_provider_models_own_server_needs_no_key(web_client, session, respx_mock
     reply = {"data": [{"id": "qwen3"}]}
     respx_mock.get("http://localhost:11434/v1/models").respond(200, json=reply)
     r = web_client.get(
-        MODELS_URL, params={"provider": "openai_compat", "base_url": "http://localhost:11434/v1"}
+        MODELS_URL,
+        params={"provider": "openai_compat", "base_url": "http://localhost:11434/v1"},
+        headers=WEB,
     )
     assert r.status_code == 200 and r.json()["models"] == [{"id": "qwen3", "name": "qwen3"}]
 
@@ -294,7 +296,7 @@ def test_provider_models_own_server_needs_no_key(web_client, session, respx_mock
 )
 def test_provider_models_bad_input_is_400(web_client, session, params):
     login(web_client, session)
-    assert web_client.get(MODELS_URL, params=params).status_code == 400
+    assert web_client.get(MODELS_URL, params=params, headers=WEB).status_code == 400
 
 
 def test_provider_models_provider_failure_is_502(
@@ -303,7 +305,7 @@ def test_provider_models_provider_failure_is_502(
     login(web_client, session)
     web_client.put("/v1/settings/openai_api_key", headers=WEB, json={"value": "sk-SECRET-9"})
     respx_mock.get("https://api.openai.com/v1/models").respond(401)
-    r = web_client.get(MODELS_URL, params={"provider": "openai"})
+    r = web_client.get(MODELS_URL, params={"provider": "openai"}, headers=WEB)
     assert r.status_code == 502 and r.json()["detail"] == "OpenAI refused the key"
 
 
@@ -316,5 +318,38 @@ def test_provider_models_unreadable_key_is_409(web_client, session, test_setting
     web_client.app.state.settings = test_settings.model_copy(  # the key was rotated
         update={"secret_key": SecretStr(Fernet.generate_key().decode())}
     )
-    r = web_client.get(MODELS_URL, params={"provider": "mistral"})
+    r = web_client.get(MODELS_URL, params={"provider": "mistral"}, headers=WEB)
     assert r.status_code == 409 and "Mistral" in r.json()["detail"]
+
+
+def test_provider_models_needs_the_web_header(web_client, session, respx_mock):
+    # a link on another site would bring the session cookie but not this header
+    login(web_client, session)
+    route = respx_mock.get("https://evil.example/v1/models").respond(200, json={"data": []})
+    params = {"provider": "openai_compat", "base_url": "https://evil.example/v1"}
+    assert web_client.get(MODELS_URL, params=params).status_code == 403
+    assert not route.called
+
+
+def test_own_server_key_goes_only_to_the_saved_url(
+    web_client, session, with_secret_storage, respx_mock
+):
+    login(web_client, session)
+    saved = {"provider": "openai_compat", "model": "qwen3", "base_url": "http://localhost:11434/v1"}
+    web_client.put("/v1/settings/models.ai", headers=WEB, json={"value": saved})
+    web_client.put("/v1/settings/openai_compat_api_key", headers=WEB, json={"value": "own-SECRET"})
+    ours = respx_mock.get("http://localhost:11434/v1/models").respond(200, json={"data": []})
+    other = respx_mock.get("http://other.example/v1/models").respond(200, json={"data": []})
+    for url in ("http://localhost:11434/v1", "http://localhost:11434/v1/"):
+        r = web_client.get(
+            MODELS_URL, params={"provider": "openai_compat", "base_url": url}, headers=WEB
+        )
+        assert r.status_code == 200
+        assert ours.calls.last.request.headers["authorization"] == "Bearer own-SECRET"
+    r = web_client.get(
+        MODELS_URL,
+        params={"provider": "openai_compat", "base_url": "http://other.example/v1"},
+        headers=WEB,
+    )
+    assert r.status_code == 200
+    assert "authorization" not in other.calls.last.request.headers

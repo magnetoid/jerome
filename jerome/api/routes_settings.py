@@ -2,10 +2,10 @@
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy.engine import make_url
 
-from jerome.api.deps import Principal, SessionDep, require_super_admin
+from jerome.api.deps import CLIENT_HEADER, Principal, SessionDep, require_super_admin
 from jerome.api.schemas import (
     ApiKeyCreatedOut,
     ApiKeyCreateIn,
@@ -18,6 +18,7 @@ from jerome.api.schemas import (
     SettingsOut,
     SystemSettingsOut,
 )
+from jerome.config import Settings
 from jerome.core import keys, settings_changes
 from jerome.core.app_settings import (
     RUNTIME_KEYS,
@@ -108,12 +109,24 @@ def reset_setting(key: str, request: Request, session: SessionDep, who: Admin):
     return Response(status_code=204)
 
 
-@router.get("/settings/provider-models", response_model=ProviderModelsOut)
+def _from_our_pages(request: Request) -> None:
+    """This GET sends a stored key out, so it takes the cross-site guard the session gives
+    only to other methods: a link on another site brings the cookie but not this header."""
+    if request.headers.get(CLIENT_HEADER) != "web":
+        raise HTTPException(status_code=403, detail="missing X-Jerome-Client header")
+
+
+@router.get(
+    "/settings/provider-models",
+    response_model=ProviderModelsOut,
+    dependencies=[Depends(_from_our_pages)],
+)
 def provider_models(
     request: Request, session: SessionDep, provider: str, base_url: str | None = None
 ):
     """The provider's text models, fetched now with the stored key (app, else environment).
-    409 when the key is not set; 502 when the provider fails."""
+    409 when the key is not set; 502 when the provider fails. The own-server key goes only
+    to a base URL saved under Models; another URL is asked without a key."""
     if provider not in LISTABLE:
         raise InvalidSetting(f"provider must be one of {', '.join(LISTABLE)}")
     if provider == "openai_compat":
@@ -123,12 +136,26 @@ def provider_models(
     elif base_url:
         raise InvalidSetting("base_url applies only to openai_compat")
     base = request.app.state.settings
-    secrets = overlay(base, settings_changes.load_rows(session), secret_box(base)).secrets
-    key = secrets.get(f"{provider}_api_key")
+    effective = overlay(base, settings_changes.load_rows(session), secret_box(base))
+    key = effective.secrets.get(f"{provider}_api_key")
+    if provider == "openai_compat" and base_url not in _saved_own_urls(effective.settings):
+        key = None
     if not key and provider != "openai_compat":
         raise Conflict(f"Set the {LABELS[provider]} key under Secrets first")
     models = list_models(provider, api_key=key, base_url=base_url)
     return ProviderModelsOut(provider=provider, models=models)
+
+
+def _saved_own_urls(settings: Settings) -> set[str]:
+    """The own-server base URLs saved under Models, as check_url writes them."""
+    urls = set()
+    for cfg in settings.models.values():
+        if isinstance(cfg, dict) and cfg.get("provider") == "openai_compat" and cfg.get("base_url"):
+            try:
+                urls.add(check_url(cfg["base_url"], "base_url"))
+            except InvalidSetting:
+                continue
+    return urls
 
 
 @router.get("/api-keys", response_model=list[ApiKeyOut])
