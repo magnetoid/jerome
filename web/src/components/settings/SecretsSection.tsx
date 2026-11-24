@@ -40,6 +40,8 @@ const CHECKED: Record<string, string> = {
   openrouter_api_key: "openrouter",
   xai_api_key: "xai",
 };
+/** Every key a model list is fetched with: any change to one makes its cached lists stale. */
+const LISTED: Record<string, string> = { ...CHECKED, openai_compat_api_key: "openai_compat" };
 
 function statusOf(row: SecretRow): string {
   if (row.unreadable) return "Can't be read, enter again";
@@ -68,7 +70,13 @@ function SecretItem({ row, storageReady }: { row: SecretRow; storageReady: boole
     } catch (err) {
       setCheck(listError(err));
     }
-    void queryClient.invalidateQueries({ queryKey: [PROVIDER_MODELS_KEY, provider] });
+    staleLists();
+  }
+
+  /** The model lists fetched with this key's old value. */
+  function staleLists() {
+    const provider = LISTED[row.key];
+    if (provider) void queryClient.invalidateQueries({ queryKey: [PROVIDER_MODELS_KEY, provider] });
   }
 
   async function send(value: string | null) {
@@ -88,14 +96,17 @@ function SecretItem({ row, storageReady }: { row: SecretRow; storageReady: boole
     }
     const provider = CHECKED[row.key];
     if (saved && value !== null && provider) await checkKey(provider);
+    else if (saved) staleLists();
   }
 
   async function reset() {
     setBusy(true);
+    setCheck(null); // the check was of the value just removed
     try {
       await apiFetch(`/v1/settings/${row.key}`, { method: "DELETE" });
       setText("");
       toast.success("Reset to the fallback value");
+      staleLists();
     } catch (err) {
       errorToast(err);
     } finally {

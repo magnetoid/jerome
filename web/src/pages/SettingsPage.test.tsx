@@ -435,6 +435,30 @@ describe("SettingsPage", () => {
       expect(within(hook).queryByText(/Key works/)).not.toBeInTheDocument();
     });
 
+    it("resetting a provider key reloads its models and drops the key check", async () => {
+      const { f } = setup(
+        {
+          "PUT /v1/settings/openai_api_key": () => json(200, withOpenAiKey()),
+          "DELETE /v1/settings/openai_api_key": () => new Response(null, { status: 204 }),
+          [OPENAI_LIST]: openAiModels,
+        },
+        withOpenAiKey(),
+      );
+      const user = userEvent.setup();
+      const ai = await screen.findByRole("group", { name: "Proofreading model" });
+      await user.selectOptions(within(ai).getByLabelText("Provider"), "openai");
+      await within(ai).findByText("2 models from OpenAI");
+      const group = screen.getByRole("group", { name: "OpenAI API key" });
+      await user.type(within(group).getByLabelText("New OpenAI API key"), "sk-new");
+      await user.click(within(group).getByRole("button", { name: "Save" }));
+      expect(await within(group).findByText("Key works: 2 models")).toBeInTheDocument();
+      const before = listCalls(f, "openai");
+      await user.click(within(group).getByRole("button", { name: "Reset" }));
+      await waitFor(() => expect(call(f, "DELETE", "/v1/settings/openai_api_key")).toBeTruthy());
+      await waitFor(() => expect(listCalls(f, "openai")).toBeGreaterThan(before));
+      expect(within(group).queryByText(/Key works/)).not.toBeInTheDocument();
+    });
+
     it("a refused key says so after saving", async () => {
       setup(
         {
