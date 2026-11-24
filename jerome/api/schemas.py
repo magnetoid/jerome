@@ -269,6 +269,16 @@ class SystemSettingsOut(BaseModel):
     secret_storage: Literal["ready", "missing", "invalid"]
 
 
+class ProviderModelOut(BaseModel):
+    id: str
+    name: str
+
+
+class ProviderModelsOut(BaseModel):
+    provider: str
+    models: list[ProviderModelOut]
+
+
 class SettingsOut(BaseModel):
     settings: list[SettingOut]
     secrets: list[SecretSettingOut]

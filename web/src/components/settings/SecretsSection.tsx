@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { apiFetch } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -13,6 +14,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { countModels, fetchProviderModels, listError, PROVIDER_MODELS_KEY } from "@/lib/providerModels";
 import { errorToast, SourceNote, useRefreshSettings, type SecretRow, type SystemInfo } from "./shared";
 
 const LABELS: Record<string, string> = {
@@ -27,6 +29,19 @@ const LABELS: Record<string, string> = {
   deepl_api_key: "DeepL API key",
   languagetool_api_key: "LanguageTool Premium API key",
 };
+
+/** Keys of model providers: saving one fetches its model list to check it. The own-server key
+ * is left out, since its URL is set under Models. */
+const CHECKED: Record<string, string> = {
+  anthropic_api_key: "anthropic",
+  openai_api_key: "openai",
+  gemini_api_key: "gemini",
+  mistral_api_key: "mistral",
+  openrouter_api_key: "openrouter",
+  xai_api_key: "xai",
+};
+/** Every key a model list is fetched with: any change to one makes its cached lists stale. */
+const LISTED: Record<string, string> = { ...CHECKED, openai_compat_api_key: "openai_compat" };
 
 function statusOf(row: SecretRow): string {
   if (row.unreadable) return "Can't be read, enter again";
@@ -44,27 +59,54 @@ function SecretItem({ row, storageReady }: { row: SecretRow; storageReady: boole
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const [check, setCheck] = useState<string | null>(null);
+  const queryClient = useQueryClient();
+
+  async function checkKey(provider: string) {
+    setCheck("Checking the key…");
+    try {
+      const list = await fetchProviderModels(provider);
+      setCheck(`Key works: ${countModels(list.models.length)}`);
+    } catch (err) {
+      setCheck(listError(err));
+    }
+    staleLists();
+  }
+
+  /** The model lists fetched with this key's old value. */
+  function staleLists() {
+    const provider = LISTED[row.key];
+    if (provider) void queryClient.invalidateQueries({ queryKey: [PROVIDER_MODELS_KEY, provider] });
+  }
 
   async function send(value: string | null) {
     setBusy(true);
+    setCheck(null);
+    let saved = false;
     try {
       await apiFetch(`/v1/settings/${row.key}`, { method: "PUT", json: { value } });
       setText("");
       toast.success(value === null ? "Cleared" : "Saved");
+      saved = true;
     } catch (err) {
       errorToast(err);
     } finally {
       setBusy(false);
       void refresh();
     }
+    const provider = CHECKED[row.key];
+    if (saved && value !== null && provider) await checkKey(provider);
+    else if (saved) staleLists();
   }
 
   async function reset() {
     setBusy(true);
+    setCheck(null); // the check was of the value just removed
     try {
       await apiFetch(`/v1/settings/${row.key}`, { method: "DELETE" });
       setText("");
       toast.success("Reset to the fallback value");
+      staleLists();
     } catch (err) {
       errorToast(err);
     } finally {
@@ -88,6 +130,11 @@ function SecretItem({ row, storageReady }: { row: SecretRow; storageReady: boole
         onChange={(e) => setText(e.target.value)}
       />
       <SourceNote row={{ ...row, unreadable: false }} />
+      {check && (
+        <p role="status" className="text-sm text-muted-foreground">
+          {check}
+        </p>
+      )}
       <div className="flex gap-2">
         <Button
           type="button"

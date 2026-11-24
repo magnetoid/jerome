@@ -42,6 +42,7 @@ from jerome.errors import (
     UnsupportedLanguagePair,
 )
 from jerome.mcp.server import mount_mcp
+from jerome.models.listing import ProviderListError
 from jerome.models.registry import build_registry
 from jerome.proofread.languagetool import lt_client
 from jerome.proofread.text import TextLimits
@@ -56,6 +57,7 @@ _ERROR_STATUS: dict[type[Exception], int] = {
     UnsupportedLanguagePair: 400,
     InvalidPublication: 422,
     AiCheckError: 502,
+    ProviderListError: 502,
 }
 
 

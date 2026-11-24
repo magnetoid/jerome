@@ -66,6 +66,8 @@ function setup(extra: Parameters<typeof mockApi>[0] = {}, settings = body()) {
       { id: 1, name: "ci", created_at: "2026-11-01T10:00:00Z", revoked_at: null },
       { id: 2, name: "old", created_at: "2026-10-01T10:00:00Z", revoked_at: "2026-11-02T10:00:00Z" },
     ]),
+    // the Anthropic key is set in body(), so the Claude model fields ask for its list
+    "GET /v1/settings/provider-models?provider=anthropic": json(200, { provider: "anthropic", models: [] }),
     ...extra,
   });
   const view = renderApp(<SettingsPage />);
@@ -334,5 +336,142 @@ describe("SettingsPage", () => {
     await user.click(within(rpm).getByRole("button", { name: "Save" }));
     await waitFor(() =>
       expect(toast.error).toHaveBeenCalledWith("must be a whole number from 1 to 10000"));
+  });
+
+  describe("provider model lists", () => {
+    const withOpenAiKey = () =>
+      body({
+        secrets: [
+          secret("anthropic_api_key", true, "app"),
+          secret("openai_api_key", true, "app"),
+          secret("mistral_api_key", false),
+          secret("webhook_secret", false),
+        ],
+      });
+    const OPENAI_LIST = "GET /v1/settings/provider-models?provider=openai";
+    const openAiModels = () =>
+      json(200, { provider: "openai", models: [{ id: "gpt-live-a", name: "gpt-live-a" }, { id: "gpt-live-b", name: "gpt-live-b" }] });
+    const suggestions = (group: HTMLElement) => {
+      const list = document.getElementById(within(group).getByLabelText("Model").getAttribute("list")!)!;
+      return [...list.querySelectorAll("option")].map((o) => o.value);
+    };
+    const listCalls = (f: ReturnType<typeof mockApi>, provider: string) =>
+      f.mock.calls.filter(([p]) => String(p).startsWith(`/v1/settings/provider-models?provider=${provider}`)).length;
+
+    it("a provider with a key offers its live models, with Refresh", async () => {
+      const { f } = setup({ [OPENAI_LIST]: openAiModels }, withOpenAiKey());
+      const user = userEvent.setup();
+      const ai = await screen.findByRole("group", { name: "Proofreading model" });
+      await user.selectOptions(within(ai).getByLabelText("Provider"), "openai");
+      expect(await within(ai).findByText("2 models from OpenAI")).toBeInTheDocument();
+      expect(suggestions(ai)).toEqual(["gpt-live-a", "gpt-live-b"]);
+      await user.click(within(ai).getByRole("button", { name: "Refresh" }));
+      await waitFor(() => expect(listCalls(f, "openai")).toBe(2));
+    });
+
+    it("without a key keeps the fixed suggestions and asks nothing", async () => {
+      const { f } = setup({}, withOpenAiKey());
+      const user = userEvent.setup();
+      const ai = await screen.findByRole("group", { name: "Proofreading model" });
+      await user.selectOptions(within(ai).getByLabelText("Provider"), "mistral");
+      expect(suggestions(ai)).toContain("mistral-large-latest");
+      expect(listCalls(f, "mistral")).toBe(0);
+      expect(within(ai).queryByRole("button", { name: "Refresh" })).not.toBeInTheDocument();
+    });
+
+    it("switching provider drops the old list", async () => {
+      setup({ [OPENAI_LIST]: openAiModels }, withOpenAiKey());
+      const user = userEvent.setup();
+      const ai = await screen.findByRole("group", { name: "Proofreading model" });
+      await user.selectOptions(within(ai).getByLabelText("Provider"), "openai");
+      await within(ai).findByText("2 models from OpenAI");
+      await user.selectOptions(within(ai).getByLabelText("Provider"), "mistral");
+      expect(suggestions(ai)).not.toContain("gpt-live-a");
+      expect(within(ai).queryByText("2 models from OpenAI")).not.toBeInTheDocument();
+    });
+
+    it("shows why a list could not be loaded", async () => {
+      setup({ [OPENAI_LIST]: () => json(502, { detail: "OpenAI refused the key" }) }, withOpenAiKey());
+      const user = userEvent.setup();
+      const ai = await screen.findByRole("group", { name: "Proofreading model" });
+      await user.selectOptions(within(ai).getByLabelText("Provider"), "openai");
+      expect(await within(ai).findByText("OpenAI refused the key")).toBeInTheDocument();
+      expect(suggestions(ai)).toContain("gpt-5"); // the fixed ones stay
+    });
+
+    it("an own server lists after Load, from the typed URL", async () => {
+      const path =
+        "/v1/settings/provider-models?provider=openai_compat&base_url=https%3A%2F%2Fllm.example.com%2Fv1";
+      const { f } = setup({ [`GET ${path}`]: json(200, { provider: "openai_compat", models: [{ id: "qwen3", name: "qwen3" }] }) });
+      const user = userEvent.setup();
+      const ai = await screen.findByRole("group", { name: "Proofreading model" });
+      await user.selectOptions(within(ai).getByLabelText("Provider"), "openai_compat");
+      expect(listCalls(f, "openai_compat")).toBe(0);
+      await user.type(within(ai).getByLabelText("Base URL"), "https://llm.example.com/v1");
+      await user.click(within(ai).getByRole("button", { name: "Load models" }));
+      expect(await within(ai).findByText("1 model from Own server")).toBeInTheDocument();
+      expect(suggestions(ai)).toEqual(["qwen3"]);
+    });
+
+    it("saving a provider key checks it at once", async () => {
+      const { f } = setup(
+        {
+          "PUT /v1/settings/openai_api_key": () => json(200, withOpenAiKey()),
+          "PUT /v1/settings/webhook_secret": () => json(200, withOpenAiKey()),
+          [OPENAI_LIST]: openAiModels,
+        },
+        withOpenAiKey(),
+      );
+      const user = userEvent.setup();
+      const group = await screen.findByRole("group", { name: "OpenAI API key" });
+      await user.type(within(group).getByLabelText("New OpenAI API key"), "sk-new");
+      await user.click(within(group).getByRole("button", { name: "Save" }));
+      expect(await within(group).findByText("Key works: 2 models")).toBeInTheDocument();
+
+      const hook = screen.getByRole("group", { name: "Webhook secret" });
+      await user.type(within(hook).getByLabelText("New Webhook secret"), "whsec");
+      await user.click(within(hook).getByRole("button", { name: "Save" }));
+      await waitFor(() => expect(call(f, "PUT", "/v1/settings/webhook_secret")).toBeTruthy());
+      expect(within(hook).queryByText(/Key works/)).not.toBeInTheDocument();
+    });
+
+    it("resetting a provider key reloads its models and drops the key check", async () => {
+      const { f } = setup(
+        {
+          "PUT /v1/settings/openai_api_key": () => json(200, withOpenAiKey()),
+          "DELETE /v1/settings/openai_api_key": () => new Response(null, { status: 204 }),
+          [OPENAI_LIST]: openAiModels,
+        },
+        withOpenAiKey(),
+      );
+      const user = userEvent.setup();
+      const ai = await screen.findByRole("group", { name: "Proofreading model" });
+      await user.selectOptions(within(ai).getByLabelText("Provider"), "openai");
+      await within(ai).findByText("2 models from OpenAI");
+      const group = screen.getByRole("group", { name: "OpenAI API key" });
+      await user.type(within(group).getByLabelText("New OpenAI API key"), "sk-new");
+      await user.click(within(group).getByRole("button", { name: "Save" }));
+      expect(await within(group).findByText("Key works: 2 models")).toBeInTheDocument();
+      const before = listCalls(f, "openai");
+      await user.click(within(group).getByRole("button", { name: "Reset" }));
+      await waitFor(() => expect(call(f, "DELETE", "/v1/settings/openai_api_key")).toBeTruthy());
+      await waitFor(() => expect(listCalls(f, "openai")).toBeGreaterThan(before));
+      expect(within(group).queryByText(/Key works/)).not.toBeInTheDocument();
+    });
+
+    it("a refused key says so after saving", async () => {
+      setup(
+        {
+          "PUT /v1/settings/openai_api_key": () => json(200, withOpenAiKey()),
+          [OPENAI_LIST]: () => json(502, { detail: "OpenAI refused the key" }),
+        },
+        withOpenAiKey(),
+      );
+      const user = userEvent.setup();
+      const group = await screen.findByRole("group", { name: "OpenAI API key" });
+      await user.type(within(group).getByLabelText("New OpenAI API key"), "sk-bad");
+      await user.click(within(group).getByRole("button", { name: "Save" }));
+      expect(await within(group).findByText("OpenAI refused the key")).toBeInTheDocument();
+    });
   });
 });
