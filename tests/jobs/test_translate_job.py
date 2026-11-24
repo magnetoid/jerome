@@ -4,7 +4,6 @@ import threading
 from decimal import Decimal
 from pathlib import Path
 
-import httpx
 import pytest
 from sqlalchemy import func, select
 
@@ -18,33 +17,18 @@ from jerome.documents.model import PLACEHOLDER
 from jerome.errors import Conflict
 from jerome.jobs.estimate import estimate_translation
 from jerome.jobs.service import create_job, create_translation_job
-from jerome.jobs.worker import WorkerDeps, claim_task, run_task
-from jerome.models import FakeProvider, ModelOutputError, ModelRefusal, Registry, Usage, cost
+from jerome.jobs.worker import claim_task, run_task
+from jerome.models import FakeProvider, ModelOutputError, ModelRefusal, Usage, cost
 from jerome.orm import Block, Chapter, Job, JobTask, ModelUsage, Segment
-from jerome.proofread.languagetool import LanguageToolClient
 from tests.fixtures.docx_builders import make_docx
 from tests.fixtures.epub_builders import make_epub
+from tests.fixtures.translation import deps_for, drain, echo, registry_for
 from tests.translate.fakes import echo_translator, scripted
 
 PUBLIC = Path(__file__).resolve().parent.parent / "fixtures" / "public"
 LONG = " ".join(["word"] * 700)  # two of these do not fit one 1,200-word chunk
 CALL_COST = Decimal("0.007")  # one FakeProvider call, Usage(1000, 150), at the default price
 _BLOCK_ID = re.compile(r'<block id="(\d+)">')
-
-
-def registry_for(test_settings, provider, *, ai=False):
-    models = {"translate": {"provider": "fake", "model": "claude-opus-5-5"}}
-    if ai:
-        models["ai"] = {"provider": "fake", "model": "claude-opus-5-5"}
-    return Registry(test_settings.model_copy(update={"models": models}), {"fake": provider})
-
-
-def deps_for(registry):
-    return WorkerDeps(registry, LanguageToolClient("http://lt.test", httpx.Client()), None)
-
-
-def echo(n=200, prefix="DE "):
-    return [echo_translator(prefix)] * n
 
 
 def imported(sf, storage, *, data=None, filename="b.docx", src="en-GB", tgt="de-DE", **kw):
@@ -69,17 +53,6 @@ def start(sf, registry, book_id, max_cost=Decimal("10")):
         )
         s.commit()
         return job.id
-
-
-def drain(sf, deps, stop=None):
-    while True:
-        with sf() as s:
-            task_id = claim_task(s)
-        if task_id is None:
-            return
-        run_task(sf, task_id, deps, stop)
-        if stop is not None and stop.is_set():  # the worker stops, like work_forever
-            return
 
 
 def blocks(sf, book_id):
