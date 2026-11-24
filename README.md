@@ -177,7 +177,9 @@ calibrated from the first evaluation run; the cost cap still bounds the actual s
 ### Choosing services
 
 On the Settings page, the proofreading model and the translation model each pick a
-provider. Each provider's key goes under Secrets.
+provider. Each provider's key goes under Secrets. Saving a key fetches that provider's model
+list to check it ("Key works: 42 models"), and the Model field then offers the live list (an
+own server's list comes from its Base URL, with Load models). The key stays on the server.
 
 | Provider | Used for | Key |
 | --- | --- | --- |

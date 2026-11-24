@@ -1,7 +1,9 @@
 import { useState } from "react";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { NATIVE_SELECT } from "@/components/NativeSelect";
+import { countModels, LIST_LABELS, listError, useProviderModels } from "@/lib/providerModels";
 import { SettingFrame, useSettingActions, type SettingRow } from "./shared";
 
 type Ai = { provider?: string; model?: string; effort?: string; base_url?: string };
@@ -44,11 +46,14 @@ export default function ModelSettings({
   label,
   idPrefix,
   allowDeepl = false,
+  keyed = [],
 }: {
   row: SettingRow;
   label: string;
   idPrefix: string;
   allowDeepl?: boolean;
+  /** Providers whose API key is set: their live model list is fetched. */
+  keyed?: string[];
 }) {
   const { save, reset } = useSettingActions();
   const v = (row.value ?? {}) as Ai;
@@ -57,12 +62,34 @@ export default function ModelSettings({
   const [effort, setEffort] = useState(v.effort ?? "");
   const [baseUrl, setBaseUrl] = useState(v.base_url ?? "");
   const deepl = provider === "deepl";
-  const suggestions = SUGGESTED_MODELS[provider] ?? [];
+  const own = provider === "openai_compat";
+  // an own server lists from the URL it had when Load was pressed
+  const [loadUrl, setLoadUrl] = useState<string | null>(null);
+  const listable = provider in LIST_LABELS;
+  const listing = listable && (own ? loadUrl !== null : keyed.includes(provider));
+  const models = useProviderModels(provider, own ? loadUrl : null, listing);
+  const live = listing ? models.data?.models ?? null : null;
+  const suggestions = live?.length ? live.map((m) => m.id) : SUGGESTED_MODELS[provider] ?? [];
+  const listLine = !listing
+    ? null
+    : models.isFetching
+      ? "Loading models…"
+      : models.error
+        ? listError(models.error)
+        : live
+          ? `${countModels(live.length)} from ${LIST_LABELS[provider]}`
+          : null;
+
+  function loadOwn() {
+    const url = baseUrl.trim();
+    if (url === loadUrl) void models.refetch();
+    else setLoadUrl(url);
+  }
 
   // A model name meant for another provider would not work here: start empty instead.
   function changeProvider(next: string) {
     const name = model.trim();
-    const known = [...Object.values(SUGGESTED_MODELS).flat(), "deepl"];
+    const known = [...Object.values(SUGGESTED_MODELS).flat(), ...(live ?? []).map((m) => m.id), "deepl"];
     if (known.includes(name) && !(SUGGESTED_MODELS[next] ?? []).includes(name)) {
       setModel("");
     }
@@ -120,6 +147,22 @@ export default function ModelSettings({
                 <option key={m} value={m} />
               ))}
             </datalist>
+            {(listLine || (listing && !own)) && (
+              <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+                {listLine && <span role="status">{listLine}</span>}
+                {listing && !own && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={models.isFetching}
+                    onClick={() => void models.refetch()}
+                  >
+                    Refresh
+                  </Button>
+                )}
+              </div>
+            )}
           </div>
         )}
         {WITH_EFFORT.has(provider) && (
@@ -150,6 +193,16 @@ export default function ModelSettings({
               value={baseUrl}
               onChange={(e) => setBaseUrl(e.target.value)}
             />
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="justify-self-start"
+              disabled={!baseUrl.trim() || models.isFetching}
+              onClick={loadOwn}
+            >
+              Load models
+            </Button>
           </div>
         )}
       </div>
