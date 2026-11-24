@@ -602,3 +602,17 @@ def test_fit_epub_text_keeps_placeholders_and_other_spaces():
     fitted, marks = fit_epub_text(text, [Mark(0, 1, MarkKind.SUPERSCRIPT)])
     assert fitted == f"{F} Satz\u00a0mit {F}"
     assert marks == [Mark(0, 1, MarkKind.SUPERSCRIPT)]
+
+
+@pytest.mark.parametrize("toc", ["nav", "ncx"])
+def test_toc_label_that_does_not_change_keeps_its_markup(toc):
+    src = make_epub([("One", ["a"]), ("Two", ["b"])], toc=toc)
+    if toc == "nav":
+        src = edit_entry(src, "OEBPS/nav.xhtml", lambda x: x.replace(">One</a>", "><b>One</b></a>"))
+    toc_file = "OEBPS/nav.xhtml" if toc == "nav" else "OEBPS/toc.ncx"
+    out = translate(src, {}, toc_labels={f"{CH1}#": "One"})  # the label it has
+    assert toc_file in unchanged_entries(src, out)
+    out = translate(src, {}, toc_labels={f"{CH1}#": "One", f"{CH2}#": "Zwei"})
+    assert titles(out) == ["One", "Zwei"]
+    if toc == "nav":
+        assert "<b>One</b>" in entry(out, toc_file).decode()

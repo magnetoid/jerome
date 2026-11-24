@@ -3,7 +3,7 @@
 import re
 from collections.abc import Callable
 
-_BLOCK = re.compile(r'<block id="(\d+)">(.*?)</block>', re.DOTALL)
+_BLOCK = re.compile(r'<block id="(-?\d+)">(.*?)</block>', re.DOTALL)  # a title item's is < 0
 
 
 def echo_translator(prefix: str = "DE ") -> Callable[[dict], dict]:

@@ -33,11 +33,17 @@ def block_json(block: Block) -> dict[str, Any]:
 
 @router.get("/books/{book_id}/translation")
 def get_translation(book_id: int, session: SessionDep):
+    """The paragraph counts per status and the flagged paragraphs; ``untranslated_titles``,
+    only when there are any, lists the chapters whose title could not be translated (they
+    keep their source title, in the EPUB's table of contents too)."""
     books.get_book(session, book_id)
-    return {
+    state: dict[str, Any] = {
         "counts": translation.translation_counts(session, book_id),
         "flagged": translation.flagged_blocks(session, book_id),
     }
+    if titles := translation.untranslated_titles(session, book_id):
+        state["untranslated_titles"] = titles
+    return state
 
 
 @router.post("/blocks/{block_id}/translate")

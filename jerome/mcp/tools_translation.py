@@ -25,7 +25,9 @@ def get_translation(book_id: int) -> dict[str, Any]:
     `counts` of paragraphs per status (pending: not translated yet; done; flagged: the
     model's translation could not be used, so the paragraph still holds its source text;
     kept: a flagged DOCX paragraph accepted untranslated), and the `flagged` paragraphs,
-    each with its `block_id`, `chapter_id` and `source` text. A book cannot be exported
+    each with its `block_id`, `chapter_id` and `source` text. `untranslated_titles`, only
+    when there are any, lists the `chapter_id`s whose title could not be translated: they
+    keep their source title, in an EPUB's table of contents too. A book cannot be exported
     while any paragraph is pending or flagged. Same JSON as GET
     /v1/books/{id}/translation."""
 

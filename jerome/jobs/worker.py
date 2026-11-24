@@ -9,7 +9,12 @@ A translate job (``Job.type == "translate"``) runs the same way, with translate 
 chunk the model calls (the chunk, then each block that failed, once alone) run with no
 transaction open, then one locked write stores every block of the chunk, ``done`` or
 ``flagged``, with the spend of every call. Blocks no longer ``pending`` are skipped, so a
-resumed chunk never buys a block twice.
+resumed chunk never buys a block twice. A chapter's first chunk may also carry its title
+(``title_item``); it is skipped once the chapter's title is translated, and when it cannot
+be translated the source title stays and the chapter goes in the job's
+``untranslated_titles``. A chunk whose reply is unusable as a whole (ModelOutputError) is
+retried as a task; on the task's last attempt it is treated like a refused chunk instead,
+so its blocks end ``done`` or ``flagged``, never stuck ``pending``.
 
 A stop request (SIGTERM or SIGINT, via the ``stop`` event) is honoured between chunks: the
 chunk in flight is committed, then the task and its job go back to ``queued``.
@@ -43,8 +48,10 @@ from jerome.core.translation import (
     context_from,
     missing_marks,
     previous_pairs,
+    store_title,
     store_translation,
     sync_chapter_title,
+    title_pending,
 )
 from jerome.errors import Conflict, JeromeError
 from jerome.jobs.estimate import included_chapter_ids, translation_chunks
@@ -194,6 +201,7 @@ class _Plan:
     policy: AutoApplyPolicy
     chunks: list[Chunk] | list[TranslateChunk] = field(default_factory=list)
     source_style: StyleSheet | None = None  # translate jobs: the source book's
+    attempts: int = 0  # the task's failed attempts before this one
 
 
 def _lock_job(session: Session, job_id: int) -> Job:
@@ -257,6 +265,7 @@ def _start(sf: SessionFactory, task_id: int, deps: WorkerDeps) -> _Plan | None:
             local_only=book.local_only,
             style=get_style_sheet(s, job.book_id),
             policy=get_policy(s, job.book_id),
+            attempts=task.attempts,
         )
         if task.kind == "chapter" and job.type == "translate":
             plan.chunks = translation_chunks(s, job.book_id, task.chapter_id)
@@ -484,6 +493,8 @@ def _translate_calls(
     item once alone. Every billed call goes to ``paid.calls`` before anything can raise.
     ``pairs`` holds the two blocks before the chunk, then one per chunk item, as (source
     text, translation or None); an item's context is the two pairs before it.
+    A chunk whose reply is unusable as a whole raises, to be retried as a task, except on
+    the task's last attempt, where it is handled like a refusal.
     Returns the decoded translations and the number of refused calls."""
     chosen = deps.registry.for_pass("translate", local_only=plan.local_only)
     if chosen is None:
@@ -518,6 +529,11 @@ def _translate_calls(
     except ModelRefusal:
         refusals += 1
         failed = [it.block_id for it in todo]
+    except ModelOutputError:
+        if plan.attempts + 1 < MAX_ATTEMPTS:
+            raise  # billed; the task is tried again
+        log.warning("chunk reply unusable on the last attempt; trying each item alone")
+        failed = [it.block_id for it in todo]
     by_id = {it.block_id: it for it in todo}
     for block_id in failed:
         try:
@@ -539,7 +555,8 @@ def _run_translate_chunk(
     paid: _Paid,
 ) -> bool:
     """Run one translate chunk; see the module docstring. False means the task should stop."""
-    ids = [it.block_id for it in chunk.items]
+    title = next((it for it in chunk.items if it.title_of is not None), None)
+    ids = [it.block_id for it in chunk.items if it.title_of is None]
     with sf() as s:  # a short read: nothing is held open during the model calls
         stored = {
             block_id: (status, text)
@@ -548,8 +565,13 @@ def _run_translate_chunk(
             )
         }
         before = previous_pairs(s, ids[0]) if ids else []
+        title_todo = title is not None and title_pending(s, title.title_of)
     status = {i: st for i, (st, _) in stored.items()}
-    todo = [it for it in chunk.items if status.get(it.block_id) == "pending"]
+    todo = [
+        it
+        for it in chunk.items
+        if status.get(it.block_id) == "pending" or (it is title and title_todo)
+    ]
     pairs = before + [
         (it.text, stored[it.block_id][1] if status.get(it.block_id) == "done" else None)
         for it in chunk.items
@@ -558,8 +580,12 @@ def _run_translate_chunk(
     refusals = 0
     if todo:
         done, refusals = _translate_calls(plan, chunk, todo, pairs, deps, paid)
-    by_id = {it.block_id: it for it in todo}
-    dropped = sum(d.marks_dropped + missing_marks(by_id[i].marks, d.marks) for i, d in done.items())
+    by_id = {it.block_id: it for it in todo if it.title_of is None}
+    dropped = sum(
+        d.marks_dropped + missing_marks(by_id[i].marks, d.marks)
+        for i, d in done.items()
+        if i in by_id
+    )
     configured = deps.registry.settings.models.get("translate", {}).get("model", "")
     source = plan.source_style
 
@@ -572,7 +598,7 @@ def _run_translate_chunk(
             s.commit()  # another worker committed this chunk; keep only the spend
             return False
         translated = flagged = 0
-        if todo:
+        if by_id:
             blocks = s.scalars(
                 select(Block).where(Block.id.in_(list(by_id))).with_for_update()
             ).all()
@@ -596,6 +622,11 @@ def _run_translate_chunk(
         if refusals:
             deltas["refusals"] = refusals
         job.stats = _bump(job.stats, **deltas)
+        if title_todo and title_pending(s, title.title_of):
+            if not store_title(s, title.title_of, done.get(title.block_id)):
+                kept = list(job.stats.get("untranslated_titles", []))
+                if title.title_of not in kept:
+                    job.stats = {**job.stats, "untranslated_titles": [*kept, title.title_of]}
         task.chunks_done = index + 1
         if task.chunks_done >= len(plan.chunks):
             if plan.chapter_id is not None:

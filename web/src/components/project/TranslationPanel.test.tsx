@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
-import TranslationPanel from "./TranslationPanel";
+import TranslationPanel, { FlaggedParagraphs } from "./TranslationPanel";
 import type { Project } from "@/hooks/useProjects";
 import { json, renderApp } from "@/test-utils";
 import { callsTo, pageApi, TRANSLATION, translateProject } from "./fixtures";
@@ -113,5 +113,53 @@ describe("TranslationPanel, translated", () => {
     setup({ "GET /v1/books/1/translation": () => json(500, { detail: "database unavailable" }) });
     expect(await screen.findByRole("alert")).toHaveTextContent("database unavailable");
     expect(await screen.findByRole("button", { name: /start proofreading/i })).toBeInTheDocument();
+  });
+
+  it("names the chapters whose title could not be translated", async () => {
+    setup({
+      "GET /v1/books/1/translation": () => json(200, { ...TRANSLATION, untranslated_titles: [12] }),
+    }, "epub");
+    const note = await screen.findByText(/could not be translated and keeps its source text/);
+    await waitFor(() => expect(note).toHaveTextContent(
+      "This chapter title could not be translated and keeps its source text, in the table of contents too: 2. Harbour.",
+    ));
+  });
+
+  it("names several such chapters, and says nothing when every title is translated", async () => {
+    setup({
+      "GET /v1/books/1/translation": () => json(200, { ...TRANSLATION, untranslated_titles: [11, 12] }),
+    }, "epub");
+    const note = await screen.findByText(/These chapter titles could not be translated/);
+    await waitFor(() => expect(note).toHaveTextContent(
+      "These chapter titles could not be translated and keep their source text, in the table of contents too: 1. Arrival, 2. Harbour.",
+    ));
+  });
+
+  it("shows no title note without untranslated titles", async () => {
+    setup();
+    await screen.findByText(/37 paragraphs translated/);
+    expect(screen.queryByText(/chapter titles? could not be translated/)).not.toBeInTheDocument();
+  });
+});
+
+describe("FlaggedParagraphs, after proofreading", () => {
+  it("Translate again after proofreading asks for proofreading again", async () => {
+    pageApi({
+      "GET /v1/books/1/translation": () => json(200, TRANSLATION),
+      "POST /v1/blocks/501/translate": () => json(200, block()),
+    });
+    for (const stage of ["done", "to_review"]) {
+      vi.mocked(toast.success).mockClear();
+      const project = translateProject({ stage, translation: TRANSLATION.counts }) as unknown as Project;
+      const view = renderApp(<FlaggedParagraphs project={project} format="docx" />);
+      await screen.findByText("The ship came in at dawn.");
+      await userEvent.click(
+        within(flaggedItem("The ship came in at dawn.")).getByRole("button", { name: "Translate again" }),
+      );
+      await waitFor(() => expect(toast.success).toHaveBeenCalledWith(
+        "Paragraph translated. Run proofreading again to check it.",
+      ));
+      view.unmount();
+    }
   });
 });

@@ -482,3 +482,29 @@ def test_every_failing_key_is_reported_and_nothing_written():
 def test_bad_title_is_refused():
     with pytest.raises(InvalidChangeError):
         write_translated_docx(make_docx(["Hello."]), {}, language="de-DE", title="a\x00b")
+
+
+def test_style_level_languages_become_the_target():  # ruling R31
+    styles = (
+        '<w:style w:type="paragraph" w:styleId="Quote"><w:name w:val="Quote"/>'
+        '<w:rPr><w:i/><w:lang w:val="en-GB" w:eastAsia="ja-JP" w:bidi="ar-SA"/></w:rPr></w:style>'
+        '<w:style w:type="character" w:styleId="Foreign"><w:name w:val="Foreign"/>'
+        '<w:rPr><w:lang w:val="en-US"/></w:rPr></w:style>'
+        '<w:style w:type="character" w:styleId="Asian"><w:name w:val="Asian"/>'
+        '<w:rPr><w:lang w:eastAsia="zh-CN"/></w:rPr></w:style>'
+    )
+    src = package_docx("<w:p><w:r><w:t>Plain.</w:t></w:r></w:p>", styles=styles, language="en-GB")
+    blocks = translate_all(src, lambda t: "DE " + t)
+    out = write_translated_docx(src, blocks, language="de-DE", title=None)
+    root = etree.fromstring(part_xml(out, "word/styles.xml").encode())
+    langs = {
+        style.get(qn("w:styleId")): style.find("w:rPr/w:lang", NS)
+        for style in root.iterfind("w:style", NS)
+        if style.find("w:rPr/w:lang", NS) is not None
+    }
+    quote, foreign, asian = langs["Quote"], langs["Foreign"], langs["Asian"]
+    assert quote.get(qn("w:val")) == "de-DE"
+    assert (quote.get(qn("w:eastAsia")), quote.get(qn("w:bidi"))) == ("ja-JP", "ar-SA")
+    assert foreign.get(qn("w:val")) == "de-DE"
+    assert asian.get(qn("w:val")) is None and asian.get(qn("w:eastAsia")) == "zh-CN"
+    assert root.find("w:docDefaults/w:rPrDefault/w:rPr/w:lang", NS).get(qn("w:val")) == "de-DE"

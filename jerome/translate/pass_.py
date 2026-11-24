@@ -14,10 +14,17 @@ from jerome.types import StyleSheet
 
 @dataclass(frozen=True)
 class TranslateItem:
-    block_id: int  # the translated block's id
+    """One text the model translates: a block, or a chapter's title.
+
+    A title item (``title_of`` set) carries the source chapter's title as plain text, with no
+    marks and no placeholders. Its ``block_id`` is minus its chapter's id, so it never meets a
+    block's id in a request or a reply."""
+
+    block_id: int  # the translated block's id; for a title item, -chapter id
     key: str
     text: str  # the source block's text and marks
     marks: list[Mark]
+    title_of: int | None = None  # a title item: the translated chapter's id
 
 
 @dataclass

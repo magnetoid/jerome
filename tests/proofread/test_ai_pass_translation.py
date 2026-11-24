@@ -149,3 +149,32 @@ def test_estimate_prices_the_source_for_translated_books(
         without = estimate_job(s, reg, t, passes=["ai"]).total.high
         s.rollback()
     assert with_sources > without
+
+
+def _category_enum(schema: dict) -> list[str]:
+    return schema["properties"]["suggestions"]["items"]["properties"]["category"]["enum"]
+
+
+def test_schema_offers_translation_only_to_translated_books():  # ruling R32
+    import copy
+    import json
+
+    from jerome.proofread.ai_pass import SUGGESTIONS_SCHEMA
+
+    plain = FakeProvider([{"suggestions": []}])
+    run_ai_pass(Chunk([BlockText(1, "Body.")], None), STYLE_EN, plain, "m", None)
+    schema = plain.calls[0]["schema"]
+    # the request a proofread-only book sends is the main branch's, byte for byte
+    main = copy.deepcopy(schema)
+    main["properties"]["suggestions"]["items"]["properties"]["category"]["enum"] = [
+        "typo",
+        "grammar",
+        "punctuation",
+        "consistency",
+        "style",
+    ]
+    assert json.dumps(schema) == json.dumps(main) and schema == SUGGESTIONS_SCHEMA
+
+    translated = FakeProvider([{"suggestions": []}])
+    run_ai_pass(Chunk([BlockText(1, "Body.")], None, {1: "Text."}), STYLE_EN, translated, "m", None)
+    assert _category_enum(translated.calls[0]["schema"]) == [*_category_enum(schema), "translation"]

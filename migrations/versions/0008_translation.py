@@ -62,6 +62,14 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    """Drop the translation columns; no book or block is deleted.
+
+    What it leaves behind: each hidden source book becomes an ordinary, visible proofreading
+    book (``is_source`` is gone). Each translated book becomes an ordinary proofreading book
+    that keeps its blocks as they are: done blocks with their translated text, flagged and
+    kept blocks with their source text, pending blocks empty; it loses the link to its source
+    and its blocks lose their translation status and placeholders. Suggestions of category
+    ``translation`` are deleted, since the old category check does not allow them."""
     op.execute("DELETE FROM suggestions WHERE category = 'translation'")
     op.drop_constraint("ck_suggestions_category", "suggestions", type_="check")
     op.create_check_constraint("ck_suggestions_category", "suggestions", _OLD_CATEGORY)

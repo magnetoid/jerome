@@ -588,7 +588,9 @@ def _rank(el: etree._Element) -> int:
 
 
 def _set_default_language(package: dict[str, bytes], language: str) -> None:
-    """Write ``language`` to the w:lang of the styles' w:docDefaults (no styles part: none)."""
+    """Write ``language`` to the w:lang of the styles' w:docDefaults, and to the w:val of
+    every style's run-property w:lang that has one; their w:eastAsia and w:bidi stay, and a
+    recorded property change (w:rPrChange) keeps its history. No styles part: nothing."""
     part = "word/styles.xml"
     if part not in package:
         return
@@ -601,6 +603,9 @@ def _set_default_language(package: dict[str, bytes], language: str) -> None:
         lang = etree.Element(_LANG)
         _insert(rpr, lang)
     lang.set(_VAL, language)
+    for style_lang in root.iterfind("w:style/w:rPr/w:lang", NS):
+        if style_lang.get(_VAL) is not None:
+            style_lang.set(_VAL, language)
     package[part] = serialize(tree)
 
 

@@ -14,6 +14,8 @@ from jerome.core.translation import (
     NO_TRANSLATION_MODEL,
     attach_sources,
     ensure_not_source,
+    title_item,
+    title_pending,
     translate_items,
 )
 from jerome.errors import Conflict, NotFound
@@ -163,13 +165,19 @@ def pending_chapter_ids(session: Session, book_id: int) -> list[int]:
 
 def translation_chunks(session: Session, book_id: int, chapter_id: int) -> list[TranslateChunk]:
     """The chunks a translate task runs: over every block of the chapter, as the worker
-    builds them, so chunk indexes match."""
-    return chunk_items(translate_items(session, book_id, chapter_id))
+    builds them, so chunk indexes match. The chapter's title item, when it has one
+    (``title_item``), is added to the first chunk; it does not move a chunk boundary."""
+    chunks = chunk_items(translate_items(session, book_id, chapter_id))
+    title = title_item(session, book_id, chapter_id)
+    if title is not None and chunks:
+        chunks[0].items.append(title)
+    return chunks
 
 
 def estimate_translation(session: Session, registry: Registry, book_id: int) -> Estimate:
-    """Cost of translating every pending block. Output is ``ceil(1.4 * input)`` tokens: a
-    translation runs about as long as its source, German longer than English."""
+    """Cost of translating every pending block, and every chapter title still to translate.
+    Output is ``ceil(1.4 * input)`` tokens: a translation runs about as long as its source,
+    German longer than English."""
     ensure_not_source(session, book_id)
     book = get_book(session, book_id)
     if book.work != "translate":
@@ -193,8 +201,13 @@ def estimate_translation(session: Session, registry: Registry, book_id: int) -> 
     for cid in pending_chapter_ids(session, book_id):
         chunks = translation_chunks(session, book_id, cid)
         chapter_chunks[cid] = len(chunks)  # every chunk, as the worker's chunks_done counts
-        for chunk in chunks:  # only chunks with a pending block cost a model call
-            items = [it for it in chunk.items if it.block_id in pending]
+        for chunk in chunks:  # only chunks with a pending item cost a model call
+            items = [
+                it
+                for it in chunk.items
+                if it.block_id in pending
+                or (it.title_of is not None and title_pending(session, it.title_of))
+            ]
             if not items:
                 continue
             system, user = build_translate_request(source, target, TranslateChunk(items), [])

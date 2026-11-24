@@ -147,9 +147,10 @@ def write_translated_epub(
     against the TOC file, percent-decoded), ``#``, and its anchor, empty for a whole file
     (``OEBPS/ch1.xhtml#``, ``OEBPS/book.xhtml#c2``); a bare path is accepted for a whole
     file too. It is applied to the text of the nav document's TOC links and to the NCX
-    ``navLabel/text``, at every depth. Entries with no mapping, or a blank label, keep their
-    label, and so does a nav link inside a translated block (the TOC page in the spine),
-    which the block's translation already gives.
+    ``navLabel/text``, at every depth. Entries with no mapping, a blank label, or the label
+    they already have keep their label and its inner markup, and so does a nav link inside a
+    translated block (the TOC page in the spine), which the block's translation already
+    gives.
 
     Raises InvalidChangeError for a language, title or label with characters XML cannot
     carry, and TranslatedEpubError, listing every failing key with its reason, for keys
@@ -457,6 +458,15 @@ def _set_label(el: etree._Element, label: str) -> None:
     el.text = label
 
 
+def _relabel(el: etree._Element, label: str) -> bool:
+    """Give ``el`` the text ``label``, unless that is already its text (whitespace aside):
+    then it keeps its inner markup. True if it changed."""
+    if " ".join("".join(el.itertext()).split()) == " ".join(label.split()):
+        return False
+    _set_label(el, label)
+    return True
+
+
 def _relabel_nav(
     package: EpubPackage,
     docs: dict[str, ContentDocument],
@@ -478,8 +488,7 @@ def _relabel_nav(
         if any(ancestor in keyed for ancestor in a.iterancestors()):
             continue  # inside a translated block: the translation gives its text
         label = _label_for(labels, *resolve_href(item.path, a.get("href")))
-        if label is not None:
-            _set_label(a, label)
+        if label is not None and _relabel(a, label):
             changed = True
     if not changed:
         return None
@@ -506,8 +515,7 @@ def _relabel_ncx(
         if content is None or text is None or not content.get("src"):
             continue
         label = _label_for(labels, *resolve_href(item.path, content.get("src")))
-        if label is not None:
-            _set_label(text, label)
+        if label is not None and _relabel(text, label):
             changed = True
     if changed:
         if root.get(_XML_LANG) is not None:

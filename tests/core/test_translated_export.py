@@ -194,3 +194,41 @@ def test_translated_base_maps_writer_failures_to_block_ids(
     message = str(exc.value)
     assert message.startswith(f"2 paragraphs cannot be written: blocks [{first.id}, {second.id}]")
     assert "placeholders" in message  # the first block's reason
+
+
+def test_kept_block_keeps_its_original_xml(session_factory, tmp_storage, test_settings):
+    # ruling R29: a kept paragraph is not rebuilt: its runs and source w:lang stay as they are
+    from tests.fixtures.docx_builders import package_docx, para_xml
+
+    def run(text: str) -> str:
+        rpr = '<w:rPr><w:lang w:val="en-GB"/></w:rPr>'
+        return f'<w:r>{rpr}<w:t xml:space="preserve">{text}</w:t></w:r>'
+
+    body = "".join(
+        f"<w:p>{run(a)}{run(b)}</w:p>"
+        for a, b in (("First ", "para."), ("Second ", "para."), ("Third ", "para."))
+    )
+    t = imported(session_factory, tmp_storage, data=package_docx(body, language="en-GB"))
+    b1, b2, b3 = [b.id for b in blocks(session_factory, t)]
+    provider = FakeProvider(
+        [
+            scripted({b1: "Erster.", b2: None, b3: None}),
+            scripted({b2: "kaputt <i>"}),
+            scripted({b3: "kaputt <i>"}),
+        ]
+    )
+    reg = registry_for(test_settings, provider)
+    start(session_factory, reg, t)
+    drain(session_factory, deps_for(reg))
+    with session_factory() as s:
+        keep_source_block(s, b2, actor="ed")
+        keep_source_block(s, b3, actor="ed")
+        s.commit()
+    with session_factory() as s:
+        book = s.get(Book, t)
+        base = translated_base(s, tmp_storage, book)
+        original = tmp_storage.read_original(book.source_book_id)
+    assert b'w:val="de-DE"' in para_xml(base, 0)  # translated
+    assert para_xml(base, 1) == para_xml(original, 1)
+    assert para_xml(base, 2) == para_xml(original, 2)
+    assert [b.text for b in all_blocks(base)] == ["Erster.", "Second para.", "Third para."]

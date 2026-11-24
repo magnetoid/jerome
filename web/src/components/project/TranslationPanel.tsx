@@ -130,6 +130,30 @@ function useTranslationState(bookId: string) {
   });
 }
 
+function useChapters(bookId: string) {
+  return useQuery({
+    queryKey: chaptersKey(bookId),
+    queryFn: () => apiFetch<Chapter[]>(`/v1/books/${bookId}/chapters`),
+  });
+}
+
+/** "2. Harbour", once the chapters have loaded. */
+function chapterLabel(chapters: Chapter[] | undefined, id: number) {
+  const c = chapters?.find((x) => x.id === id);
+  return c ? `${c.ordinal}. ${c.title}` : "";
+}
+
+/** The chapters whose title the translation could not translate (an EPUB's TOC keeps them). */
+function UntranslatedTitles({ bookId, ids }: { bookId: string; ids: number[] }) {
+  const chapters = useChapters(bookId);
+  if (ids.length === 0) return null;
+  const names = ids.map((id) => chapterLabel(chapters.data, id)).filter(Boolean).join(", ");
+  const text = ids.length === 1
+    ? "This chapter title could not be translated and keeps its source text, in the table of contents too"
+    : "These chapter titles could not be translated and keep their source text, in the table of contents too";
+  return <p className="text-sm text-muted-foreground">{names ? `${text}: ${names}.` : `${text}.`}</p>;
+}
+
 function TranslatedSummary({ project, format }: Props) {
   const bookId = String(project.id);
   const state = useTranslationState(bookId);
@@ -143,6 +167,7 @@ function TranslatedSummary({ project, format }: Props) {
       {state.isPending && <p className="text-sm text-muted-foreground">Loading the translation…</p>}
       {state.isError && <p role="alert" className="text-sm text-destructive">{detailOf(state.error)}</p>}
       {state.isSuccess && <p className="text-lg font-medium">{parts.join(" · ")}</p>}
+      <UntranslatedTitles bookId={bookId} ids={state.data?.untranslated_titles ?? []} />
 
       <FlaggedParagraphs project={project} format={format} />
 
@@ -166,10 +191,9 @@ export function FlaggedParagraphs({ project, format }: Props) {
   const bookId = String(project.id);
   const client = useQueryClient();
   const state = useTranslationState(bookId);
-  const chapters = useQuery({
-    queryKey: chaptersKey(bookId),
-    queryFn: () => apiFetch<Chapter[]>(`/v1/books/${bookId}/chapters`),
-  });
+  const chapters = useChapters(bookId);
+  // Proofreading has run on the book: a newly translated paragraph has not been checked.
+  const proofread = project.stage === "to_review" || project.stage === "done";
 
   function refresh() {
     void client.invalidateQueries({ queryKey: translationKey(bookId) });
@@ -183,7 +207,9 @@ export function FlaggedParagraphs({ project, format }: Props) {
       if (b.translation_status === "flagged") {
         toast.error("The paragraph still could not be translated. Try again, or keep the original.");
       } else {
-        toast.success("Paragraph translated");
+        toast.success(
+          proofread ? "Paragraph translated. Run proofreading again to check it." : "Paragraph translated",
+        );
       }
       refresh();
     },
@@ -203,10 +229,7 @@ export function FlaggedParagraphs({ project, format }: Props) {
   const flagged = state.data?.flagged ?? [];
   if (flagged.length === 0) return null;
 
-  const chapterName = (id: number) => {
-    const c = chapters.data?.find((x) => x.id === id);
-    return c ? `${c.ordinal}. ${c.title}` : "";
-  };
+  const chapterName = (id: number) => chapterLabel(chapters.data, id);
   const busy = (id: number) =>
     (again.isPending && again.variables === id) || (keep.isPending && keep.variables === id);
   const docx = format === "docx";

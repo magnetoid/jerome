@@ -229,6 +229,13 @@ lists them. Translate one again with `POST /v1/blocks/{id}/translate` (MCP
 accept it untranslated with `POST /v1/blocks/{id}/keep-source` (MCP `keep_source_block`) and
 fix it in Word. Export is refused while any paragraph is pending or flagged.
 
+**Chapter titles.** An EPUB chapter's title is its table-of-contents label. When that label
+is its first heading's text, it follows the heading's translation; otherwise (a label that
+differs from the heading, or front matter with no heading) the job translates it on its
+own. A title that cannot be translated keeps its source text, in the exported table of
+contents too, and `GET /v1/books/{id}/translation` lists its chapter in
+`untranslated_titles`.
+
 **Model.** Translation has its own model pass, `translate`, set in `JEROME_MODELS` like `ai`
 (for example `{"ai": {...}, "translate": {"provider": "anthropic", "model":
 "claude-opus-5-5", "effort": "high"}}`). Its default is `claude-opus-5-5`, and a

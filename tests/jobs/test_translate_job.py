@@ -619,3 +619,38 @@ def test_de_to_en_on_public_german_epub(session_factory, tmp_storage, test_setti
         for b in rows
     )
     assert {u.pass_name for u in usage_rows(session_factory, job_id)} == {"translate"}
+
+
+def test_unusable_chunk_reply_on_the_last_attempt_flags_its_blocks(
+    session_factory, tmp_storage, test_settings
+):
+    # ruling R30: a chunk whose reply is never usable ends like a refused one, never pending
+    t = imported(session_factory, tmp_storage, data=make_docx(["Only para."]))
+    provider = FakeProvider([{"nope": 1}] * 10)
+    reg = registry_for(test_settings, provider)
+    job_id = start(session_factory, reg, t)
+    with session_factory() as s:
+        task_id = claim_task(s)
+    for _ in range(3):  # the task's attempts, without waiting for backoff
+        run_task(session_factory, task_id, deps_for(reg))
+    (block,) = blocks(session_factory, t)
+    assert (block.text, block.translation_status) == ("Only para.", "flagged")
+    job = job_row(session_factory, job_id)
+    assert job.status == "completed" and job.stats["flagged"] == 1
+    with session_factory() as s:
+        task = s.get(JobTask, task_id)
+        assert (task.status, task.attempts) == ("done", 2)
+    # two failed attempts, then the chunk and its block alone: every call is on the books
+    assert len(provider.calls) == 4 and len(usage_rows(session_factory, job_id)) == 4
+    assert job.cost_actual == 4 * CALL_COST
+
+
+def test_no_translation_model_names_the_fix(session_factory, tmp_storage, test_settings):
+    local = imported(session_factory, tmp_storage, local_only=True)
+    remote = registry_for(test_settings, FakeProvider([], local=False, token_count=1000))
+    with session_factory() as s:
+        with pytest.raises(Conflict) as exc:
+            estimate_translation(s, remote, local)
+    message = str(exc.value)
+    assert "models.translate" in message and "Settings page" in message
+    assert "local model" in message

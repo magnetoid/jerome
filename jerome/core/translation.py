@@ -45,7 +45,10 @@ Language = Literal["en", "de"]
 
 _EMPTY_HASH = hashlib.sha256(b"").hexdigest()
 CONTEXT_BLOCKS = 2  # earlier paragraphs a chunk or a single block gets as context
-NO_TRANSLATION_MODEL = "no translation model is available for this book"
+NO_TRANSLATION_MODEL = (
+    "no translation model is available for this book: set models.translate on the Settings "
+    "page (for a local-only book, a local model)"
+)
 
 
 def source_of(session: Session, book: Book) -> Book | None:
@@ -118,9 +121,11 @@ def translated_base(session: Session, storage: Storage, book: Book) -> bytes:
     """The original file of ``book``'s source with every block translated: the base text that
     exports and review copies of a translated book are made on.
 
-    Done and kept blocks are written with their stored text and marks. Raises Conflict
-    while any block is pending or flagged, and when the writer refuses blocks, listing
-    their ids."""
+    Done blocks are written with their stored text and marks. Kept blocks (DOCX) are left
+    out: their paragraph is the original's, whose text is the stored text, and keeps its
+    source language. An EPUB's TOC gets the titles of the chapters whose title the
+    translation changed; the others keep their label as it is. Raises Conflict while any
+    block is pending or flagged, and when the writer refuses blocks, listing their ids."""
     rows = session.execute(
         select(
             Block.id,
@@ -148,6 +153,7 @@ def translated_base(session: Session, storage: Storage, book: Book) -> bytes:
     blocks = {
         r.source_ref: TranslatedBlock(r.text, marks_from_json(r.marks), r.placeholders)
         for r in rows
+        if r.translation_status != "kept"
     }
     by_key = {r.source_ref: r.id for r in rows}
     source = source_of(session, book)
@@ -158,9 +164,17 @@ def translated_base(session: Session, storage: Storage, book: Book) -> bytes:
             return write_translated_docx(
                 original, blocks, language=style.variant, title=book.translated_title
             )
+        src_chapter = aliased(Chapter)
         chapters = session.execute(
-            select(Chapter.source_ref, Chapter.title).where(
-                Chapter.book_id == book.id, Chapter.source_ref.is_not(None)
+            select(Chapter.source_ref, Chapter.title)
+            .join(
+                src_chapter,
+                (src_chapter.book_id == source.id) & (src_chapter.ordinal == Chapter.ordinal),
+            )
+            .where(
+                Chapter.book_id == book.id,
+                Chapter.source_ref.is_not(None),
+                Chapter.title != src_chapter.title,
             )
         )
         return write_translated_epub(
@@ -313,6 +327,75 @@ def translate_items(session: Session, book_id: int, chapter_id: int) -> list[Tra
         TranslateItem(block_id, ref or str(block_id), text, marks_from_json(marks))
         for block_id, ref, text, marks in rows
     ]
+
+
+def _source_chapter(session: Session, chapter: Chapter) -> Chapter | None:
+    """The source book's chapter that ``chapter`` of a translated book mirrors."""
+    source_id = session.scalar(select(Book.source_book_id).where(Book.id == chapter.book_id))
+    if source_id is None:
+        return None
+    stmt = select(Chapter).where(Chapter.book_id == source_id, Chapter.ordinal == chapter.ordinal)
+    return session.scalars(stmt).first()
+
+
+def title_item(session: Session, book_id: int, chapter_id: int) -> TranslateItem | None:
+    """The chapter's title as an extra plain item (no marks, no placeholders), when the book
+    is an EPUB and the source chapter's title is not the text of its first heading, or it
+    has no heading: a TOC label such as "The Storm" over "Chapter One", or front matter.
+    A title that is its heading's text follows the heading's translation instead
+    (``sync_chapter_title``); DOCX titles are their headings. Only the source data decides,
+    so a chapter's chunks are the same on every run."""
+    if session.scalar(select(Book.format).where(Book.id == book_id)) != "epub":
+        return None
+    chapter = session.get(Chapter, chapter_id)
+    source = _source_chapter(session, chapter) if chapter is not None else None
+    if source is None:
+        return None
+    text = title_text(source.title)
+    if not text:
+        return None
+    heading = session.scalars(
+        select(Block.text)
+        .where(Block.chapter_id == source.id, Block.kind == BlockKind.HEADING.value)
+        .order_by(Block.ordinal)
+        .limit(1)
+    ).first()
+    if heading is not None and title_text(heading) == text:
+        return None
+    return TranslateItem(-chapter_id, f"title:{chapter_id}", text, [], title_of=chapter_id)
+
+
+def title_pending(session: Session, chapter_id: int) -> bool:
+    """Whether the chapter of a translated book still has its source chapter's title."""
+    chapter = session.get(Chapter, chapter_id)
+    source = _source_chapter(session, chapter) if chapter is not None else None
+    return source is not None and chapter.title == source.title
+
+
+def store_title(session: Session, chapter_id: int, decoded: Decoded | None) -> bool:
+    """Give the chapter the translated title; False, and the source title kept, when there
+    is none to give (no usable reply, or one with no text)."""
+    title = title_text(decoded.text) if decoded is not None else ""
+    if not title:
+        return False
+    session.get(Chapter, chapter_id).title = title
+    return True
+
+
+def untranslated_titles(session: Session, book_id: int) -> list[int]:
+    """Chapters whose title a translate job could not translate (its stats'
+    ``untranslated_titles``) and that still have their source title, in book order."""
+    recorded: set[int] = set()
+    for stats in session.scalars(
+        select(Job.stats).where(Job.book_id == book_id, Job.type == "translate")
+    ):
+        recorded.update((stats or {}).get("untranslated_titles", []))
+    if not recorded:
+        return []
+    chapters = session.scalars(
+        select(Chapter).where(Chapter.id.in_(recorded)).order_by(Chapter.ordinal)
+    )
+    return [c.id for c in chapters if title_pending(session, c.id)]
 
 
 def previous_pairs(session: Session, block_id: int) -> list[tuple[str, str | None]]:

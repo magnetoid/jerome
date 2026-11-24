@@ -25,35 +25,46 @@ class AiPassResult:
     result: CompletionResult
 
 
-_ITEM_PROPERTIES = {
-    "block_id": {"type": "integer"},
-    "original": {"type": "string"},
-    "replacement": {"type": "string"},
-    "category": {"type": "string", "enum": [c.value for c in Category]},
-    "severity": {"type": "string", "enum": [s.value for s in Severity]},
-    "explanation": {"type": "string"},
-    "occurrence": {
-        "type": "integer",
-        "description": "1-based index of the occurrence of original within the block.",
-    },
-}
+def _item_properties(categories: list[str]) -> dict:
+    return {
+        "block_id": {"type": "integer"},
+        "original": {"type": "string"},
+        "replacement": {"type": "string"},
+        "category": {"type": "string", "enum": categories},
+        "severity": {"type": "string", "enum": [s.value for s in Severity]},
+        "explanation": {"type": "string"},
+        "occurrence": {
+            "type": "integer",
+            "description": "1-based index of the occurrence of original within the block.",
+        },
+    }
 
-SUGGESTIONS_SCHEMA: dict = {
-    "type": "object",
-    "properties": {
-        "suggestions": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": _ITEM_PROPERTIES,
-                "required": list(_ITEM_PROPERTIES),
-                "additionalProperties": False,
-            },
-        }
-    },
-    "required": ["suggestions"],
-    "additionalProperties": False,
-}
+
+def suggestions_schema(translated: bool) -> dict:
+    """The reply schema. ``translation`` is a category only for a translated book's chunk
+    (one with ``sources``), so a proofread-only book's request is what it always was."""
+    categories = [c.value for c in Category if translated or c != Category.TRANSLATION]
+    properties = _item_properties(categories)
+    return {
+        "type": "object",
+        "properties": {
+            "suggestions": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": properties,
+                    "required": list(properties),
+                    "additionalProperties": False,
+                },
+            }
+        },
+        "required": ["suggestions"],
+        "additionalProperties": False,
+    }
+
+
+SUGGESTIONS_SCHEMA: dict = suggestions_schema(translated=False)  # a proofread-only book's
+TRANSLATED_SUGGESTIONS_SCHEMA: dict = suggestions_schema(translated=True)
 
 
 def chunk_blocks(blocks: Sequence[BlockText], target_words: int = 2500) -> list[Chunk]:
@@ -318,7 +329,11 @@ def run_ai_pass(
 ) -> AiPassResult:
     system, user = build_request(style, chunk)
     result = provider.complete(
-        model=model, system=system, user=user, schema=SUGGESTIONS_SCHEMA, effort=effort
+        model=model,
+        system=system,
+        user=user,
+        schema=TRANSLATED_SUGGESTIONS_SCHEMA if chunk.sources is not None else SUGGESTIONS_SCHEMA,
+        effort=effort,
     )
     try:
         candidates, dropped = parse_suggestions(result.data, chunk)

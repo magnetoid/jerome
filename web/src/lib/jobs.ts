@@ -17,6 +17,8 @@ export const jobNoun = (j: { type: string }) => (j.type === "translate" ? "Trans
 export interface TranslationState {
   counts: Partial<Record<"pending" | "done" | "flagged" | "kept", number>>;
   flagged: { block_id: number; chapter_id: number; source: string }[];
+  /** Chapters whose title could not be translated; present only when there are any. */
+  untranslated_titles?: number[];
 }
 
 /** The block a Translate again or Keep original returns. */
