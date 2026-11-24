@@ -123,6 +123,7 @@ class EpubPackage:
     creators: list[str] = field(default_factory=list)
     publisher: str | None = None
     date: str | None = None
+    rights: str | None = None
     # epub:type (cover, titlepage, copyright-page, toc, ...) -> document path, from the nav
     # landmarks and the EPUB 2 guide (guide types mapped to their epub:type names)
     landmarks: dict[str, str] = field(default_factory=dict)
@@ -189,10 +190,11 @@ def read_container(data: bytes) -> EpubPackage:
     package = EpubPackage(
         opf_path, manifest, spine, [], files, list(files), meta("title"), meta("language")
     )
-    package.creators, package.publisher, package.date = (
+    package.creators, package.publisher, package.date, package.rights = (
         metas("creator"),
         meta("publisher"),
         meta("date"),
+        meta("rights"),
     )
     package.nav_points = _read_toc(package, spine_el.get("toc") if spine_el is not None else None)
     package.landmarks = _guide(opf, opf_path) | _landmarks(package)

@@ -39,14 +39,23 @@ _MEDIA_EXT = {"image/jpeg": "jpg", "image/png": "png", "image/gif": "gif", "imag
 _LINK_SCHEMES = ("http", "https", "mailto")
 
 
-def book_identifier(book_id: int, pub: Publication, existing: str | None = None) -> str:
+def book_identifier(
+    book_id: int,
+    pub: Publication,
+    existing: str | None = None,
+    *,
+    created: datetime | None = None,
+) -> str:
     """``urn:isbn:`` with the EPUB ISBN when set; else ``existing`` (an EPUB-born proofread
-    book's own identifier, which the caller passes only then); else a stable uuid5."""
+    book's own identifier, which the caller passes only then); else a uuid5 that stays the
+    same for the book. ``created`` (the book row's creation time, to the microsecond) keeps
+    book 1 of one Jerome apart from book 1 of another: reading apps key books on it."""
     if pub.isbn_epub:
         return "urn:isbn:" + re.sub(r"[\s-]", "", pub.isbn_epub)
     if existing:
         return existing
-    return f"urn:uuid:{uuid.uuid5(uuid.NAMESPACE_URL, f'jerome-book-{book_id}')}"
+    name = f"jerome-book-{book_id}" + (f"-{created.isoformat()}" if created else "")
+    return f"urn:uuid:{uuid.uuid5(uuid.NAMESPACE_URL, name)}"
 
 
 def write_epub_book(

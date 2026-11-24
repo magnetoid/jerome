@@ -99,6 +99,7 @@ def import_book(
         auto_apply=policy_to_json(auto_apply),
         authors=prefill_authors(parsed.authors),
         publisher=parsed.publisher,
+        rights=(parsed.rights or "")[:500] or None,
         year=parsed.year if parsed.year and 1000 <= parsed.year <= 2999 else None,
     )
     quotes = detect_quote_style((b.text for c in parsed.chapters for b in c.blocks), variant)

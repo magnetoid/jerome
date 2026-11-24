@@ -150,3 +150,31 @@ def test_pdf_book(session, tmp_storage, weasy):
     data, media_type = render(prepared)
     assert media_type == "application/pdf"
     assert PdfReader(io.BytesIO(data)).metadata.title == prepared.pub.title
+
+
+def test_epub_born_book_keeps_its_own_rights_line(session, tmp_storage):
+    book = import_book(
+        session,
+        tmp_storage,
+        filename="usher.epub",
+        data=(PUBLIC / "pg932.epub").read_bytes(),
+        variant="en-US",
+    )
+    assert book.rights == "Public domain in the USA."  # prefilled from dc:rights
+    book.rights = None  # a book imported before the prefill: no computed © line either
+    session.flush()
+    prepared = prepare(session, tmp_storage, book.id, "epub-book")
+    assert prepared.pub.rights == "Public domain in the USA."
+    data, _ = render(prepared)
+    assert _opf(data).findtext(".//dc:rights", namespaces=NS) == "Public domain in the USA."
+    assert prepare(session, tmp_storage, book.id, "pdf-book").pub.rights == (
+        "Public domain in the USA."
+    )
+
+
+def test_word_book_identifier_uses_the_book_row(session, tmp_storage):
+    book = _docx_book(session, tmp_storage)
+    first = prepare(session, tmp_storage, book.id, "epub-book").identifier
+    assert first == prepare(session, tmp_storage, book.id, "epub-book").identifier
+    assert first == build.book_identifier(book.id, build.publication_of(session, book),
+                                          created=book.created_at)  # fmt: skip

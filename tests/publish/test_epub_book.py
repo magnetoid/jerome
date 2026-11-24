@@ -180,3 +180,14 @@ def test_internal_links_point_into_the_right_file():
 def test_epubcheck_clean():
     errors = run_epubcheck(_book())
     assert errors == []
+
+
+def test_identifier_differs_between_installations():
+    from datetime import UTC, datetime
+
+    plain = _publication(isbn_epub=None)
+    here = datetime(2026, 1, 5, 10, 0, 1, 123456, tzinfo=UTC)
+    there = datetime(2026, 3, 9, 8, 30, 0, 7, tzinfo=UTC)
+    assert book_identifier(1, plain, created=here) == book_identifier(1, plain, created=here)
+    assert book_identifier(1, plain, created=here) != book_identifier(1, plain, created=there)
+    assert book_identifier(1, plain, created=here) != book_identifier(1, plain)

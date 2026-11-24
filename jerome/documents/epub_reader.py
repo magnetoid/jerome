@@ -45,6 +45,7 @@ def read_epub(data: bytes) -> ParsedBook:
         raise UnsupportedDocumentError("Not a usable EPUB: its spine has no content documents")
     book = ParsedBook("epub", package.title, package.language)
     book.authors, book.publisher = list(package.creators), package.publisher
+    book.rights = package.rights
     if package.date and package.date[:4].isdigit():
         book.year = int(package.date[:4])
     cuts = _cuts(package, docs)

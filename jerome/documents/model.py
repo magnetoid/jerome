@@ -69,3 +69,4 @@ class ParsedBook:
     authors: list[str] = field(default_factory=list)
     publisher: str | None = None
     year: int | None = None
+    rights: str | None = None

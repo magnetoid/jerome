@@ -208,3 +208,15 @@ def test_cli_publish_writes_file(cli_runner, cli_env, session_factory):
     assert "warning: The book has no cover" in out.output
     assert zipfile.ZipFile(io.BytesIO(target.read_bytes())).testzip() is None
     assert _job_count(session_factory) == 0  # made inline, with no job
+
+
+def test_cli_publish_default_name_never_overwrites_the_manuscript(
+    cli_runner, cli_env, session_factory, monkeypatch
+):
+    book_id = _import(cli_runner, cli_env)  # m.docx
+    monkeypatch.chdir(cli_env)
+    (cli_env / "m.epub").write_bytes(b"the original manuscript")
+    out = cli_runner.invoke(app, ["publish", str(book_id), "--format", "epub-book"])
+    assert out.exit_code == 0, out.output
+    assert (cli_env / "m.epub").read_bytes() == b"the original manuscript"
+    assert (cli_env / "m-book.epub").read_bytes()[:2] == b"PK"

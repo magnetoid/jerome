@@ -215,3 +215,27 @@ def test_publish_task_is_not_a_chapter_task(session_factory, storage):
     with session_factory() as s:
         task = s.scalars(select(JobTask).where(JobTask.job_id == job_id)).one()
         assert task.chapter_id is None and task.kind == "publish"
+
+
+def test_a_running_publish_job_is_named_when_it_holds_the_book(session_factory, storage, deps):
+    from decimal import Decimal
+
+    from jerome.jobs.service import create_job
+
+    book_id = _book(session_factory, storage)
+    _publish(session_factory, book_id)
+    with (
+        session_factory() as s,
+        pytest.raises(
+            Conflict, match=f"book {book_id} already has an active job making a finished file"
+        ),
+    ):
+        create_job(
+            s,
+            deps.registry,
+            book_id,
+            passes=["languagetool"],
+            max_cost=Decimal(1),
+            callback_url=None,
+            actor="t",
+        )

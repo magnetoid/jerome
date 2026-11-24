@@ -1,5 +1,6 @@
-"""Tiny generated images for cover and picture tests (no image library needed)."""
+"""Tiny generated images for cover and picture tests."""
 
+import io
 import struct
 import zlib
 
@@ -25,6 +26,22 @@ def make_jpeg_header(width: int, height: int) -> bytes:
     app0 = b"\xff\xe0" + struct.pack(">H", 16) + b"JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00"
     sof0 = b"\xff\xc0" + struct.pack(">HBHHB", 11, 8, height, width, 1) + b"\x01\x11\x00"
     return b"\xff\xd8" + app0 + sof0 + b"\xff\xd9"
+
+
+def make_jpeg(width: int, height: int) -> bytes:
+    """A real, decodable one-colour JPEG."""
+    from PIL import Image
+
+    out = io.BytesIO()
+    Image.new("RGB", (width, height), (40, 90, 160)).save(out, "JPEG", quality=60)
+    return out.getvalue()
+
+
+def corrupt_png(width: int, height: int) -> bytes:
+    """A PNG whose header and size are right but whose image data is garbage."""
+    good = make_png(width, height)
+    start = good.index(b"IDAT") + 4
+    return good[:start] + b"\x00" * 64 + good[start + 64 :]
 
 
 GIF = b"GIF89a\x01\x00\x01\x00\x00\x00\x00;"

@@ -3,11 +3,12 @@
 The details live on the book row. A cover image is kept in storage; ``cover_type`` on the
 row says it is there and what it is."""
 
+import io
 import re
-import struct
 from dataclasses import dataclass
 from typing import Any
 
+from PIL import Image
 from sqlalchemy.orm import Session
 
 from jerome.core.books import get_book
@@ -16,11 +17,13 @@ from jerome.errors import JeromeError
 from jerome.orm import TRIM_SIZES, Book
 from jerome.storage import Storage
 
+MAX_COVER_PIXELS = 50_000_000  # a larger image is refused before it is decoded
 MIN_COVER_SIDE = 1400  # px on the long side; the big shops ask for at least this
 MAX_TEXT = 500  # characters in a one-line field
 MAX_DESCRIPTION = 10_000
 _TEXT_FIELDS = ("translator", "publisher", "rights")
 _EXT = {"image/jpeg": "jpg", "image/png": "png"}
+_FORMATS = {"JPEG": "image/jpeg", "PNG": "image/png"}
 
 
 class InvalidPublication(JeromeError):
@@ -58,32 +61,21 @@ def isbn13(value: str) -> str:
 
 
 def image_size(data: bytes) -> tuple[str, int, int] | None:
-    """(media type, width, height) of a whole PNG or JPEG, read from its header; None for
-    anything else, or a file cut short (no PNG IEND chunk, no JPEG end marker)."""
-    if data.startswith(b"\x89PNG\r\n\x1a\n") and b"IEND" not in data[-16:]:
+    """(media type, width, height) of a PNG or JPEG that decodes whole; None for anything
+    else: another format, a file cut short or corrupt, or more than MAX_COVER_PIXELS."""
+    try:
+        with Image.open(io.BytesIO(data)) as probe:
+            kind, (width, height) = probe.format, probe.size
+            if kind not in _FORMATS or not width or not height:
+                return None
+            if width * height > MAX_COVER_PIXELS:  # refused before it is decoded
+                return None
+            probe.verify()
+        with Image.open(io.BytesIO(data)) as image:
+            image.load()  # verify() does not decode the pixels; load() does
+    except (OSError, ValueError, SyntaxError, Image.DecompressionBombError):
         return None
-    if data.startswith(b"\xff\xd8") and b"\xff\xd9" not in data[-64:]:
-        return None
-    if data.startswith(b"\x89PNG\r\n\x1a\n") and len(data) >= 24 and data[12:16] == b"IHDR":
-        width, height = struct.unpack(">II", data[16:24])
-        return ("image/png", width, height) if width and height else None
-    if not data.startswith(b"\xff\xd8"):
-        return None
-    i = 2
-    while i + 4 <= len(data):
-        if data[i] != 0xFF:
-            return None
-        marker = data[i + 1]
-        if marker in (0xD8, 0x01) or 0xD0 <= marker <= 0xD7:  # markers without a length
-            i += 2
-            continue
-        (length,) = struct.unpack(">H", data[i + 2 : i + 4])
-        sof = 0xC0 <= marker <= 0xCF and marker not in (0xC4, 0xC8, 0xCC)
-        if sof and i + 9 <= len(data):
-            height, width = struct.unpack(">HH", data[i + 5 : i + 9])
-            return ("image/jpeg", width, height) if width and height else None
-        i += 2 + length
-    return None
+    return _FORMATS[kind], width, height
 
 
 def default_rights(year: int | None, authors: list[str]) -> str:

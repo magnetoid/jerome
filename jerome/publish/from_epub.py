@@ -59,6 +59,7 @@ _IMAGE_TYPES = {"image/jpeg": "jpg", "image/png": "png", "image/gif": "gif", "im
 _XML_LANG = "{http://www.w3.org/XML/1998/namespace}lang"
 _XLINK_HREF = "{http://www.w3.org/1999/xlink}href"
 _XHTML = f"{{{NS['xhtml']}}}"
+KEEP_TEXT = 3000  # characters outside links: a page marked as front matter with more is kept
 _CUT = "data-jr-cut"  # marks where a table-of-contents entry starts, while assembling
 
 
@@ -75,12 +76,21 @@ def epub_to_pub(clean_epub: bytes, language: str) -> tuple[PubBook, set[str], se
     package = read_container(clean_epub)
     pub = PubBook(language=language, chapters=[])
     docs: list[_Doc] = []
+    in_toc = {point.path for point in package.nav_points}
     for item in content_documents(package):
         root = parse_content_document(package.files[item.path], item.path).root
         body = next((el for el in root.iter() if local_name(el) == "body"), None)
-        kind = _front_page(package, item.path, body)
+        kind = _front_page(package, item.path, body, in_toc)
+        name = _relative(package, item.path)
+        if kind is not None and not _is_nav(package, item.path) and body is not None:
+            if len(_text_outside_links(body)) > KEEP_TEXT:  # more than a front page holds
+                pub.warnings.append(
+                    f"{name} is marked as the {kind} but holds too much text for a {kind}; "
+                    "it was kept"
+                )
+                kind = None
         if kind is not None:
-            pub.left_out.append(f"{kind} ({_relative(package, item.path)})")
+            pub.left_out.append(f"{kind} ({name})")
         elif body is not None:
             docs.append(_Doc(item.path, root, body))
     note_keys = _inline_notes(docs)
@@ -99,19 +109,37 @@ def _relative(package: EpubPackage, path: str) -> str:
 # --- front pages ----------------------------------------------------------------------
 
 
-def _front_page(package: EpubPackage, path: str, body: etree._Element | None) -> str | None:
-    """The kind of front page Jerome makes itself that this document is, or None."""
-    for kind, label in _FRONT_PAGES.items():
-        if package.landmarks.get(kind) == path:
-            return label
-    if any("nav" in m.properties and m.path == path for m in package.manifest.values()):
+def _is_nav(package: EpubPackage, path: str) -> bool:
+    return any("nav" in m.properties and m.path == path for m in package.manifest.values())
+
+
+def _front_page(
+    package: EpubPackage, path: str, body: etree._Element | None, in_toc: set[str]
+) -> str | None:
+    """The kind of front page Jerome makes itself that this document is, or None.
+
+    A document the table of contents points into is a front page only when its body says
+    so itself: a landmark or guide entry (which may point at an anchor inside a chapter
+    file) or a typed section inside it never drops it."""
+    if _is_nav(package, path):
         return "contents"
     if body is None:
         return None
-    types = set().union(*(epub_type(el) for el in (body, *body) if isinstance(el.tag, str)))
+    body_types = epub_type(body)
     for kind, label in _FRONT_PAGES.items():
-        if kind in types:
+        if kind in body_types:
             return label
+    if path not in in_toc:
+        for kind, label in _FRONT_PAGES.items():
+            if package.landmarks.get(kind) == path:
+                return label
+        # every child that holds text is typed as front pages: the document is one
+        with_text = [
+            el for el in body if isinstance(el.tag, str) and "".join(el.itertext()).strip()
+        ]
+        kinds = [next((k for k in _FRONT_PAGES if k in epub_type(el)), None) for el in with_text]
+        if kinds and all(kinds):
+            return _FRONT_PAGES[kinds[0]]
     cover = package.manifest.get(package.cover_item or "")
     if cover is not None and not "".join(body.itertext()).strip():
         for el in body.iter():
@@ -121,6 +149,17 @@ def _front_page(package: EpubPackage, path: str, body: etree._Element | None) ->
             if ref and resolve_href(path, ref)[0] == cover.path:
                 return "cover"
     return None
+
+
+def _text_outside_links(body: etree._Element) -> str:
+    parts = []
+    for el in body.iter():
+        if not isinstance(el.tag, str) or any(local_name(a) == "a" for a in el.iterancestors()):
+            continue
+        if local_name(el) != "a":
+            parts.append(el.text or "")
+        parts.append(el.tail or "" if el is not body else "")
+    return "".join("".join(parts).split())
 
 
 # --- notes ----------------------------------------------------------------------------

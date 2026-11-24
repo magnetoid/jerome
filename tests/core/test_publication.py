@@ -13,7 +13,7 @@ from jerome.core.publication import (
 from jerome.core.translation import import_for_translation
 from tests.fixtures.docx_builders import make_docx, package_docx
 from tests.fixtures.epub_builders import make_epub
-from tests.fixtures.images import GIF, make_jpeg_header, make_png
+from tests.fixtures.images import GIF, corrupt_png, make_jpeg, make_jpeg_header, make_png
 
 
 def test_isbn13():
@@ -26,9 +26,16 @@ def test_isbn13():
 
 def test_image_size():
     assert image_size(make_png(1400, 2100)) == ("image/png", 1400, 2100)
-    assert image_size(make_jpeg_header(1600, 2400)) == ("image/jpeg", 1600, 2400)
+    assert image_size(make_jpeg(1600, 2400)) == ("image/jpeg", 1600, 2400)
+    assert image_size(make_jpeg(1600, 2400) + b"trailing motion-photo data") == (
+        "image/jpeg",
+        1600,
+        2400,
+    )
     assert image_size(GIF) is None
     assert image_size(make_png(1400, 2100)[:20]) is None
+    assert image_size(make_jpeg_header(1600, 2400)) is None  # headers only: not decodable
+    assert image_size(corrupt_png(1400, 2100)) is None
 
 
 def test_default_rights_and_title(session, tmp_storage):
@@ -108,7 +115,8 @@ def test_cover_rules(session, tmp_storage):
     for data, message in [
         (GIF, "must be a JPEG or PNG"),
         (good[:30], "must be a JPEG or PNG"),
-        (make_jpeg_header(900, 1300), "1300 px on its long side; shops need at least 1400"),
+        (make_jpeg(900, 1300), "1300 px on its long side; shops need at least 1400"),
+        (make_jpeg_header(1600, 2400), "must be a JPEG or PNG"),
     ]:
         with pytest.raises(InvalidPublication, match=message):
             set_cover(session, tmp_storage, book.id, data)

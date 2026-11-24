@@ -87,6 +87,12 @@ def prepare(session: Session, storage: Storage, book_id: int, fmt: PublishFormat
         session, storage, book_id, "docx-clean" if book.format == "docx" else "epub-clean"
     ).data
     cover = read_cover(storage, book)
+    if book.format == "epub" and not book.rights:
+        # never the computed "© year authors" over the book's own line (a public-domain
+        # notice, say); a line set under Publication always wins
+        own = read_container(clean).rights
+        if own:
+            pub.rights = own
     warnings: list[str] = []
     pub_book: PubBook | None = None
     if book.format == "epub" and fmt == "epub-book":
@@ -126,7 +132,7 @@ def prepare(session: Session, storage: Storage, book_id: int, fmt: PublishFormat
         pub=pub,
         pub_book=pub_book,
         clean=clean,
-        identifier=book_identifier(book_id, pub, existing),
+        identifier=book_identifier(book_id, pub, existing, created=book.created_at),
         cover=cover,
         warnings=warnings,
     )

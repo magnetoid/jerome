@@ -156,7 +156,8 @@ def publish(
         engine.dispose()
     for warning in prepared.warnings:
         typer.echo(f"warning: {warning}", err=True)
-    target = output or Path(f"{prepared.filename_stem}.{prepared.extension}")
+    # "-book": never the manuscript's own name, which may sit in this directory
+    target = output or Path(f"{prepared.filename_stem}-book.{prepared.extension}")
     target.write_bytes(data)
     typer.echo(str(target))
 

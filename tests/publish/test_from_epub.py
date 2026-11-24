@@ -132,3 +132,45 @@ def test_remote_resources_never_fetched(respx_mock):
     assert any("https://example.com/x.png" in w for w in pub.warnings)
     assert "example.com" not in pub.chapters[0].html
     assert not respx_mock.calls
+
+
+def _guide(href: str, kind: str = "toc"):
+    return lambda opf: opf.replace(
+        "</package>", f'<guide><reference type="{kind}" title="x" href="{href}"/></guide></package>'
+    )
+
+
+def test_guide_entry_at_a_chapter_anchor_keeps_the_chapters():
+    data = make_epub([("One", ["Alpha text."]), ("Two", ["Beta text."])], two_in_one_file=True)
+    data = edit_entry(data, "OEBPS/content.opf", _guide("book.xhtml#c1"))
+    pub, documents = _check(data)
+    assert [c.title for c in pub.chapters] == ["One", "Two"]
+    assert pub.left_out == [] and "OEBPS/book.xhtml" in documents
+
+
+def test_titlepage_section_does_not_drop_the_chapters_after_it():
+    data = make_epub([("One", ["Alpha text."])])
+    data = edit_entry(
+        data,
+        "OEBPS/ch1.xhtml",
+        lambda x: x.replace(
+            "<body>", '<body><section epub:type="titlepage"><p>A Title</p></section>'
+        ),
+    )
+    pub, documents = _check(data)
+    assert "OEBPS/ch1.xhtml" in documents
+    assert any("Alpha text." in c.html for c in pub.chapters)
+
+
+def test_a_long_page_marked_as_copyright_is_kept_with_a_warning():
+    long = [
+        f"Sentence number {n} of real chapter text that runs on for a while." for n in range(80)
+    ]
+    data = make_epub([("One", ["Alpha text."]), ("Two", long)])
+    data = edit_entry(data, "OEBPS/content.opf", _guide("ch2.xhtml", "copyright-page"))
+    data = edit_entry(
+        data, "OEBPS/nav.xhtml", lambda x: x.replace('href="ch2.xhtml', 'href="chX.xhtml')
+    )
+    pub, documents = _check(data)
+    assert "OEBPS/ch2.xhtml" in documents
+    assert any("too much text for a copyright page" in w for w in pub.warnings)
