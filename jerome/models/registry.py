@@ -5,6 +5,7 @@ from jerome.config import Settings
 from jerome.errors import UnknownModelPrice
 from jerome.models.base import Provider
 from jerome.models.claude import ClaudeProvider
+from jerome.models.deepl import DeepLProvider
 from jerome.models.openai_compat import OpenAICompatProvider
 from jerome.models.pricing import DEFAULT_PRICES, Price
 
@@ -56,13 +57,17 @@ class Registry:
 def build_registry(settings: Settings) -> Registry:
     """Providers for the app. Construction needs no network or API key."""
     key = settings.anthropic_api_key.get_secret_value() if settings.anthropic_api_key else None
-    providers: dict[str, Provider] = {"anthropic": ClaudeProvider(api_key=key or None)}
+    providers: dict[str, Provider | DeepLProvider] = {
+        "anthropic": ClaudeProvider(api_key=key or None)
+    }
     for cfg in settings.models.values():
         name = cfg.get("provider")
         if name == "openai_compat":
             providers["openai_compat"] = OpenAICompatProvider(
                 base_url=cfg["base_url"], api_key=cfg.get("api_key")
             )
+        elif name == "deepl":
+            providers["deepl"] = DeepLProvider(api_key=cfg.get("api_key"))
         elif name in PRESET_BASE_URLS:
             providers[name] = OpenAICompatProvider(
                 base_url=PRESET_BASE_URLS[name],

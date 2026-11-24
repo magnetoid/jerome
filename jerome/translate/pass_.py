@@ -8,6 +8,7 @@ from importlib import resources
 from jerome.documents.model import PLACEHOLDER, Mark
 from jerome.errors import UnsupportedLanguagePair
 from jerome.models.base import CompletionResult, ModelOutputError, Provider, SystemPart
+from jerome.models.deepl import target_code
 from jerome.translate.tags import Decoded, TagError, decode, encode, escape_text
 from jerome.types import StyleSheet
 
@@ -89,11 +90,15 @@ _IGNORE_HEADING = {
 }
 
 
-def _instructions(source: StyleSheet, target: StyleSheet) -> str:
+def _check_pair(source: StyleSheet, target: StyleSheet) -> None:
     if source.language == target.language:
         raise UnsupportedLanguagePair(
             f"cannot translate {source.variant} to {target.variant}: same language"
         )
+
+
+def _instructions(source: StyleSheet, target: StyleSheet) -> str:
+    _check_pair(source, target)
     template = (
         resources.files("jerome.translate")
         .joinpath("prompts", f"translate_{source.language}_{target.language}.md")
@@ -152,12 +157,46 @@ def run_translate_pass(
     model: str,
     effort: str | None,
 ) -> TranslatePassResult:
-    """One model call for the chunk. ModelRefusal and ModelOutputError propagate; nothing is
-    retried here. An item fails when the reply misses it, repeats it, its tags or
-    placeholders don't come back intact, or the reply is blank for a source with text.
-    Ids the chunk does not have are ignored."""
+    """One model (or DeepL) call for the chunk. ModelRefusal and ModelOutputError
+    propagate; nothing is retried here. An item fails when the reply misses it, repeats
+    it, its tags or placeholders don't come back intact, or the reply is blank for a
+    source with text. Ids the chunk does not have are ignored."""
+    if hasattr(provider, "translate_texts"):
+        result = _machine_translate(chunk, source, target, provider, model)
+    else:
+        result = _model_translate(chunk, source, target, context, provider, model, effort)
+    return _read_reply(chunk, result)
+
+
+def _machine_translate(
+    chunk: TranslateChunk, source: StyleSheet, target: StyleSheet, provider, model: str
+) -> CompletionResult:
+    """A translation service (DeepL): the items' tagged texts in, the same reply shape out."""
+    _check_pair(source, target)
+    keep = sorted(set(source.ignore_words) | set(target.ignore_words))
+    texts, usage = provider.translate_texts(
+        [encode(it.text, it.marks) for it in chunk.items],
+        source.language,
+        target_code(target.variant),
+        keep,
+    )
+    blocks = [
+        {"block_id": it.block_id, "text": t} for it, t in zip(chunk.items, texts, strict=True)
+    ]
+    return CompletionResult({"blocks": blocks}, usage, provider.name, model)
+
+
+def _model_translate(
+    chunk: TranslateChunk,
+    source: StyleSheet,
+    target: StyleSheet,
+    context: list[tuple[str, str]],
+    provider: Provider,
+    model: str,
+    effort: str | None,
+) -> CompletionResult:
     system, user = build_translate_request(source, target, chunk, context)
-    result = provider.complete(
+    return provider.complete(
         model=model,
         system=system,
         user=user,
@@ -165,6 +204,9 @@ def run_translate_pass(
         max_tokens=max_tokens_for(chunk),
         effort=effort,
     )
+
+
+def _read_reply(chunk: TranslateChunk, result: CompletionResult) -> TranslatePassResult:
     data = result.data
     if not isinstance(data, dict) or not isinstance(data.get("blocks"), list):
         raise ModelOutputError(  # the call was billed even though its output is unusable
