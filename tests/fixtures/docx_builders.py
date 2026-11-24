@@ -14,6 +14,7 @@ from lxml import etree
 from jerome.documents.docx_reader import read_docx
 from jerome.documents.docx_xml import NOTE_PARTS, NS, iter_paragraphs, qn, read_package
 from jerome.documents.model import ParsedBlock
+from tests.fixtures.images import make_png
 
 _XMLNS = " ".join(
     f'xmlns:{prefix}="{uri}"'
@@ -57,6 +58,9 @@ def package_docx(
     title: str | None = None,
     language: str = "en-US",
     creator: str | None = "jerome tests",
+    numbering: bool = False,
+    media: dict[str, bytes] | None = None,
+    image_rels: dict[str, tuple[str, bool]] | None = None,
 ) -> bytes:
     """Zip a minimal DOCX around raw XML.
 
@@ -74,6 +78,11 @@ def package_docx(
         doc_rels.append(("rId2", f"{_OFFICE_REL}/footnotes", "footnotes.xml", False))
         overrides["/word/footnotes.xml"] = f"{_WML_CT}.footnotes+xml"
     doc_rels += _hyperlink_rels(links or {})
+    if numbering:
+        doc_rels.append(("rIdNum", f"{_OFFICE_REL}/numbering", "numbering.xml", False))
+        overrides["/word/numbering.xml"] = f"{_WML_CT}.numbering+xml"
+    for rid, (target, external) in (image_rels or {}).items():
+        doc_rels.append((rid, f"{_OFFICE_REL}/image", target, external))
 
     parts = {
         "[Content_Types].xml": _content_types(overrides),
@@ -90,6 +99,9 @@ def package_docx(
         "word/_rels/document.xml.rels": _rels(doc_rels),
         "word/styles.xml": _styles(language, styles),
     }
+    if numbering:
+        parts["word/numbering.xml"] = _NUMBERING
+    media_parts = {f"word/{name}": data for name, data in (media or {}).items()}
     if footnotes is not None:
         parts["word/footnotes.xml"] = (
             f"{_DECL}<w:footnotes {_XMLNS}>{_NOTE_SEPARATORS}{footnotes}</w:footnotes>"
@@ -103,6 +115,8 @@ def package_docx(
             info = zipfile.ZipInfo(name, date_time=(2026, 1, 1, 0, 0, 0))
             info.compress_type = zipfile.ZIP_DEFLATED
             zf.writestr(info, xml.encode("utf-8"))
+        for name, data in media_parts.items():
+            zf.writestr(zipfile.ZipInfo(name, date_time=(2026, 1, 1, 0, 0, 0)), data)
     return buf.getvalue()
 
 
@@ -112,6 +126,7 @@ def _content_types(overrides: dict[str, str]) -> str:
     )
     return (
         f'{_DECL}<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+        '<Default Extension="png" ContentType="image/png"/>'
         '<Default Extension="rels" '
         'ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
         f'<Default Extension="xml" ContentType="application/xml"/>{items}</Types>'
@@ -168,11 +183,39 @@ def _styles(language: str, extra: str) -> str:
     )
 
 
+_NUMBERING = (
+    f"{_DECL}<w:numbering {_XMLNS}>"
+    + "".join(
+        f'<w:abstractNum w:abstractNumId="{n}"><w:lvl w:ilvl="0"><w:start w:val="1"/>'
+        f'<w:numFmt w:val="{fmt}"/><w:lvlText w:val="{text}"/></w:lvl></w:abstractNum>'
+        for n, fmt, text in ((1, "bullet", "\u2022"), (2, "decimal", "%1."))
+    )
+    + '<w:num w:numId="1"><w:abstractNumId w:val="1"/></w:num>'
+    '<w:num w:numId="2"><w:abstractNumId w:val="2"/></w:num></w:numbering>'
+)
+
+
+def _image_run(rid: str, alt: str, *, linked: bool = False) -> str:
+    attr = "r:link" if linked else "r:embed"
+    pic = "http://schemas.openxmlformats.org/drawingml/2006/picture"
+    return (
+        '<w:r><w:drawing><wp:inline><wp:extent cx="914400" cy="914400"/>'
+        f'<wp:docPr id="1" name="Picture" descr={quoteattr(alt)}/>'
+        '<a:graphic><a:graphicData uri="' + pic + '">'
+        f'<pic:pic xmlns:pic="{pic}"><pic:nvPicPr><pic:cNvPr id="1" name="p"/><pic:cNvPicPr/>'
+        f'</pic:nvPicPr><pic:blipFill><a:blip {attr}="{rid}"/></pic:blipFill><pic:spPr/>'
+        "</pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>"
+    )
+
+
 # --- mini-markup ----------------------------------------------------------------------
 
 _HEADINGS = (("## ", "Heading2"), ("# ", "Heading1"))
 _CUSTOM_STYLE = re.compile(r"@(\w+): (.*)", re.S)
 _TABLE_ROW = re.compile(r"\|.*\|", re.S)
+_LIST_ITEM = re.compile(r"(- |1\. )(.*)", re.S)
+_IMAGE = re.compile(r"!\[(?P<alt>[^\]]*)\]\((?P<src>png|link:[^)]+)\)")
+_TOC_LINE = re.compile(r"\[TOC: (.*)\]")
 _MARKUP = re.compile(
     r"\*\*(?P<bold>.+?)\*\*|\*(?P<italic>.+?)\*|\[\^(?P<note>\d+)\]"
     r"|\[(?P<label>[^\]]+)\]\((?P<url>[^)\s]+)\)"
@@ -201,12 +244,15 @@ def make_docx(
 
     ``# `` / ``## `` start Heading 1 / Heading 2; ``@Style: text`` uses a custom paragraph
     style whose outline level comes from ``styles``; ``|a|b|`` is a table row (consecutive
-    rows form one table). Inline: ``**bold**``, ``*italic*``, ``[text](url)``, ``[^n]``
-    (footnote reference) and ``\\t`` (tab). ``footnotes`` maps ids to note text, which uses
-    the same inline markup.
+    rows form one table). ``- item`` / ``1. item`` are bulleted / numbered list items;
+    ``![alt](png)`` is an embedded picture (a small generated PNG) and
+    ``![alt](link:URL)`` a linked one; ``[TOC: text]`` is a Word table-of-contents entry.
+    Inline: ``**bold**``, ``*italic*``, ``[text](url)``, ``[^n]`` (footnote reference) and
+    ``\\t`` (tab). ``footnotes`` maps ids to note text, which uses the same inline markup.
     """
     links = _Links(first_id=3)  # rId1 is styles, rId2 footnotes
-    body = _body(lines, links)
+    extras = _Extras()
+    body = _body(lines, links, extras)
 
     notes_xml = None
     note_links = _Links(first_id=1)
@@ -232,10 +278,33 @@ def make_docx(
         styles=styles_xml,
         links=links.targets,
         footnote_links=note_links.targets,
+        numbering=extras.numbering,
+        media=extras.media,
+        image_rels=extras.image_rels,
     )
 
 
-def _body(lines: list[str], links: _Links) -> str:
+class _Extras:
+    """Numbering and pictures a mini-markup body needs in its package."""
+
+    def __init__(self) -> None:
+        self.numbering = False
+        self.media: dict[str, bytes] = {}
+        self.image_rels: dict[str, tuple[str, bool]] = {}
+
+    def picture(self, src: str) -> tuple[str, bool]:
+        rid = f"rIdImg{len(self.image_rels) + 1}"
+        if src.startswith("link:"):
+            self.image_rels[rid] = (src[len("link:") :], True)
+            return rid, True
+        name = f"media/image{len(self.media) + 1}.png"
+        self.media[name] = make_png(4, 3)
+        self.image_rels[rid] = (name, False)
+        return rid, False
+
+
+def _body(lines: list[str], links: _Links, extras: _Extras | None = None) -> str:
+    extras = extras or _Extras()
     out: list[str] = []
     rows: list[str] = []
     for line in lines:
@@ -245,14 +314,34 @@ def _body(lines: list[str], links: _Links) -> str:
         if rows:
             out.append(_table(rows, links))
             rows = []
-        out.append(_paragraph(line, links))
+        out.append(_paragraph(line, links, extras))
     if rows:
         out.append(_table(rows, links))
         out.append("<w:p/>")  # Word always ends the body with a paragraph
     return "".join(out)
 
 
-def _paragraph(line: str, links: _Links) -> str:
+def _paragraph(line: str, links: _Links, extras: _Extras | None = None) -> str:
+    extras = extras or _Extras()
+    if m := _TOC_LINE.fullmatch(line):
+        return (
+            '<w:p><w:pPr><w:pStyle w:val="TOC1"/></w:pPr>'
+            '<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+            '<w:r><w:instrText xml:space="preserve"> TOC \\o "1-3" \\h </w:instrText></w:r>'
+            '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+            f"{_run(m[1], ())}"
+            '<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>'
+        )
+    if m := _IMAGE.fullmatch(line):
+        rid, linked = extras.picture(m["src"])
+        return f"<w:p>{_image_run(rid, m['alt'], linked=linked)}</w:p>"
+    if m := _LIST_ITEM.fullmatch(line):
+        extras.numbering = True
+        num = 1 if m[1] == "- " else 2
+        return (
+            f'<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="{num}"/></w:numPr>'
+            f"</w:pPr>{_inline(m[2], links)}</w:p>"
+        )
     style = None
     for prefix, style_id in _HEADINGS:
         if line.startswith(prefix):
@@ -262,6 +351,9 @@ def _paragraph(line: str, links: _Links) -> str:
         if m := _CUSTOM_STYLE.fullmatch(line):
             style, line = m[1], m[2]
     ppr = f'<w:pPr><w:pStyle w:val="{style}"/></w:pPr>' if style else ""
+    if m := _IMAGE.fullmatch(line):  # a picture in a heading
+        rid, linked = extras.picture(m["src"])
+        return f"<w:p>{ppr}{_image_run(rid, m['alt'], linked=linked)}</w:p>"
     return f"<w:p>{ppr}{_inline(line, links)}</w:p>"
 
 
