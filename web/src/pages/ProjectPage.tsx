@@ -78,7 +78,7 @@ export default function ProjectPage() {
     return <main className="p-8"><p role="alert" className="text-destructive">{detailOf(projects.error)}</p></main>;
   }
   if (!project) {
-    return <main className="mx-auto max-w-3xl p-8"><h1 className="text-2xl font-semibold">Project not found</h1></main>;
+    return <main className="w-full p-8"><h1 className="text-2xl font-semibold">Project not found</h1></main>;
   }
 
   const idle = project.active_job === null;
@@ -99,13 +99,13 @@ export default function ProjectPage() {
     flaggedCount > 0 && !["set_up", "translating", "translated"].includes(project.stage);
 
   return (
-    <main className="mx-auto max-w-4xl space-y-6 p-4 sm:p-8">
+    <main className="w-full space-y-6 p-4 sm:p-8">
       <header className="flex flex-wrap items-center gap-3">
         <h1 className="text-2xl font-semibold">{project.title}</h1>
         <StageBadge stage={project.stage} />
         {sourceId != null && <SourceBookLink sourceId={sourceId} variant={project.source_variant} />}
         <Link to={`/activity?book=${id}`} className="ml-auto text-sm text-muted-foreground underline underline-offset-4">
-          Janus activity for this book
+          Activity for this book
         </Link>
       </header>
 

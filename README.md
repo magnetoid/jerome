@@ -284,9 +284,16 @@ be used by the key that asked for it; an upload is at most `JEROME_MAX_UPLOAD_MB
 
 **What Janus does is visible.** A suggestion decision made through MCP shows as
 "Janus (<key name>)" in the review screens and can be undone there. Every other change
-(imports, settings, jobs) is listed on the "Janus activity" page, with the before and after
+(imports, settings, jobs) is listed on the "Activity" page, with the before and after
 values for a setting. Decisions in an imported Word review copy are the editor's, so they are
 recorded as Word decisions.
+
+**Activity.** The Activity page (`GET /v1/activity`, MCP `list_activity`) lists everything
+done, newest first: every correction decision by people, Janus, automatic apply, Word import
+and API keys, and Janus's other changes. It filters by book, chapter and who. A correction
+that is still its suggestion's latest decision can be reverted from there
+(`POST /v1/activity/decisions/{id}/revert`, MCP `revert_decision`); what it displaced comes
+back, and the revert is listed as an undo.
 
 **Not available over MCP:** deleting a book, team management, signing in, passwords and API
 keys. Those stay with people, in the web interface and the CLI.

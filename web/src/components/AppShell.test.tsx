@@ -28,14 +28,14 @@ function setup(me: typeof ME | typeof MEMBER = ME) {
 }
 
 describe("AppShell", () => {
-  it("shows the top bar with links and the page", async () => {
+  it("shows the sidebar with links and the page", async () => {
     setup();
     expect(await screen.findByText("home page")).toBeInTheDocument();
     expect(screen.getByText("Jerome")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Projects" })).toHaveAttribute("href", "/");
     expect(screen.getByRole("link", { name: "Team" })).toHaveAttribute("href", "/team");
     expect(screen.getByRole("link", { name: "Settings" })).toHaveAttribute("href", "/settings");
-    expect(screen.getByRole("link", { name: "+ New project" })).toHaveAttribute("href", "/projects/new");
+    expect(screen.getByRole("link", { name: "New project" })).toHaveAttribute("href", "/projects/new");
   });
 
   it("hides the Team link from members", async () => {
@@ -46,12 +46,12 @@ describe("AppShell", () => {
     expect(screen.queryByRole("link", { name: "Settings" })).not.toBeInTheDocument();
   });
 
-  it("shows the Janus activity link to every member", async () => {
+  it("shows the Activity link to every member", async () => {
     const { unmount } = setup();
-    expect(await screen.findByRole("link", { name: "Janus activity" })).toHaveAttribute("href", "/activity");
+    expect(await screen.findByRole("link", { name: "Activity" })).toHaveAttribute("href", "/activity");
     unmount();
     setup(MEMBER);
-    expect(await screen.findByRole("link", { name: "Janus activity" })).toHaveAttribute("href", "/activity");
+    expect(await screen.findByRole("link", { name: "Activity" })).toHaveAttribute("href", "/activity");
   });
 
   it("redirects to /change-password when a change is forced", async () => {

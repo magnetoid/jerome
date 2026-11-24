@@ -163,7 +163,7 @@ function ChapterReview({ bookId, chapterId, chapters }: {
   const done = !query.isPending && !query.hasNextPage;
 
   return (
-    <main className="mx-auto max-w-6xl px-4 pb-24 sm:px-6">
+    <main className="w-full px-4 pb-24 sm:px-6">
       <ReviewToolbar
         bookId={bookId}
         chapters={chapters}
@@ -255,7 +255,7 @@ export default function ReviewPage() {
     return <main className="p-8"><p role="alert" className="text-destructive">{detailOf(summary.error)}</p></main>;
   }
   if (summary.data?.length === 0) {
-    return <main className="mx-auto max-w-3xl p-8"><p>This book has no chapters to review.</p></main>;
+    return <main className="w-full p-8"><p>This book has no chapters to review.</p></main>;
   }
   return <main className="p-8 text-sm text-muted-foreground">Loading…</main>;
 }

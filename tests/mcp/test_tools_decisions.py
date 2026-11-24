@@ -118,3 +118,22 @@ def test_decide_unknown_suggestion_is_not_found(client, mcp_auth, session):
     result = mcp_call(client, mcp_auth, "decide_suggestion", args)
     assert tool_error(result).startswith("not_found: ")
     assert actions(session) == []
+
+
+def test_list_activity_and_revert_decision(client, mcp_auth, session, two):
+    book, a, _ = two
+    mcp_call(client, mcp_auth, "decide_suggestion", {"suggestion_id": a.id, "action": "accept"})
+    out = tool_json(mcp_call(client, mcp_auth, "list_activity", {"book_id": book.id}))
+    assert out["total"] == 1  # the decision once, not also as the tool's log row
+    (row,) = out["items"]
+    assert (row["kind"], row["channel"], row["revertable"]) == ("decision", "mcp", True)
+
+    reverted = tool_json(mcp_call(client, mcp_auth, "revert_decision", {"decision_id": row["id"]}))
+    assert reverted["status"] == "open" and reverted["id"] == a.id
+    assert actions(session)[-1].summary == "Reverted a decision"
+    assert actions(session)[-1].after == {"decision_id": row["id"], "suggestion_ids": [a.id]}
+    out = tool_json(mcp_call(client, mcp_auth, "list_activity", {"book_id": book.id}))
+    assert out["total"] == 2 and {i["action"] for i in out["items"]} == {"accept", "undo"}
+
+    again = mcp_call(client, mcp_auth, "revert_decision", {"decision_id": row["id"]})
+    assert tool_error(again).startswith("conflict:")

@@ -173,6 +173,31 @@ class AgentActionOut(BaseModel):
     after: Any
 
 
+class ActivityItemOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    kind: Literal["decision", "agent"]
+    id: int
+    at: datetime
+    actor: str
+    channel: str
+    book_id: int | None
+    book_title: str | None
+    chapter_id: int | None
+    chapter_title: str | None
+    summary: str
+    action: str | None
+    suggestion_id: int | None
+    original: str | None
+    replacement: str | None
+    tool: str | None
+    job_id: int | None
+    before: Any
+    after: Any
+    revertable: bool
+    revert_blocked: str | None
+
+
 class SettingOut(BaseModel):
     key: str
     value: Any

@@ -111,7 +111,7 @@ export default function NewProjectPage() {
   const error = fileError ?? (create.isError ? detailOf(create.error) : null);
 
   return (
-    <main className="mx-auto max-w-2xl p-4 sm:p-8">
+    <main className="w-full p-4 sm:p-8">
       <h1 className="mb-6 text-2xl font-semibold">New project</h1>
       <form
         className="space-y-6"
