@@ -415,3 +415,65 @@ def test_second_check_of_a_chapter_at_once_conflicts(session_factory, tmp_storag
         check_chapter(s, reg, book_id, b1.chapter_id, actor="a")
         s.commit()
     assert len(seen) == 1 and "already running" in seen[0]
+
+
+def test_a_mark_already_being_checked_is_not_asked_twice(
+    session_factory, tmp_storage, test_settings
+):
+    sf = session_factory
+    book_id, (b1, _), job_id = book(sf, tmp_storage)
+    sid = mark(sf, b1, 15, 18, "tea", job_id=job_id)
+    other = mark(sf, b1, 0, 9, "Catherine", job_id=job_id)
+    seen = {}
+    reply = answer()
+    reg = registry(test_settings, FakeProvider([]))
+
+    def others_click(kwargs):
+        with sf() as s2:
+            for name, fn in (
+                ("same mark", lambda: check_suggestion(s2, reg, sid, actor="b")),
+                ("chapter", lambda: check_chapter(s2, reg, book_id, b1.chapter_id, actor="b")),
+            ):
+                try:
+                    fn()
+                except Conflict as exc:
+                    seen[name] = str(exc)
+        with sf() as s3:  # another mark of the chapter may be checked at the same time
+            check_suggestion(s3, reg, other, actor="c")
+            s3.commit()
+        return reply(kwargs)
+
+    reg.providers["fake"].responses = [others_click, answer()]
+    with sf() as s:
+        check_suggestion(s, reg, sid, actor="a")
+        s.commit()
+    assert "already being checked" in seen["same mark"]
+    assert "already running" in seen["chapter"]
+    assert row(sf, sid).ai_verdict == "not_an_error" and row(sf, other).ai_verdict
+    assert len(usage(sf, job_id)) == 2
+
+
+def test_a_mark_is_not_asked_alone_while_its_chapter_is_checked(
+    session_factory, tmp_storage, test_settings
+):
+    sf = session_factory
+    book_id, (b1, _), job_id = book(sf, tmp_storage)
+    sid = mark(sf, b1, 15, 18, "tea", job_id=job_id)
+    seen = []
+    reply = answer()
+    reg = registry(test_settings, FakeProvider([]))
+
+    def single_click(kwargs):
+        with sf() as s2:
+            try:
+                check_suggestion(s2, reg, sid, actor="b")
+            except Conflict as exc:
+                seen.append(str(exc))
+        return reply(kwargs)
+
+    reg.providers["fake"].responses = [single_click]
+    with sf() as s:
+        check_chapter(s, reg, book_id, b1.chapter_id, actor="a")
+        s.commit()
+    assert len(seen) == 1 and "already running" in seen[0]
+    assert len(usage(sf, job_id)) == 1

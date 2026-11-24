@@ -32,7 +32,12 @@ log = logging.getLogger(__name__)
 
 CHAPTER_LIMIT = 40  # marks asked about per chapter request
 TIME_BUDGET = 40.0  # seconds: no new paragraph is started after this (proxies time out at 60)
-_LOCK_SPACE = 0x41494348  # advisory lock namespace ("AICH") for a chapter check in progress
+# Advisory locks, held until the request's transaction ends, so no mark is paid for twice:
+# a chapter check holds its chapter's lock alone; a single check shares it (two marks of a
+# chapter can be checked at once) and holds its mark's lock alone.
+_CHAPTER_LOCKS = 0x41494348  # "AICH"
+_MARK_LOCKS = 0x41494353  # "AICS"
+RUNNING = "a check of chapter {} is already running; try again shortly"
 NO_AI_MODEL = "No AI model is set for proofreading (models.ai); set one under Settings"
 UNUSABLE = "The AI's reply could not be used; try again"
 DECLINED = "The AI declined to check this mark"
@@ -79,6 +84,11 @@ def _max_tokens(marks: int) -> int:
 def _no_active_job(session: Session, book_id: int) -> None:
     if _active_job(session, book_id) is not None:
         raise Conflict(f"book {book_id} has an active job; check its marks once it is done")
+
+
+def _try_lock(session: Session, space: int, key: int, *, shared: bool = False) -> bool:
+    fn = "pg_try_advisory_xact_lock_shared" if shared else "pg_try_advisory_xact_lock"
+    return bool(session.scalar(text(f"SELECT {fn}(:space, :key)"), {"space": space, "key": key}))
 
 
 def _job_for(session: Session, book_id: int, marks: list[Suggestion]) -> int:
@@ -179,8 +189,15 @@ def check_suggestion(
         raise NotFound(f"suggestion {suggestion_id} not found")
     if (why := _why_not(s)) is not None:
         raise Conflict(why)
-    book = session.get(Book, s.book_id)
     block = session.get(Block, s.block_id)
+    if not _try_lock(session, _CHAPTER_LOCKS, block.chapter_id, shared=True):
+        raise Conflict(RUNNING.format(block.chapter_id))
+    if not _try_lock(session, _MARK_LOCKS, s.id):
+        raise Conflict(f"suggestion {s.id} is already being checked by the AI")
+    session.refresh(s)  # what another check committed before the locks were taken
+    if (why := _why_not(s)) is not None:
+        raise Conflict(why)
+    book = session.get(Book, s.book_id)
     _no_active_job(session, book.id)
     chosen = _model(registry, book)
     verdicts, model = _ask(session, registry, chosen, book, block, [s])
@@ -209,12 +226,8 @@ def check_chapter(
     if chapter is None or chapter.book_id != book_id:
         raise NotFound(f"chapter {chapter_id} not found in book {book_id}")
     _no_active_job(session, book_id)
-    taken = session.scalar(
-        text("SELECT pg_try_advisory_xact_lock(:space, :chapter)"),
-        {"space": _LOCK_SPACE, "chapter": chapter_id},
-    )
-    if not taken:  # held until the other request's transaction ends
-        raise Conflict(f"a check of chapter {chapter_id} is already running; try again shortly")
+    if not _try_lock(session, _CHAPTER_LOCKS, chapter_id):
+        raise Conflict(RUNNING.format(chapter_id))
     rows = session.execute(
         select(Suggestion, Block)
         .join(Block, Block.id == Suggestion.block_id)
