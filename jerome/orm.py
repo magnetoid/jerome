@@ -24,7 +24,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
-from jerome.types import Category, Role, Severity, Source, Status
+from jerome.types import AI_VERDICTS, Category, Role, Severity, Source, Status
 
 JOB_STATUSES = ("queued", "running", "paused_cost_cap", "cancelled", "failed", "completed")
 ACTIVE_JOB_STATUSES = ("queued", "running", "paused_cost_cap")
@@ -32,7 +32,6 @@ TASK_STATUSES = ("queued", "running", "done", "failed")
 TASK_KINDS = ("chapter", "consistency", "publish")
 TRIM_SIZES = ("6x9in", "5.5x8.5in", "5x8in", "a5")
 CHANNELS = ("api", "word", "system", "web", "auto", "mcp")
-AI_VERDICTS = ("correct", "not_an_error", "better")  # the AI's view of a LanguageTool mark
 
 
 def _values(vocab: Iterable[str]) -> tuple[str, ...]:
