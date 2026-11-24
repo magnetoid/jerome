@@ -29,6 +29,7 @@ function body(over: { storage?: string; settings?: unknown[]; secrets?: unknown[
       row("max_upload_mb", 50, "app", { updated_by: "ann@example.com", updated_at: "2026-11-20T10:00:00Z" }),
       row("session_days", 14),
       row("languagetool_url", "http://localhost:8010"),
+      row("languagetool_username", null),
       row("public_base_url", null),
     ],
     secrets: over.secrets ?? [
@@ -85,9 +86,9 @@ describe("SettingsPage", () => {
 
   it("shows the sections in order", async () => {
     setup();
-    await screen.findByRole("heading", { name: "AI model" });
+    await screen.findByRole("heading", { name: "Models" });
     const names = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
-    expect(names).toEqual(["AI model", "Limits", "Services", "Secrets", "API keys", "System", "Recent changes"]);
+    expect(names).toEqual(["Models", "Limits", "Services", "Secrets", "API keys", "System", "Recent changes"]);
     expect(screen.getByText("Ready")).toBeInTheDocument();
   });
 
@@ -242,11 +243,54 @@ describe("SettingsPage", () => {
     expect(within(group).queryByLabelText("Base URL")).not.toBeInTheDocument();
     await user.selectOptions(within(group).getByLabelText("Provider"), "openai_compat");
     await user.type(await within(group).findByLabelText("Base URL"), "https://llm.example.com/v1");
-    await user.selectOptions(within(group).getByLabelText("Effort"), "high");
+    expect(within(group).queryByLabelText("Effort")).not.toBeInTheDocument(); // only Claude and OpenAI
     await user.click(within(group).getByRole("button", { name: "Save" }));
     await waitFor(() => expect(call(f, "PUT", "/v1/settings/models.ai")).toBeTruthy());
     expect(JSON.parse(call(f, "PUT", "/v1/settings/models.ai")![1]!.body as string)).toEqual({
-      value: { provider: "openai_compat", model: "claude-opus-5-5", effort: "high", base_url: "https://llm.example.com/v1" },
+      value: { provider: "openai_compat", model: "claude-opus-5-5", base_url: "https://llm.example.com/v1" },
+    });
+  });
+
+  it("offers the presets with model suggestions, and DeepL only for translation", async () => {
+    const f = setup({
+      "PUT /v1/settings/models.ai": () => json(200, body()),
+      "PUT /v1/settings/models.translate": () => json(200, body()),
+    }).f;
+    const user = userEvent.setup();
+    const ai = await screen.findByRole("group", { name: "Proofreading model" });
+    const aiProviders = [...within(ai).getByLabelText("Provider").querySelectorAll("option")].map((o) => o.value);
+    expect(aiProviders).toEqual(["anthropic", "openai", "gemini", "mistral", "openrouter", "openai_compat"]);
+    await user.selectOptions(within(ai).getByLabelText("Provider"), "openrouter");
+    const list = document.getElementById(within(ai).getByLabelText("Model").getAttribute("list")!)!;
+    expect([...list.querySelectorAll("option")].map((o) => o.value)).toContain("qwen/qwen3-235b-a22b");
+    await user.clear(within(ai).getByLabelText("Model"));
+    await user.type(within(ai).getByLabelText("Model"), "deepseek/deepseek-chat");
+    await user.click(within(ai).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(call(f, "PUT", "/v1/settings/models.ai")).toBeTruthy());
+    expect(JSON.parse(call(f, "PUT", "/v1/settings/models.ai")![1]!.body as string)).toEqual({
+      value: { provider: "openrouter", model: "deepseek/deepseek-chat" },
+    });
+
+    const tr = screen.getByRole("group", { name: "Translation model" });
+    await user.selectOptions(within(tr).getByLabelText("Provider"), "deepl");
+    expect(within(tr).queryByLabelText("Model")).not.toBeInTheDocument();
+    expect(within(tr).queryByLabelText("Effort")).not.toBeInTheDocument();
+    await user.click(within(tr).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(call(f, "PUT", "/v1/settings/models.translate")).toBeTruthy());
+    expect(JSON.parse(call(f, "PUT", "/v1/settings/models.translate")![1]!.body as string)).toEqual({
+      value: { provider: "deepl", model: "deepl" },
+    });
+  });
+
+  it("saves the LanguageTool Premium username", async () => {
+    const f = setup({ "PUT /v1/settings/languagetool_username": () => json(200, body()) }).f;
+    const user = userEvent.setup();
+    const group = await screen.findByRole("group", { name: "LanguageTool Premium username" });
+    await user.type(within(group).getByLabelText("LanguageTool Premium username"), " ana@x.org ");
+    await user.click(within(group).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(call(f, "PUT", "/v1/settings/languagetool_username")).toBeTruthy());
+    expect(JSON.parse(call(f, "PUT", "/v1/settings/languagetool_username")![1]!.body as string)).toEqual({
+      value: "ana@x.org",
     });
   });
 

@@ -18,7 +18,13 @@ import { errorToast, SourceNote, useRefreshSettings, type SecretRow, type System
 const LABELS: Record<string, string> = {
   anthropic_api_key: "Anthropic API key",
   webhook_secret: "Webhook secret",
-  openai_compat_api_key: "OpenAI-compatible API key",
+  openai_compat_api_key: "Own server / other API key",
+  openai_api_key: "OpenAI API key",
+  gemini_api_key: "Google Gemini API key",
+  mistral_api_key: "Mistral API key",
+  openrouter_api_key: "OpenRouter API key",
+  deepl_api_key: "DeepL API key",
+  languagetool_api_key: "LanguageTool Premium API key",
 };
 
 function statusOf(row: SecretRow): string {

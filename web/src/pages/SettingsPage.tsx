@@ -3,7 +3,7 @@ import { apiFetch } from "@/lib/api";
 import { useMe } from "@/hooks/useMe";
 import ModelSettings from "@/components/settings/ModelSettings";
 import PricesSettings from "@/components/settings/PricesSettings";
-import { NumberSetting, UrlSetting } from "@/components/settings/SimpleSettings";
+import { NumberSetting, TextSetting, UrlSetting } from "@/components/settings/SimpleSettings";
 import SecretsSection from "@/components/settings/SecretsSection";
 import ApiKeysSection from "@/components/settings/ApiKeysSection";
 import { AuditSection, SystemSection } from "@/components/settings/SystemAndAudit";
@@ -57,7 +57,7 @@ export default function SettingsPage() {
       ) : !data ? null : (
         <>
           <section className="space-y-3" aria-labelledby="h-ai">
-            <Heading id="h-ai">AI model</Heading>
+            <Heading id="h-ai">Models</Heading>
             <ModelSettings
               key={stamp("models.ai")}
               row={row("models.ai")!}
@@ -69,6 +69,7 @@ export default function SettingsPage() {
               row={row("models.translate")!}
               label="Translation model"
               idPrefix="translate"
+              allowDeepl
             />
           </section>
 
@@ -85,6 +86,12 @@ export default function SettingsPage() {
             {SERVICES.map(([key, label]) => (
               <UrlSetting key={stamp(key)} row={row(key)!} label={label} />
             ))}
+            <TextSetting
+              key={stamp("languagetool_username")}
+              row={row("languagetool_username")!}
+              label="LanguageTool Premium username"
+              placeholder="Set it with the LanguageTool Premium API key; URL https://api.languagetoolplus.com"
+            />
           </section>
 
           <SecretsSection secrets={data.secrets} system={data.system} />

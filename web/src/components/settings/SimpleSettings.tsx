@@ -57,3 +57,25 @@ export function UrlSetting({ row, label }: Props) {
     </SettingFrame>
   );
 }
+
+/** A plain text setting; empty saves null (the setting is off). */
+export function TextSetting({ row, label, placeholder }: Props & { placeholder?: string }) {
+  const { save, reset } = useSettingActions();
+  const [text, setText] = useState(typeof row.value === "string" ? row.value : "");
+  return (
+    <SettingFrame
+      label={label}
+      row={row}
+      busy={save.isPending || reset.isPending}
+      onSave={() => save.mutate({ key: row.key, value: text.trim() === "" ? null : text.trim() })}
+      onReset={() => reset.mutate(row.key)}
+    >
+      <Input
+        aria-label={label}
+        placeholder={placeholder}
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+      />
+    </SettingFrame>
+  );
+}
