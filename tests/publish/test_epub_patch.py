@@ -70,8 +70,8 @@ def test_patch_sets_metadata_and_keeps_other_entries():
 def test_patch_none_fields_leave_the_books_own():
     original = _book()
     pub = _publication(authors=[], translator=None, publisher=None, year=None, description=None)
-    out = patch_epub(original, pub.__class__(**{**pub.__dict__, "rights": ""}),
-                     identifier="urn:uuid:jerome-test", cover=None)  # fmt: skip
+    pub.rights = ""
+    out = patch_epub(original, pub, identifier="urn:uuid:jerome-test", cover=None)
     meta = _opf(out).find("opf:metadata", NS)
     assert [c.text for c in meta.findall("dc:creator", NS)] == ["Old Author"]
     assert meta.findtext("dc:publisher", None, NS) == "Old House"
@@ -106,7 +106,9 @@ def test_patch_adds_cover_of_another_type():
 
 
 def test_patch_adds_cover_to_a_book_without_one():
-    out = patch_epub(_book(), _publication(), identifier="urn:uuid:x", cover=(make_png(1400, 2000), "image/png"))  # fmt: skip
+    out = patch_epub(
+        _book(), _publication(), identifier="urn:uuid:x", cover=(make_png(1400, 2000), "image/png")
+    )
     opf = _opf(out)
     [item] = opf.findall(".//opf:item[@properties='cover-image']", NS)
     assert opf.find(".//opf:meta[@name='cover']", NS).get("content") == item.get("id")
@@ -117,7 +119,9 @@ def test_patch_identifier_rules():
     original = _book()
     assert epub_identifier(original) == "urn:uuid:jerome-test"
     isbn = _publication(isbn_epub="978-3-16-148410-0")
-    out = patch_epub(original, isbn, identifier=book_identifier(7, isbn, epub_identifier(original)), cover=None)  # fmt: skip
+    out = patch_epub(
+        original, isbn, identifier=book_identifier(7, isbn, epub_identifier(original)), cover=None
+    )
     assert epub_identifier(out) == "urn:isbn:9783161484100"
     plain = _publication()
     kept = book_identifier(7, plain, epub_identifier(original))
@@ -134,5 +138,7 @@ def test_patch_identifier_rules():
 def test_patch_adds_no_epubcheck_errors():
     original = (PUBLIC / "pg932.epub").read_bytes()
     before = set(run_epubcheck(original))
-    out = patch_epub(original, _publication(), identifier="urn:uuid:x", cover=(make_png(1600, 2400), "image/png"))  # fmt: skip
+    out = patch_epub(
+        original, _publication(), identifier="urn:uuid:x", cover=(make_png(1600, 2400), "image/png")
+    )
     assert set(run_epubcheck(out)) <= before
