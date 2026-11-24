@@ -68,8 +68,10 @@ then shows its verdict and reason. "LanguageTool is right" keeps the fix. "Not a
 makes Reject the main button. "A better fix" offers **Use AI fix**, which accepts the mark
 with the AI's text. Nothing is accepted or rejected by the check itself, and the verdict is
 kept with the suggestion. **Check LT marks in this chapter**, in the review toolbar, asks
-about up to 40 unchecked marks per click, one call per paragraph. Each check is a paid model
-call, billed to the proofreading job and counted against the per-minute text rate limit.
+about up to 40 unchecked marks per click, one call per paragraph; it stops starting new
+paragraphs after about 40 seconds and says how many are left. Each check is a paid model
+call, billed to the proofreading job and counted against the per-minute text rate limit. The
+check is refused while a job runs on the book.
 Over MCP the same check is the `ai_check_suggestion` tool.
 
 **First login.** There is no sign-up. Create each member once, inside the API container:

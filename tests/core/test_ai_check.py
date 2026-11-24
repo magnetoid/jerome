@@ -4,7 +4,7 @@ import re
 from decimal import Decimal
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from jerome.core.ai_check import CHAPTER_LIMIT, check_chapter, check_suggestion
 from jerome.core.books import import_book
@@ -296,3 +296,122 @@ def test_chapter_of_another_book_is_not_found(session_factory, tmp_storage, test
         chapter = s.scalars(select(Chapter.id).where(Chapter.book_id == other_id)).first()
         with pytest.raises(NotFound):
             check_chapter(s, registry(test_settings, FakeProvider([])), book_id, chapter, actor="a")
+
+
+def running_job(sf, book_id):
+    with sf() as s:
+        s.add(
+            Job(
+                book_id=book_id, type="proofread", status="running", passes=["ai"],
+                max_cost=Decimal(1),
+            )
+        )  # fmt: skip
+        s.commit()
+
+
+def test_refused_while_a_job_runs_on_the_book(session_factory, tmp_storage, test_settings):
+    sf = session_factory
+    book_id, (b1, _), job_id = book(sf, tmp_storage)
+    sid = mark(sf, b1, 15, 18, "tea", job_id=job_id)
+    running_job(sf, book_id)
+    provider = FakeProvider([])
+    reg = registry(test_settings, provider)
+    with sf() as s:
+        with pytest.raises(Conflict, match="active job"):
+            check_suggestion(s, reg, sid, actor="a")
+        with pytest.raises(Conflict, match="active job"):
+            check_chapter(s, reg, book_id, b1.chapter_id, actor="a")
+    assert provider.calls == []
+
+
+def test_room_for_the_models_thinking(session_factory, tmp_storage, test_settings):
+    sf = session_factory
+    _, (b1, _), job_id = book(sf, tmp_storage)
+    sid = mark(sf, b1, 15, 18, "tea", job_id=job_id)
+    provider = FakeProvider([answer()])
+    with sf() as s:
+        check_suggestion(s, registry(test_settings, provider), sid, actor="a")
+    assert provider.calls[0]["max_tokens"] >= 16000
+
+
+def test_chapter_locks_no_paragraph_during_later_calls(session_factory, tmp_storage, test_settings):
+    sf = session_factory
+    book_id, (b1, b2), job_id = book(sf, tmp_storage)
+    first = mark(sf, b1, 15, 18, "tea", job_id=job_id)
+    mark(sf, b2, 8, 13, "barked", job_id=job_id)
+    errors = []
+    reply = answer()
+
+    def teammate_accepts_the_first(kwargs):
+        try:
+            with sf() as other:  # would wait on paragraph 1's lock if the check held it
+                other.execute(text("SET LOCAL lock_timeout = '2s'"))
+                decide(other, first, "accept", actor="b", channel="web")
+                other.commit()
+        except Exception as exc:  # noqa: BLE001
+            errors.append(exc)
+        return reply(kwargs)
+
+    provider = FakeProvider([answer(), teammate_accepts_the_first])
+    with sf() as s:
+        got = check_chapter(s, registry(test_settings, provider), book_id, b1.chapter_id, actor="a")
+        s.commit()
+        assert len(got.checked) == 2
+    assert errors == []
+    r = row(sf, first)
+    assert (r.status, r.ai_verdict) == ("accepted", "not_an_error")
+
+
+def test_chapter_keeps_verdicts_when_a_later_call_errors(
+    session_factory, tmp_storage, test_settings
+):
+    sf = session_factory
+    book_id, (b1, b2), job_id = book(sf, tmp_storage)
+    good = mark(sf, b1, 15, 18, "tea", job_id=job_id)
+    lost = mark(sf, b2, 8, 13, "barked", job_id=job_id)
+    provider = FakeProvider([answer(), RuntimeError("connection reset")])
+    with sf() as s:
+        got = check_chapter(s, registry(test_settings, provider), book_id, b1.chapter_id, actor="a")
+        s.commit()
+        assert ([r.id for r in got.checked], got.failed) == ([good], 1)
+    assert row(sf, good).ai_verdict == "not_an_error" and row(sf, lost).ai_verdict is None
+
+
+def test_chapter_stops_at_its_time_budget(session_factory, tmp_storage, test_settings):
+    sf = session_factory
+    book_id, (b1, b2), job_id = book(sf, tmp_storage)
+    mark(sf, b1, 15, 18, "tea", job_id=job_id)
+    mark(sf, b2, 8, 13, "barked", job_id=job_id)
+    ticks = iter([0.0, 0.0])
+    provider = FakeProvider([answer()])
+    with sf() as s:
+        got = check_chapter(
+            s, registry(test_settings, provider), book_id, b1.chapter_id, actor="a",
+            clock=lambda: next(ticks, 1000.0),
+        )  # fmt: skip
+        s.commit()
+        assert (len(got.checked), got.remaining, got.failed) == (1, 1, 0)
+    assert len(provider.calls) == 1
+
+
+def test_second_check_of_a_chapter_at_once_conflicts(session_factory, tmp_storage, test_settings):
+    sf = session_factory
+    book_id, (b1, _), job_id = book(sf, tmp_storage)
+    mark(sf, b1, 15, 18, "tea", job_id=job_id)
+    seen = []
+    reply = answer()
+    reg = registry(test_settings, FakeProvider([]))
+
+    def another_click(kwargs):
+        with sf() as other:
+            try:
+                check_chapter(other, reg, book_id, b1.chapter_id, actor="b")
+            except Conflict as exc:
+                seen.append(str(exc))
+        return reply(kwargs)
+
+    reg.providers["fake"].responses = [another_click]
+    with sf() as s:
+        check_chapter(s, reg, book_id, b1.chapter_id, actor="a")
+        s.commit()
+    assert len(seen) == 1 and "already running" in seen[0]
