@@ -19,6 +19,7 @@ from jerome.jobs.estimate import (
 )
 from jerome.models import Registry
 from jerome.orm import ACTIVE_JOB_STATUSES, Block, Job, JobTask
+from jerome.publish.build import PublishFormat, check_publishable
 
 RESUMABLE = ("cancelled", "failed", "paused_cost_cap")
 
@@ -93,7 +94,7 @@ def _add(session: Session, job: Job) -> Job:
         with session.begin_nested():
             session.add(job)
     except IntegrityError as exc:  # lost a race for the one-active-job slot
-        what = "an active job" if job.type == "translate" else "an active proofreading job"
+        what = "an active proofreading job" if job.type == "proofread" else "an active job"
         raise _already_active(job.book_id, what) from exc
     session.refresh(job)
     return job
@@ -136,6 +137,33 @@ def create_translation_job(
     )
     for chapter_id in chapters:
         job.tasks.append(JobTask(kind="chapter", chapter_id=chapter_id))
+    return _add(session, job)
+
+
+def create_publish_job(
+    session: Session,
+    book_id: int,
+    *,
+    fmt: PublishFormat,
+    callback_url: str | None,
+    actor: str,
+) -> Job:
+    """A job that makes one finished file (``fmt``). It costs no model money."""
+    check_publishable(session, book_id)
+    if _active_job_id(session, book_id) is not None:
+        raise _already_active(book_id, "an active job")
+    job = Job(
+        book_id=book_id,
+        type="publish",
+        status="queued",
+        passes=[fmt],
+        chapter_ids=None,
+        max_cost=Decimal(0),
+        estimate=None,
+        callback_url=callback_url,
+        created_by=actor,
+    )
+    job.tasks.append(JobTask(kind="publish"))
     return _add(session, job)
 
 

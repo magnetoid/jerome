@@ -59,13 +59,15 @@ def get_registry(request: Request, _: SettingsDep) -> Registry:
     return request.app.state.registry  # brought in step by get_settings_dep
 
 
-def get_worker_deps(request: Request, settings: SettingsDep) -> WorkerDeps:
-    state = request.app.state
-    return WorkerDeps(state.registry, state.lt_client, settings.webhook_secret)
-
-
 def get_storage(request: Request) -> Storage:
     return Storage(request.app.state.settings.data_dir)
+
+
+def get_worker_deps(
+    request: Request, settings: SettingsDep, storage: Annotated[Storage, Depends(get_storage)]
+) -> WorkerDeps:
+    state = request.app.state
+    return WorkerDeps(state.registry, state.lt_client, settings.webhook_secret, storage=storage)
 
 
 SESSION_COOKIE = "jerome_session"

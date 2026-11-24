@@ -101,7 +101,9 @@ def _worker_deps(app: FastAPI, settings: Settings) -> WorkerDeps:
     if override is not None:
         return override()
     state = app.state
-    return WorkerDeps(state.registry, state.lt_client, settings.webhook_secret)
+    return WorkerDeps(
+        state.registry, state.lt_client, settings.webhook_secret, storage=_storage(app)
+    )
 
 
 def call[T](fn: Callable[[ToolContext], T]) -> T:

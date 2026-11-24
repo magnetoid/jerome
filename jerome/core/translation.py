@@ -117,6 +117,29 @@ def flagged_blocks(session: Session, book_id: int) -> list[dict[str, Any]]:
     return [{"block_id": i, "chapter_id": c, "source": text} for i, c, text in rows]
 
 
+def untranslated_conflict(session: Session, book: Book) -> Conflict | None:
+    """The Conflict a finished or exported file of ``book`` meets while any of its
+    paragraphs is pending or flagged; None when every one is translated (or kept)."""
+    rows = session.execute(
+        select(Block.id, Block.translation_status)
+        .join(Chapter, Chapter.id == Block.chapter_id)
+        .where(Block.book_id == book.id, Block.translation_status.in_(("pending", "flagged")))
+        .order_by(Chapter.ordinal, Block.ordinal)
+    ).all()
+    if not rows:
+        return None
+    if any(r.translation_status == "pending" for r in rows):
+        hint = "let the translation job finish"
+    elif book.format == "docx":
+        hint = "translate them again or keep their source text"
+    else:
+        hint = "translate them again; an EPUB paragraph cannot keep its source text"
+    waiting = [r.id for r in rows]
+    return Conflict(
+        f"{len(waiting)} paragraphs are not translated yet: blocks {waiting[:10]}; {hint}"
+    )
+
+
 def translated_base(session: Session, storage: Storage, book: Book) -> bytes:
     """The original file of ``book``'s source with every block translated: the base text that
     exports and review copies of a translated book are made on.
@@ -139,17 +162,9 @@ def translated_base(session: Session, storage: Storage, book: Book) -> bytes:
         .where(Block.book_id == book.id)
         .order_by(Chapter.ordinal, Block.ordinal)
     ).all()
-    waiting = [r.id for r in rows if r.translation_status in ("pending", "flagged")]
-    if waiting:
-        if any(r.translation_status == "pending" for r in rows):
-            hint = "let the translation job finish"
-        elif book.format == "docx":
-            hint = "translate them again or keep their source text"
-        else:
-            hint = "translate them again; an EPUB paragraph cannot keep its source text"
-        raise Conflict(
-            f"{len(waiting)} paragraphs are not translated yet: blocks {waiting[:10]}; {hint}"
-        )
+    conflict = untranslated_conflict(session, book)
+    if conflict is not None:
+        raise conflict
     blocks = {
         r.source_ref: TranslatedBlock(r.text, marks_from_json(r.marks), r.placeholders)
         for r in rows

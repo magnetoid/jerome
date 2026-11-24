@@ -16,6 +16,7 @@ from jerome.api import (
     routes_jobs,
     routes_projects,
     routes_publication,
+    routes_publish,
     routes_settings,
     routes_suggestions,
     routes_text,
@@ -104,6 +105,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(routes_suggestions.router, prefix="/v1", dependencies=auth)
     app.include_router(routes_exports.router, prefix="/v1", dependencies=auth)
     app.include_router(routes_jobs.router, prefix="/v1", dependencies=auth)
+    app.include_router(routes_publish.router, prefix="/v1", dependencies=auth)
     app.include_router(routes_translation.router, prefix="/v1", dependencies=auth)
     app.include_router(routes_text.router, prefix="/v1", dependencies=auth)
     app.include_router(routes_users.router, prefix="/v1", dependencies=auth)

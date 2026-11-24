@@ -144,6 +144,7 @@ def list_projects(session: Session) -> list[dict]:
         r.book_id: r
         for r in session.execute(
             select(Job.book_id, Job.type, Job.status, Job.created_by, Job.created_at)
+            .where(Job.type != "publish")  # making a finished file is not a review stage
             .ext(distinct_on(Job.book_id))
             .order_by(Job.book_id, Job.created_at.desc(), Job.id.desc())
         )
@@ -159,7 +160,7 @@ def list_projects(session: Session) -> list[dict]:
 
     newest_active = (
         select(Job.id, Job.book_id, Job.status, Job.cost_actual, Job.max_cost)
-        .where(Job.status.in_(ACTIVE_JOB_STATUSES))
+        .where(Job.status.in_(ACTIVE_JOB_STATUSES), Job.type != "publish")
         .ext(distinct_on(Job.book_id))
         .order_by(Job.book_id, Job.created_at.desc(), Job.id.desc())
         .subquery()
