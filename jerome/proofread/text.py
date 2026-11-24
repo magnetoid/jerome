@@ -82,7 +82,9 @@ def proofread_text(
     candidates: list[Candidate] = []
     warnings: list[str] = []
 
-    if "languagetool" in passes:
+    if "languagetool" in passes and local_only and deps.lt.hosted:
+        warnings.append("languagetool_skipped_local_only")
+    elif "languagetool" in passes:
         try:
             found, _ = languagetool_candidates([block], style, deps.lt)
         except httpx.HTTPError as exc:

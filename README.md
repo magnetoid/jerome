@@ -139,7 +139,7 @@ Settings are read from `JEROME_*` environment variables and from `.env`.
 Super admins can open Settings in the web app to change the model, prices, the daily text
 cost cap, the text rate limit, the upload limit, the session length, the LanguageTool
 address and the public address without a restart, and to save the Anthropic key, the
-webhook secret and the OpenAI-compatible key. The same page creates and revokes API keys
+webhook secret and the keys for the other model providers, DeepL and LanguageTool Premium (see "Choosing services"). The same page creates and revokes API keys
 and lists the latest changes. A value saved there wins over the environment, which wins over
 the default; "Reset" goes back to the environment value. Changes reach the API and the
 worker within about 10 seconds.
@@ -171,6 +171,37 @@ A book imported with `local_only` is never sent to a remote model.
 
 The estimate's output figure does not yet include adaptive-thinking tokens. It will be
 calibrated from the first evaluation run; the cost cap still bounds the actual spend.
+
+### Choosing services
+
+On the Settings page, the proofreading model and the translation model each pick a
+provider. Each provider's key goes under Secrets.
+
+| Provider | Used for | Key |
+| --- | --- | --- |
+| Anthropic (Claude) | proofreading, translation | `anthropic_api_key` |
+| OpenAI | proofreading, translation | `openai_api_key` |
+| Google Gemini | proofreading, translation | `gemini_api_key` |
+| Mistral | proofreading, translation | `mistral_api_key` |
+| OpenRouter (open-weight models: Llama, Qwen, DeepSeek, Mistral, Gemma) | proofreading, translation | `openrouter_api_key` |
+| Own server / other (Ollama, vLLM, any OpenAI-compatible URL) | proofreading, translation | `openai_compat_api_key`, optional |
+| DeepL | translation only | `deepl_api_key` (a key ending `:fx` uses DeepL Free) |
+
+- Model names are typed. The page suggests well-known ones.
+- A model with no built-in price needs one under Prices before a job can be estimated.
+- For DeepL, the `deepl` price row holds the price per million characters in `input`, with 0 in the other fields.
+- The prompts are tuned for Claude. Other models may break formatting tags more often, and those paragraphs are retried and then flagged.
+- DeepL keeps formatting and the ignore list, but not the house style (quote marks). Run proofreading after it.
+- Only an own server on a local address may process a `local_only` book.
+- A key can also come from the environment: put `api_key` beside its provider in `JEROME_MODELS`. A key saved on the Settings page wins.
+
+**LanguageTool Premium.**
+1. Set the LanguageTool URL to `https://api.languagetoolplus.com`.
+2. Fill in the LanguageTool Premium username.
+3. Save the LanguageTool Premium API key under Secrets.
+
+Checks then use your Premium account. Jerome waits and retries when Premium answers "too many requests".
+A `local_only` book is not sent to LanguageTool's hosted service; its LanguageTool check is skipped and the job says so.
 
 ## Stopping and crashes
 

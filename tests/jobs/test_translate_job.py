@@ -654,3 +654,37 @@ def test_no_translation_model_names_the_fix(session_factory, tmp_storage, test_s
     message = str(exc.value)
     assert "models.translate" in message and "Settings page" in message
     assert "local model" in message
+
+
+class _MachineTranslator:
+    """A translation service such as DeepL: same text in, same text out."""
+
+    name = "fake"
+    local = False
+
+    def __init__(self, reply):
+        self.reply = reply
+        self.calls = []
+
+    def translate_texts(self, texts, source_lang, target_lang, keep=()):
+        self.calls.append(list(texts))
+        return self.reply(texts), Usage(sum(len(t) for t in texts), 0)
+
+    def count_tokens(self, *, model, system, user):
+        return len(user)
+
+
+def test_machine_translation_is_not_retried_item_by_item(
+    session_factory, tmp_storage, test_settings
+):
+    t = imported(session_factory, tmp_storage)
+    provider = _MachineTranslator(lambda texts: ["Erster Absatz.", "kaputt <i>"])
+    reg = registry_for(test_settings, provider)
+    job_id = start(session_factory, reg, t)
+    drain(session_factory, deps_for(reg))
+
+    assert len(provider.calls) == 1  # the same reply would come back for the item alone
+    one, two = blocks(session_factory, t)
+    assert (one.text, one.translation_status) == ("Erster Absatz.", "done")
+    assert two.translation_status == "flagged"
+    assert len(usage_rows(session_factory, job_id)) == 1

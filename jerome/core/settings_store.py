@@ -16,7 +16,7 @@ from jerome.core.secretbox import secret_box
 from jerome.core.settings_changes import load_rows
 from jerome.models.registry import Registry, build_registry
 from jerome.orm import AppSetting
-from jerome.proofread.languagetool import LanguageToolClient
+from jerome.proofread.languagetool import LanguageToolClient, lt_client, lt_inputs
 
 if TYPE_CHECKING:  # jerome.jobs.worker imports jerome.core; keep this module below it
     from jerome.jobs.worker import WorkerDeps
@@ -173,7 +173,7 @@ class LiveRefresh:
         self._registry: Registry | None = None  # None: keep the registry of the deps given
         self._registry_inputs = registry_inputs(store.cached().settings)
         self._lt: LanguageToolClient | None = None
-        self._lt_url = store.cached().settings.languagetool_url
+        self._lt_inputs = lt_inputs(store.cached().settings)
 
     def __call__(self, deps: "WorkerDeps") -> "WorkerDeps":
         with self._session_factory() as session:
@@ -182,9 +182,9 @@ class LiveRefresh:
         if inputs != self._registry_inputs:
             self._registry = build_registry(settings)
             self._registry_inputs = inputs
-        if settings.languagetool_url != self._lt_url:
-            self._lt = LanguageToolClient(settings.languagetool_url)
-            self._lt_url = settings.languagetool_url
+        if lt_inputs(settings) != self._lt_inputs:
+            self._lt = lt_client(settings)
+            self._lt_inputs = lt_inputs(settings)
         return dataclasses.replace(
             deps,
             registry=deps.registry if self._registry is None else self._registry,

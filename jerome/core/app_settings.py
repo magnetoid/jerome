@@ -24,12 +24,24 @@ RUNTIME_KEYS: tuple[str, ...] = (
     "max_upload_mb",
     "session_days",
     "languagetool_url",
+    "languagetool_username",
     "public_base_url",
 )
-SECRET_KEYS: tuple[str, ...] = ("anthropic_api_key", "webhook_secret", "openai_compat_api_key")
+SECRET_KEYS: tuple[str, ...] = (
+    "anthropic_api_key",
+    "webhook_secret",
+    "openai_compat_api_key",
+    "openai_api_key",
+    "gemini_api_key",
+    "mistral_api_key",
+    "openrouter_api_key",
+    "deepl_api_key",
+    "languagetool_api_key",
+)
 
 _EFFORTS = ("low", "medium", "high", "xhigh", "max")
-_PROVIDERS = ("anthropic", "openai_compat")
+_PRESETS = ("openai", "gemini", "mistral", "openrouter")  # jerome.models.registry
+_PROVIDERS = ("anthropic", *_PRESETS, "openai_compat", "deepl")
 _PRICE_FIELDS = ("input", "output", "cache_read", "cache_write")
 _MODEL_KEYS = ("models.ai", "models.translate")
 _LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1")
@@ -102,16 +114,23 @@ def _models_pass(name: str) -> Callable[[Any], dict[str, Any]]:
 
 
 def _model_config(label: str, value: Any) -> dict[str, Any]:
+    out = _model_fields(label, value)
+    if out["provider"] == "deepl" and label != "models.translate":
+        raise InvalidSetting("deepl can only translate")
+    return out
+
+
+def _model_fields(label: str, value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise InvalidSetting(f"{label} must be an object")
     if "api_key" in value:
-        raise InvalidSetting(f"{label} cannot hold an API key; set openai_compat_api_key instead")
+        raise InvalidSetting(f"{label} cannot hold an API key; set it on the Settings page")
     extra = set(value) - {"provider", "model", "effort", "base_url"}
     if extra:
         raise InvalidSetting(f"{label} has unknown field: {sorted(extra)[0]}")
     provider = value.get("provider")
     if provider not in _PROVIDERS:
-        raise InvalidSetting("provider must be anthropic or openai_compat")
+        raise InvalidSetting(f"provider must be one of {', '.join(_PROVIDERS)}")
     model = value.get("model")
     if not isinstance(model, str) or not model.strip():
         raise InvalidSetting("model must not be empty")
@@ -162,6 +181,14 @@ def _cost_cap(value: Any) -> str:
     return str(cap)
 
 
+def _optional_text(value: Any, label: str) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise InvalidSetting(f"{label} must be text")
+    return value.strip() or None
+
+
 def _public_base_url(value: Any) -> str | None:
     if value is None or (isinstance(value, str) and not value.strip()):
         return None
@@ -189,6 +216,7 @@ _VALIDATORS: dict[str, Callable[[Any], Any]] = {
     "max_upload_mb": _integer(1, 500),
     "session_days": _integer(1, 365),
     "languagetool_url": lambda v: _url(v, "languagetool_url"),
+    "languagetool_username": lambda v: _optional_text(v, "languagetool_username"),
     "public_base_url": _public_base_url,
 }
 
@@ -258,9 +286,19 @@ def overlay(base: Settings, rows: Sequence[AppSetting], box: SecretBox | None) -
             base.anthropic_api_key.get_secret_value() if base.anthropic_api_key else None
         ),
         "webhook_secret": base.webhook_secret,
-        "openai_compat_api_key": base.models.get("ai", {}).get("api_key")
-        or base.models.get("translate", {}).get("api_key"),
+        "languagetool_api_key": (
+            base.languagetool_api_key.get_secret_value() if base.languagetool_api_key else None
+        ),
     }
+    # A provider key in the environment comes inside JEROME_MODELS, beside its provider
+    for pass_name in ("ai", "translate"):
+        config = base.models.get(pass_name)
+        if isinstance(config, dict) and config.get("api_key"):
+            key = f"{config.get('provider')}_api_key"
+            if key in SECRET_KEYS and key != "anthropic_api_key":
+                env_secrets.setdefault(key, str(config["api_key"]))
+    for key in SECRET_KEYS:
+        env_secrets.setdefault(key, None)
     secrets: dict[str, str | None] = {}
     for key in SECRET_KEYS:
         env_value = env_secrets[key] or None
@@ -296,6 +334,8 @@ def overlay(base: Settings, rows: Sequence[AppSetting], box: SecretBox | None) -
                 )
 
     update["webhook_secret"] = secrets["webhook_secret"]
+    lt_key = secrets["languagetool_api_key"]
+    update["languagetool_api_key"] = SecretStr(lt_key) if lt_key else None
     anthropic = secrets["anthropic_api_key"]
     update["anthropic_api_key"] = SecretStr(anthropic) if anthropic else None
 
@@ -307,7 +347,9 @@ def overlay(base: Settings, rows: Sequence[AppSetting], box: SecretBox | None) -
         config = models.get(pass_name)
         if isinstance(config, dict):
             config.pop("api_key", None)
-            if config.get("provider") != "anthropic" and secrets["openai_compat_api_key"]:
-                config["api_key"] = secrets["openai_compat_api_key"]
+            provider = config.get("provider")
+            secret = secrets.get(f"{provider}_api_key") if provider != "anthropic" else None
+            if secret:
+                config["api_key"] = secret
     update["models"] = models
     return Effective(settings=base.model_copy(update=update), meta=meta)

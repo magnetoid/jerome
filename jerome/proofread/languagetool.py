@@ -1,7 +1,10 @@
 """Rule-based proofreading pass backed by a self-hosted LanguageTool server."""
 
+import hashlib
 import json
-from collections.abc import Sequence
+import time
+from collections.abc import Callable, Sequence
+from urllib.parse import urlparse
 
 import httpx
 
@@ -19,18 +22,66 @@ _ISSUE_MAP: dict[str, tuple[Category, Severity]] = {
 _FALLBACK = (Category.GRAMMAR, Severity.MEDIUM)
 
 
+_RETRIES = 3  # after a 429 (LanguageTool Premium limits requests per minute)
+_MAX_WAIT = 60.0
+_DEFAULT_WAIT = 5.0
+# LanguageTool's own hosted services; any other host is the user's own server
+_HOSTED = ("languagetool.org", "languagetoolplus.com")
+
+
 class LanguageToolClient:
-    def __init__(self, base_url: str, http: httpx.Client | None = None) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        http: httpx.Client | None = None,
+        *,
+        username: str | None = None,
+        api_key: str | None = None,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
         self._base_url = base_url.rstrip("/")
+        host = (urlparse(self._base_url).hostname or "").lower()
+        # a hosted service sees the text, so a local-only book never goes to it
+        self.hosted = any(host == h or host.endswith("." + h) for h in _HOSTED)
         self._http = http or httpx.Client(timeout=60)
+        # Premium credentials go with every check, and only when both are set
+        self._auth = {"username": username, "apiKey": api_key} if username and api_key else {}
+        self._sleep = sleep
 
     def check(self, annotation: list[dict], language: str) -> list[dict]:
-        resp = self._http.post(
-            f"{self._base_url}/v2/check",
-            data={"data": json.dumps({"annotation": annotation}), "language": language},
-        )
+        data = {"data": json.dumps({"annotation": annotation}), "language": language, **self._auth}
+        for attempt in range(_RETRIES + 1):
+            resp = self._http.post(f"{self._base_url}/v2/check", data=data)
+            if resp.status_code != 429 or attempt == _RETRIES:
+                break
+            self._sleep(_retry_after(resp))
         resp.raise_for_status()
         return resp.json()["matches"]
+
+
+def _retry_after(resp: httpx.Response) -> float:
+    try:
+        wait = float(resp.headers.get("Retry-After", _DEFAULT_WAIT))
+    except ValueError:
+        wait = _DEFAULT_WAIT
+    return min(max(wait, 0.0), _MAX_WAIT)
+
+
+def lt_inputs(settings) -> tuple:
+    """What a LanguageTool client is built from, comparable with ==. The key appears only
+    as a hash, so the tuple is safe to keep and to print."""
+    key = settings.languagetool_api_key
+    digest = hashlib.sha256(key.get_secret_value().encode()).hexdigest() if key else None
+    return (settings.languagetool_url, settings.languagetool_username, digest)
+
+
+def lt_client(settings) -> LanguageToolClient:
+    key = settings.languagetool_api_key
+    return LanguageToolClient(
+        settings.languagetool_url,
+        username=settings.languagetool_username,
+        api_key=key.get_secret_value() if key else None,
+    )
 
 
 def _annotation(text: str) -> list[dict]:

@@ -1,18 +1,31 @@
 import json
+import re
 from urllib.parse import urlparse
 
 import httpx
 
+from jerome.errors import JeromeError
 from jerome.models.base import CompletionResult, ModelOutputError, SystemPart, Usage
 
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "host.docker.internal"}
+_OPENAI_EFFORTS = {"low", "medium", "high"}
+# OpenAI's reasoning models; the others answer reasoning_effort with an error
+_OPENAI_REASONING = re.compile(r"^(o[0-9]|gpt-5)")
 
 
 class OpenAICompatProvider:
-    def __init__(self, base_url: str, api_key: str | None, name: str = "openai_compat"):
+    def __init__(
+        self,
+        base_url: str,
+        api_key: str | None,
+        name: str = "openai_compat",
+        *,
+        require_key: bool = False,
+    ):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.name = name
+        self.require_key = require_key  # a hosted preset: never call it without a key
         host = (urlparse(self.base_url).hostname or "").lower()
         self.local = host in _LOCAL_HOSTS or host.endswith(".local")
 
@@ -26,19 +39,26 @@ class OpenAICompatProvider:
         max_tokens: int = 16000,
         effort: str | None = None,
     ) -> CompletionResult:
+        if self.require_key and not self.api_key:
+            raise JeromeError(f"{self.name} API key is not set")
         headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
-        body = {
+        body: dict = {
             "model": model,
             "messages": [
                 {"role": "system", "content": "\n\n".join(p.text for p in system)},
                 {"role": "user", "content": user},
             ],
-            "max_tokens": max_tokens,
             "response_format": {
                 "type": "json_schema",
                 "json_schema": {"name": "result", "schema": schema, "strict": True},
             },
         }
+        if self.name == "openai":  # OpenAI's reasoning models refuse max_tokens
+            body["max_completion_tokens"] = max_tokens
+            if effort in _OPENAI_EFFORTS and _OPENAI_REASONING.match(model):
+                body["reasoning_effort"] = effort
+        else:
+            body["max_tokens"] = max_tokens
         resp = httpx.post(
             f"{self.base_url}/chat/completions", json=body, headers=headers, timeout=600
         )

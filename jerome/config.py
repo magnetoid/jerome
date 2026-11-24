@@ -21,6 +21,10 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://jerome:jerome@localhost:5433/jerome"
     data_dir: Path = Path("~/.local/share/jerome")
     languagetool_url: str = "http://localhost:8010"
+    # LanguageTool Premium: both set sends them with every check (point the URL at
+    # https://api.languagetoolplus.com). The key is a secret set on the Settings page.
+    languagetool_username: str | None = None
+    languagetool_api_key: SecretStr | None = None
     models: dict[str, Any] = {
         "ai": {"provider": "anthropic", "model": "claude-opus-5-5", "effort": "high"},
         "translate": {"provider": "anthropic", "model": "claude-opus-5-5", "effort": "high"},

@@ -90,14 +90,14 @@ def worker(poll_interval: float = 1.0) -> None:
     from jerome.core.settings_store import LiveRefresh, SettingsStore
     from jerome.jobs.worker import WorkerDeps, work_forever
     from jerome.models import build_registry
-    from jerome.proofread.languagetool import LanguageToolClient
+    from jerome.proofread.languagetool import lt_client
 
     settings = get_settings()
     engine = make_engine(settings.database_url)
     session_factory = sessionmaker(engine)
     deps = WorkerDeps(
         registry=build_registry(settings),
-        lt=LanguageToolClient(settings.languagetool_url),
+        lt=lt_client(settings),
         webhook_secret=settings.webhook_secret,
         # app values from the database reach the worker before each task and chunk
         refresh=LiveRefresh(SettingsStore(settings), session_factory),

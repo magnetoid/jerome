@@ -37,9 +37,20 @@ def test_key_lists():
         "max_upload_mb",
         "session_days",
         "languagetool_url",
+        "languagetool_username",
         "public_base_url",
     )
-    assert SECRET_KEYS == ("anthropic_api_key", "webhook_secret", "openai_compat_api_key")
+    assert SECRET_KEYS == (
+        "anthropic_api_key",
+        "webhook_secret",
+        "openai_compat_api_key",
+        "openai_api_key",
+        "gemini_api_key",
+        "mistral_api_key",
+        "openrouter_api_key",
+        "deepl_api_key",
+        "languagetool_api_key",
+    )
     assert issubclass(UnknownSetting, NotFound)
     assert str(UnknownSetting("database_url")) == "unknown setting: database_url"
 
@@ -71,7 +82,7 @@ def test_validate_rejects():
 
 
 def test_validate_api_key_message_names_secret_setting_without_value():
-    with pytest.raises(InvalidSetting, match="openai_compat_api_key") as info:
+    with pytest.raises(InvalidSetting, match="Settings page") as info:
         validate("models.ai", {"provider": "anthropic", "model": "m", "api_key": "sekrit"})
     assert "sekrit" not in str(info.value)
 
@@ -157,6 +168,26 @@ def test_overlay_env_models_key_and_anthropic_drops_it():
     assert eff.meta["openai_compat_api_key"].is_set is True
     eff = overlay(base, [row("models.ai", {"provider": "anthropic", "model": "x"})], None)
     assert "api_key" not in eff.settings.models["ai"]
+
+
+def test_overlay_env_keys_follow_their_provider():
+    base = Settings(
+        _env_file=None,
+        models={
+            "ai": {"provider": "gemini", "model": "gemini-2.5-pro", "api_key": "g-env"},
+            "translate": {"provider": "deepl", "model": "deepl", "api_key": "d-env:fx"},
+        },
+    )
+    eff = overlay(base, [], None)
+    assert eff.settings.models["ai"]["api_key"] == "g-env"
+    assert eff.settings.models["translate"]["api_key"] == "d-env:fx"
+    assert eff.meta["gemini_api_key"].source == "environment"
+    assert eff.meta["deepl_api_key"].source == "environment"
+    assert eff.meta["openai_compat_api_key"].is_set is False  # not another provider's key
+    # a key saved on the Settings page wins over the environment
+    box = SecretBox(Fernet.generate_key().decode())
+    eff = overlay(base, [row("deepl_api_key", secret=box.encrypt("d-app"))], box)
+    assert eff.settings.models["translate"]["api_key"] == "d-app"
 
 
 def test_overlay_cleared_openai_key_removes_env_key():
@@ -338,3 +369,63 @@ def test_openai_compat_key_injected_for_translate():
     )
     assert only_t.settings.models["translate"]["api_key"] == "k1"
     assert "api_key" not in only_t.settings.models["ai"]
+
+
+@pytest.mark.parametrize("preset", ["openai", "gemini", "mistral", "openrouter"])
+def test_validate_accepts_presets_without_base_url(preset):
+    assert validate("models.ai", {"provider": preset, "model": "m", "effort": "high"}) == {
+        "provider": preset,
+        "model": "m",
+        "effort": "high",
+    }
+    with pytest.raises(InvalidSetting, match="base_url applies only"):
+        validate("models.ai", {"provider": preset, "model": "m", "base_url": "https://x.org"})
+
+
+def test_validate_deepl_only_translates():
+    assert validate("models.translate", {"provider": "deepl", "model": "deepl"}) == {
+        "provider": "deepl",
+        "model": "deepl",
+    }
+    with pytest.raises(InvalidSetting, match="deepl can only translate"):
+        validate("models.ai", {"provider": "deepl", "model": "deepl"})
+    with pytest.raises(InvalidSetting, match="provider must be one of"):
+        validate("models.ai", {"provider": "grammarly", "model": "m"})
+
+
+def test_overlay_injects_each_providers_own_key():
+    box = SecretBox(Fernet.generate_key().decode())
+    base = Settings(_env_file=None)
+    eff = overlay(
+        base,
+        [
+            row("models.ai", {"provider": "openrouter", "model": "qwen/qwen3"}),
+            row("models.translate", {"provider": "deepl", "model": "deepl"}),
+            row("openrouter_api_key", secret=box.encrypt("or-key")),
+            row("deepl_api_key", secret=box.encrypt("dl-key")),
+            row("openai_api_key", secret=box.encrypt("oa-key")),
+        ],
+        box,
+    )
+    assert eff.settings.models["ai"]["api_key"] == "or-key"
+    assert eff.settings.models["translate"]["api_key"] == "dl-key"
+    assert eff.meta["openai_api_key"].is_set is True
+    assert eff.meta["gemini_api_key"].is_set is False
+
+
+def test_overlay_languagetool_premium():
+    box = SecretBox(Fernet.generate_key().decode())
+    base = Settings(_env_file=None)
+    eff = overlay(
+        base,
+        [
+            row("languagetool_username", " ana@x.org "),
+            row("languagetool_api_key", secret=box.encrypt("lt-key")),
+        ],
+        box,
+    )
+    assert eff.settings.languagetool_username == "ana@x.org"
+    assert eff.settings.languagetool_api_key.get_secret_value() == "lt-key"
+    assert validate("languagetool_username", "  ") is None
+    with pytest.raises(InvalidSetting):
+        validate("languagetool_username", 5)

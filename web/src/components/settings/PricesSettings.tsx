@@ -56,6 +56,11 @@ export default function PricesSettings({ row }: { row: SettingRow }) {
       onSave={onSave}
       onReset={() => reset.mutate(row.key)}
     >
+      <p className="text-sm text-muted-foreground">
+        Dollars per million tokens. A model without a price here or built in cannot be
+        estimated. For DeepL (model name <code>deepl</code>), put the price per million
+        characters in input and 0 in the others.
+      </p>
       <Table>
         <TableHeader>
           <TableRow>

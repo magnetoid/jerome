@@ -391,3 +391,45 @@ def test_cleared_app_key_beats_the_environment_key(monkeypatch):
     with pytest.raises(JeromeError, match="Anthropic API key is not set") as exc:
         provider.client  # noqa: B018
     assert "SENTINEL" not in str(exc.value)
+
+
+@pytest.mark.parametrize(
+    ("preset", "url"),
+    [
+        ("openai", "https://api.openai.com/v1"),
+        ("gemini", "https://generativelanguage.googleapis.com/v1beta/openai"),
+        ("mistral", "https://api.mistral.ai/v1"),
+        ("openrouter", "https://openrouter.ai/api/v1"),
+    ],
+)
+def test_build_registry_builds_presets(preset, url):
+    from jerome.models.registry import build_registry
+
+    s = settings_with(models={"ai": {"provider": preset, "model": "m", "api_key": "k"}})
+    reg = build_registry(s)
+    provider, cfg = reg.for_pass("ai", local_only=False)
+    assert provider.name == preset and provider.base_url == url and provider.api_key == "k"
+    assert provider.local is False and cfg.model == "m"
+    assert reg.for_pass("ai", local_only=True) is None  # a local-only book never leaves
+
+
+def test_preset_without_key_raises_before_any_request(respx_mock):
+    p = OpenAICompatProvider("https://api.mistral.ai/v1", None, name="mistral", require_key=True)
+    with pytest.raises(JeromeError, match="mistral API key is not set"):
+        p.complete(model="m", system=[], user="u", schema=SCHEMA)
+    assert not respx_mock.calls
+
+
+def test_openai_preset_sends_max_completion_tokens_and_effort(respx_mock):
+    route = respx_mock.post("https://api.openai.com/v1/chat/completions").respond(
+        json=oa_reply("{}")
+    )
+    p = OpenAICompatProvider("https://api.openai.com/v1", "k", name="openai", require_key=True)
+    p.complete(model="gpt-5", system=[], user="u", schema=SCHEMA, max_tokens=900, effort="high")
+    p.complete(model="gpt-5", system=[], user="u", schema=SCHEMA, effort="max")
+    p.complete(model="gpt-4.1", system=[], user="u", schema=SCHEMA, effort="high")
+    first, second, third = (json.loads(c.request.content) for c in route.calls)
+    assert first["max_completion_tokens"] == 900 and "max_tokens" not in first
+    assert first["reasoning_effort"] == "high"
+    assert "reasoning_effort" not in second  # OpenAI has no max effort
+    assert "reasoning_effort" not in third  # not a reasoning model
