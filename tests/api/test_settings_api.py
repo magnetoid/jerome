@@ -227,3 +227,94 @@ def test_put_models_translate_applies_to_registry(web_client, session):
         app.state.registry.for_pass("translate", local_only=False)[1].model == "claude-sonnet-5-5"
     )
     assert app.state.registry.for_pass("ai", local_only=False)[1].model == "claude-opus-5-5"
+
+
+MODELS_URL = "/v1/settings/provider-models"
+
+
+def test_provider_models_super_admin_only(web_client, session, auth):
+    r = web_client.get(MODELS_URL, params={"provider": "openai"}, headers=auth)
+    assert r.status_code == 403
+    create_user(session, "bo@x.org", "Bo", PASSWORD, role="member")
+    web_client.post("/v1/auth/login", json={"email": "bo@x.org", "password": PASSWORD})
+    assert web_client.get(MODELS_URL, params={"provider": "openai"}).status_code == 403
+
+
+def test_provider_models_with_app_key(web_client, session, with_secret_storage, respx_mock):
+    login(web_client, session)
+    web_client.put("/v1/settings/openai_api_key", headers=WEB, json={"value": "sk-SECRET-9"})
+    route = respx_mock.get("https://api.openai.com/v1/models").respond(
+        200, json={"data": [{"id": "gpt-5"}, {"id": "text-embedding-3-small"}]}
+    )
+    r = web_client.get(MODELS_URL, params={"provider": "openai"})
+    assert r.status_code == 200, r.text
+    assert r.json() == {"provider": "openai", "models": [{"id": "gpt-5", "name": "gpt-5"}]}
+    assert route.calls.last.request.headers["authorization"] == "Bearer sk-SECRET-9"
+    assert "sk-SECRET-9" not in r.text
+
+
+def test_provider_models_with_environment_key(web_client, session, test_settings, respx_mock):
+    web_client.app.state.settings = test_settings.model_copy(
+        update={"anthropic_api_key": SecretStr("sk-ant-ENV")}
+    )
+    login(web_client, session)
+    route = respx_mock.get("https://api.anthropic.com/v1/models").respond(
+        200, json={"data": [{"id": "claude-opus-5-5", "display_name": "Claude Opus 5.5"}]}
+    )
+    r = web_client.get(MODELS_URL, params={"provider": "anthropic"})
+    assert r.status_code == 200 and r.json()["models"][0]["id"] == "claude-opus-5-5"
+    assert route.calls.last.request.headers["x-api-key"] == "sk-ant-ENV"
+
+
+def test_provider_models_without_key_is_409(web_client, session):
+    login(web_client, session)
+    r = web_client.get(MODELS_URL, params={"provider": "xai"})
+    assert r.status_code == 409 and r.json()["detail"] == "Set the xAI key under Secrets first"
+
+
+def test_provider_models_own_server_needs_no_key(web_client, session, respx_mock):
+    login(web_client, session)
+    reply = {"data": [{"id": "qwen3"}]}
+    respx_mock.get("http://localhost:11434/v1/models").respond(200, json=reply)
+    r = web_client.get(
+        MODELS_URL, params={"provider": "openai_compat", "base_url": "http://localhost:11434/v1"}
+    )
+    assert r.status_code == 200 and r.json()["models"] == [{"id": "qwen3", "name": "qwen3"}]
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"provider": "deepl"},
+        {"provider": "nope"},
+        {"provider": "openai_compat"},
+        {"provider": "openai_compat", "base_url": "ftp://x"},
+        {"provider": "openai", "base_url": "http://localhost:1/v1"},
+    ],
+)
+def test_provider_models_bad_input_is_400(web_client, session, params):
+    login(web_client, session)
+    assert web_client.get(MODELS_URL, params=params).status_code == 400
+
+
+def test_provider_models_provider_failure_is_502(
+    web_client, session, with_secret_storage, respx_mock
+):
+    login(web_client, session)
+    web_client.put("/v1/settings/openai_api_key", headers=WEB, json={"value": "sk-SECRET-9"})
+    respx_mock.get("https://api.openai.com/v1/models").respond(401)
+    r = web_client.get(MODELS_URL, params={"provider": "openai"})
+    assert r.status_code == 502 and r.json()["detail"] == "OpenAI refused the key"
+
+
+def test_provider_models_unreadable_key_is_409(web_client, session, test_settings):
+    web_client.app.state.settings = test_settings.model_copy(
+        update={"secret_key": SecretStr(Fernet.generate_key().decode())}
+    )
+    login(web_client, session)
+    web_client.put("/v1/settings/mistral_api_key", headers=WEB, json={"value": "m-SECRET"})
+    web_client.app.state.settings = test_settings.model_copy(  # the key was rotated
+        update={"secret_key": SecretStr(Fernet.generate_key().decode())}
+    )
+    r = web_client.get(MODELS_URL, params={"provider": "mistral"})
+    assert r.status_code == 409 and "Mistral" in r.json()["detail"]

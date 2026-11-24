@@ -3,6 +3,7 @@
 import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from dataclasses import field as dc_field
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any, Literal
@@ -70,6 +71,8 @@ class Meta:
 class Effective:
     settings: Settings
     meta: dict[str, Meta]
+    # each secret's effective value (app, else environment); never shown or logged
+    secrets: dict[str, str | None] = dc_field(default_factory=dict, repr=False)
 
 
 def _number(value: Any, label: str) -> int | float:
@@ -94,6 +97,9 @@ def _url(value: Any, label: str, schemes: tuple[str, ...] = ("http", "https")) -
     if parts.username or parts.password:
         raise InvalidSetting(f"{label} must not contain a username or password")
     return text.rstrip("/")
+
+
+check_url = _url  # for routes that take a URL outside a setting
 
 
 def _integer(low: int, high: int) -> Callable[[Any], int]:
@@ -353,4 +359,4 @@ def overlay(base: Settings, rows: Sequence[AppSetting], box: SecretBox | None) -
             if secret:
                 config["api_key"] = secret
     update["models"] = models
-    return Effective(settings=base.model_copy(update=update), meta=meta)
+    return Effective(settings=base.model_copy(update=update), meta=meta, secrets=secrets)

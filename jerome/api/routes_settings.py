@@ -10,6 +10,7 @@ from jerome.api.schemas import (
     ApiKeyCreatedOut,
     ApiKeyCreateIn,
     ApiKeyOut,
+    ProviderModelsOut,
     SecretSettingOut,
     SettingOut,
     SettingPutIn,
@@ -22,10 +23,13 @@ from jerome.core.app_settings import (
     RUNTIME_KEYS,
     SECRET_KEYS,
     InvalidSetting,
+    check_url,
     overlay,
     value_of,
 )
 from jerome.core.secretbox import secret_box, secret_storage_state
+from jerome.errors import Conflict
+from jerome.models.listing import LABELS, LISTABLE, list_models
 
 router = APIRouter(dependencies=[Depends(require_super_admin)])
 
@@ -102,6 +106,29 @@ def reset_setting(key: str, request: Request, session: SessionDep, who: Admin):
     session.flush()
     request.app.state.settings_store.invalidate()
     return Response(status_code=204)
+
+
+@router.get("/settings/provider-models", response_model=ProviderModelsOut)
+def provider_models(
+    request: Request, session: SessionDep, provider: str, base_url: str | None = None
+):
+    """The provider's text models, fetched now with the stored key (app, else environment).
+    409 when the key is not set; 502 when the provider fails."""
+    if provider not in LISTABLE:
+        raise InvalidSetting(f"provider must be one of {', '.join(LISTABLE)}")
+    if provider == "openai_compat":
+        if not base_url:
+            raise InvalidSetting("base_url is required for openai_compat")
+        base_url = check_url(base_url, "base_url")
+    elif base_url:
+        raise InvalidSetting("base_url applies only to openai_compat")
+    base = request.app.state.settings
+    secrets = overlay(base, settings_changes.load_rows(session), secret_box(base)).secrets
+    key = secrets.get(f"{provider}_api_key")
+    if not key and provider != "openai_compat":
+        raise Conflict(f"Set the {LABELS[provider]} key under Secrets first")
+    models = list_models(provider, api_key=key, base_url=base_url)
+    return ProviderModelsOut(provider=provider, models=models)
 
 
 @router.get("/api-keys", response_model=list[ApiKeyOut])

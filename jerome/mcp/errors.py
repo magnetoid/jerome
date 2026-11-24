@@ -22,10 +22,11 @@ from jerome.errors import (
     UnsupportedDocumentError,
     UnsupportedLanguagePair,
 )
+from jerome.models.listing import ProviderListError
 
 INTERNAL = "error: internal error"
 
-# Same classes as the REST handlers in jerome.api.app (404, 409, 400 and the 422s).
+# Same classes as the REST handlers in jerome.api.app (404, 409, 400, the 422s, 502).
 _CODES: dict[type[Exception], str] = {
     NotFound: "not_found",
     Conflict: "conflict",
@@ -35,6 +36,7 @@ _CODES: dict[type[Exception], str] = {
     InvalidSetting: "invalid",
     UnsupportedLanguagePair: "invalid",
     InvalidPublication: "invalid",
+    ProviderListError: "unavailable",  # 502: the provider failed
 }
 
 
