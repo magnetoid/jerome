@@ -61,6 +61,17 @@ comments, Word with tracked changes, clean Word, clean EPUB) are on the project 
 and its bearer keys work as before, except team management (`/v1/users`), which needs a
 super admin signed in to the web interface.
 
+**Asking the AI about a LanguageTool mark.** LanguageTool often marks text that is fine
+(names, dialogue, the author's style). On the review card of a mark LanguageTool made alone,
+**Ask AI** asks the proofreading AI model (`models.ai`) whether the mark is right. The card
+then shows its verdict and reason. "LanguageTool is right" keeps the fix. "Not an error"
+makes Reject the main button. "A better fix" offers **Use AI fix**, which accepts the mark
+with the AI's text. Nothing is accepted or rejected by the check itself, and the verdict is
+kept with the suggestion. **Check LT marks in this chapter**, in the review toolbar, asks
+about up to 40 unchecked marks per click, one call per paragraph. Each check is a paid model
+call, billed to the proofreading job and counted against the per-minute text rate limit.
+Over MCP the same check is the `ai_check_suggestion` tool.
+
 **First login.** There is no sign-up. Create each member once, inside the API container:
 
 ```bash
