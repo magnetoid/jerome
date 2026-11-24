@@ -23,6 +23,12 @@ ENV PATH=/app/.venv/bin:$PATH \
     JEROME_DATA_DIR=/data \
     JEROME_WEB_DIR=/app/web
 
+# WeasyPrint's text layout libraries (finished PDF files)
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y \
+        libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz-subset0 fontconfig \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN useradd --create-home --uid 1000 jerome \
     && mkdir -p /data \
     && chown jerome:jerome /data
