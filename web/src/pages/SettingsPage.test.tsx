@@ -244,10 +244,12 @@ describe("SettingsPage", () => {
     await user.selectOptions(within(group).getByLabelText("Provider"), "openai_compat");
     await user.type(await within(group).findByLabelText("Base URL"), "https://llm.example.com/v1");
     expect(within(group).queryByLabelText("Effort")).not.toBeInTheDocument(); // only Claude and OpenAI
+    expect(within(group).getByLabelText("Model")).toHaveValue(""); // a Claude name would not work there
+    await user.type(within(group).getByLabelText("Model"), "llama3.3");
     await user.click(within(group).getByRole("button", { name: "Save" }));
     await waitFor(() => expect(call(f, "PUT", "/v1/settings/models.ai")).toBeTruthy());
     expect(JSON.parse(call(f, "PUT", "/v1/settings/models.ai")![1]!.body as string)).toEqual({
-      value: { provider: "openai_compat", model: "claude-opus-5-5", base_url: "https://llm.example.com/v1" },
+      value: { provider: "openai_compat", model: "llama3.3", base_url: "https://llm.example.com/v1" },
     });
   });
 
@@ -263,7 +265,6 @@ describe("SettingsPage", () => {
     await user.selectOptions(within(ai).getByLabelText("Provider"), "openrouter");
     const list = document.getElementById(within(ai).getByLabelText("Model").getAttribute("list")!)!;
     expect([...list.querySelectorAll("option")].map((o) => o.value)).toContain("qwen/qwen3-235b-a22b");
-    await user.clear(within(ai).getByLabelText("Model"));
     await user.type(within(ai).getByLabelText("Model"), "deepseek/deepseek-chat");
     await user.click(within(ai).getByRole("button", { name: "Save" }));
     await waitFor(() => expect(call(f, "PUT", "/v1/settings/models.ai")).toBeTruthy());

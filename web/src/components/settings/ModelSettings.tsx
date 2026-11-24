@@ -57,6 +57,15 @@ export default function ModelSettings({
   const deepl = provider === "deepl";
   const suggestions = SUGGESTED_MODELS[provider] ?? [];
 
+  // A model name suggested for another provider would not work here: start empty instead.
+  function changeProvider(next: string) {
+    const known = Object.values(SUGGESTED_MODELS).flat();
+    if (known.includes(model.trim()) && !(SUGGESTED_MODELS[next] ?? []).includes(model.trim())) {
+      setModel("");
+    }
+    setProvider(next);
+  }
+
   function onSave() {
     const value: Ai = { provider, model: deepl ? "deepl" : model.trim() };
     if (effort && WITH_EFFORT.has(provider)) value.effort = effort;
@@ -79,7 +88,7 @@ export default function ModelSettings({
             id={`${idPrefix}-provider`}
             className={NATIVE_SELECT}
             value={provider}
-            onChange={(e) => setProvider(e.target.value)}
+            onChange={(e) => changeProvider(e.target.value)}
           >
             {PROVIDERS.filter((p) => allowDeepl || !p.translateOnly || p.value === provider).map((p) => (
               <option key={p.value} value={p.value}>
