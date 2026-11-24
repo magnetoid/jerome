@@ -39,6 +39,10 @@ export default function SettingsPage() {
   useForbiddenWatch(settings.error);
 
   const data = settings.data;
+  // providers whose key is set and readable, e.g. "openai" for openai_api_key
+  const keyed = (data?.secrets ?? [])
+    .filter((s) => s.is_set && !s.unreadable && s.key.endsWith("_api_key"))
+    .map((s) => s.key.replace(/_api_key$/, ""));
   const row = (key: string) => data?.settings.find((s) => s.key === key);
   // Remount a control when its stored value changes so it shows what was saved or reset.
   const stamp = (key: string) => {
@@ -63,6 +67,7 @@ export default function SettingsPage() {
               row={row("models.ai")!}
               label="Proofreading model"
               idPrefix="ai"
+              keyed={keyed}
             />
             <ModelSettings
               key={stamp("models.translate")}
@@ -70,6 +75,7 @@ export default function SettingsPage() {
               label="Translation model"
               idPrefix="translate"
               allowDeepl
+              keyed={keyed}
             />
           </section>
 
