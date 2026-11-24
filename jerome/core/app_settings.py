@@ -35,12 +35,13 @@ SECRET_KEYS: tuple[str, ...] = (
     "gemini_api_key",
     "mistral_api_key",
     "openrouter_api_key",
+    "xai_api_key",
     "deepl_api_key",
     "languagetool_api_key",
 )
 
 _EFFORTS = ("low", "medium", "high", "xhigh", "max")
-_PRESETS = ("openai", "gemini", "mistral", "openrouter")  # jerome.models.registry
+_PRESETS = ("openai", "gemini", "mistral", "openrouter", "xai")  # jerome.models.registry
 _PROVIDERS = ("anthropic", *_PRESETS, "openai_compat", "deepl")
 _PRICE_FIELDS = ("input", "output", "cache_read", "cache_write")
 _MODEL_KEYS = ("models.ai", "models.translate")

@@ -261,7 +261,7 @@ describe("SettingsPage", () => {
     const user = userEvent.setup();
     const ai = await screen.findByRole("group", { name: "Proofreading model" });
     const aiProviders = [...within(ai).getByLabelText("Provider").querySelectorAll("option")].map((o) => o.value);
-    expect(aiProviders).toEqual(["anthropic", "openai", "gemini", "mistral", "openrouter", "openai_compat"]);
+    expect(aiProviders).toEqual(["anthropic", "openai", "gemini", "mistral", "openrouter", "xai", "openai_compat"]);
     await user.selectOptions(within(ai).getByLabelText("Provider"), "openrouter");
     const list = document.getElementById(within(ai).getByLabelText("Model").getAttribute("list")!)!;
     expect([...list.querySelectorAll("option")].map((o) => o.value)).toContain("qwen/qwen3-235b-a22b");

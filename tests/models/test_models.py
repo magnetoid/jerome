@@ -400,6 +400,7 @@ def test_cleared_app_key_beats_the_environment_key(monkeypatch):
         ("gemini", "https://generativelanguage.googleapis.com/v1beta/openai"),
         ("mistral", "https://api.mistral.ai/v1"),
         ("openrouter", "https://openrouter.ai/api/v1"),
+        ("xai", "https://api.x.ai/v1"),
     ],
 )
 def test_build_registry_builds_presets(preset, url):

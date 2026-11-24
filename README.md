@@ -184,6 +184,7 @@ provider. Each provider's key goes under Secrets.
 | Google Gemini | proofreading, translation | `gemini_api_key` |
 | Mistral | proofreading, translation | `mistral_api_key` |
 | OpenRouter (open-weight models: Llama, Qwen, DeepSeek, Mistral, Gemma) | proofreading, translation | `openrouter_api_key` |
+| xAI (Grok) | proofreading, translation | `xai_api_key` |
 | Own server / other (Ollama, vLLM, any OpenAI-compatible URL) | proofreading, translation | `openai_compat_api_key`, optional |
 | DeepL | translation only | `deepl_api_key` (a key ending `:fx` uses DeepL Free) |
 

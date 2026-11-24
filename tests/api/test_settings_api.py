@@ -51,6 +51,7 @@ def test_get_lists_keys_in_order(web_client, session):
         "gemini_api_key",
         "mistral_api_key",
         "openrouter_api_key",
+        "xai_api_key",
         "deepl_api_key",
         "languagetool_api_key",
     ]
