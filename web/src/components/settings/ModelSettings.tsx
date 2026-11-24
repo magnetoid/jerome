@@ -14,6 +14,7 @@ export const PROVIDERS: { value: string; label: string; translateOnly?: boolean 
   { value: "gemini", label: "Google Gemini" },
   { value: "mistral", label: "Mistral" },
   { value: "openrouter", label: "OpenRouter (open-weight models)" },
+  { value: "xai", label: "xAI (Grok)" },
   { value: "openai_compat", label: "Own server / other (OpenAI-compatible)" },
   { value: "deepl", label: "DeepL", translateOnly: true },
 ];
@@ -31,6 +32,7 @@ export const SUGGESTED_MODELS: Record<string, string[]> = {
     "google/gemma-3-27b-it",
     "mistralai/mistral-small-3.1-24b-instruct",
   ],
+  xai: ["grok-4", "grok-4-1-fast"],
   openai_compat: ["llama3.3", "qwen3", "gemma3"],
 };
 

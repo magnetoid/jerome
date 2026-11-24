@@ -15,6 +15,7 @@ PRESET_BASE_URLS: dict[str, str] = {
     "gemini": "https://generativelanguage.googleapis.com/v1beta/openai",
     "mistral": "https://api.mistral.ai/v1",
     "openrouter": "https://openrouter.ai/api/v1",
+    "xai": "https://api.x.ai/v1",
 }
 HOSTED_PROVIDERS: tuple[str, ...] = tuple(PRESET_BASE_URLS)
 

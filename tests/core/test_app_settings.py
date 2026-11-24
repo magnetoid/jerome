@@ -48,6 +48,7 @@ def test_key_lists():
         "gemini_api_key",
         "mistral_api_key",
         "openrouter_api_key",
+        "xai_api_key",
         "deepl_api_key",
         "languagetool_api_key",
     )
@@ -371,7 +372,7 @@ def test_openai_compat_key_injected_for_translate():
     assert "api_key" not in only_t.settings.models["ai"]
 
 
-@pytest.mark.parametrize("preset", ["openai", "gemini", "mistral", "openrouter"])
+@pytest.mark.parametrize("preset", ["openai", "gemini", "mistral", "openrouter", "xai"])
 def test_validate_accepts_presets_without_base_url(preset):
     assert validate("models.ai", {"provider": preset, "model": "m", "effort": "high"}) == {
         "provider": preset,

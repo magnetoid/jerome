@@ -23,6 +23,7 @@ const LABELS: Record<string, string> = {
   gemini_api_key: "Google Gemini API key",
   mistral_api_key: "Mistral API key",
   openrouter_api_key: "OpenRouter API key",
+  xai_api_key: "xAI (Grok) API key",
   deepl_api_key: "DeepL API key",
   languagetool_api_key: "LanguageTool Premium API key",
 };
