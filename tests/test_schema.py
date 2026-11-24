@@ -431,3 +431,15 @@ def test_migration_0006_downgrade_refuses_with_mcp_data(engine, session_factory)
         assert "transfer_links" not in tables
     finally:
         command.upgrade(cfg, "head")
+
+
+def test_publish_task_kind_and_trim_size(session, book_factory):
+    b = book_factory()
+    assert b.trim_size == "6x9in" and b.authors == []
+    job = Job(book_id=b.id, type="publish", status="queued", max_cost=0, passes=["pdf-book"])
+    job.tasks.append(JobTask(kind="publish"))
+    session.add(job)
+    session.flush()
+    b.trim_size = "a4"
+    with pytest.raises(IntegrityError):
+        session.flush()

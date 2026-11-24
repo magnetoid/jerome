@@ -31,6 +31,31 @@ class Storage:
     def save_export(self, book_id: int, name: str, data: bytes) -> Path:
         return _write_atomic(self._book_dir(book_id) / "exports" / Path(name).name, data)
 
+    def read_export(self, book_id: int, name: str) -> bytes:
+        """An export by its bare file name; a name with a path in it is refused."""
+        if not name or name in (".", "..") or Path(name).name != name or "/" in name:
+            raise ValueError(f"not an export name: {name!r}")
+        try:
+            return (self._book_dir(book_id) / "exports" / name).read_bytes()
+        except FileNotFoundError:
+            raise NotFound(f"export {name} of book {book_id}") from None
+
+    def save_cover(self, book_id: int, data: bytes, ext: str) -> Path:
+        """Store the cover as ``cover.<ext>``; a cover of another type is removed."""
+        path = _write_atomic(self._book_dir(book_id) / f"cover.{ext}", data)
+        for other in self._book_dir(book_id).glob("cover.*"):
+            if other != path:
+                other.unlink(missing_ok=True)
+        return path
+
+    def read_cover(self, book_id: int) -> bytes | None:
+        found = sorted(self._book_dir(book_id).glob("cover.*"))
+        return found[0].read_bytes() if found else None
+
+    def delete_cover(self, book_id: int) -> None:
+        for path in self._book_dir(book_id).glob("cover.*"):
+            path.unlink(missing_ok=True)
+
     def delete_book(self, book_id: int) -> None:
         shutil.rmtree(self._book_dir(book_id), ignore_errors=True)
 
