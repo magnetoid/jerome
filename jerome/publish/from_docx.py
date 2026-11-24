@@ -37,7 +37,7 @@ def docx_to_pub(clean_docx: bytes, language: str) -> PubBook:
     except (ValueError, KeyError, zipfile.BadZipFile) as exc:
         raise PublishError(f"The Word file could not be converted: {exc}") from exc
     body = etree.fromstring(f"<body>{result.value}</body>".encode())
-    _inline_notes(body)
+    pub.note_keys = _inline_notes(body)
     pub.chapters = _split(body)
     return pub
 
@@ -123,9 +123,11 @@ class _Images:
 # --- after mammoth --------------------------------------------------------------------
 
 
-def _inline_notes(body: etree._Element) -> None:
-    """Move each note's content into a jr-note span at its reference; drop the notes list."""
+def _inline_notes(body: etree._Element) -> list[str]:
+    """Move each note's content into a jr-note span at its reference; drop the notes list.
+    Returns the note ids in reading order."""
     notes: dict[str, etree._Element] = {}
+    order: list[str] = []
     for li in body.iter("li"):
         note_id = li.get("id") or ""
         if note_id.startswith(("footnote-", "endnote-")):
@@ -136,6 +138,7 @@ def _inline_notes(body: etree._Element) -> None:
         li = notes.get(href[1:]) if href.startswith("#") else None
         if li is None:
             continue
+        order.append(href[1:])
         span = etree.Element("span", {"class": NOTE_CLASS})
         _fill_note(span, li)
         span.tail = sup.tail
@@ -145,6 +148,7 @@ def _inline_notes(body: etree._Element) -> None:
         ol.remove(li)
         if len(ol) == 0 and ol.getparent() is not None:
             ol.getparent().remove(ol)
+    return order
 
 
 def _fill_note(span: etree._Element, li: etree._Element) -> None:

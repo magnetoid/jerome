@@ -4,7 +4,9 @@ Both sides lose their whitespace and soft hyphens before they are compared (Word
 block boundaries and HTML spacing do not map one to one). A PLACEHOLDER in the reviewed text
 stands for an inline object (a picture, a field, a note reference): it matches up to
 ``_GAP`` characters of the finished text, or none. Body text and note text are compared as
-two streams, each in reading order.
+two streams. The body is in reading order; the notes are in the reviewed file's order: a
+Word file's footnotes, then its endnotes, each by id (``PubBook.note_keys``), and an EPUB's
+in reading order.
 """
 
 from lxml import etree
@@ -47,8 +49,17 @@ def check_text(
         text, chapter_notes = _texts(chapter.html, by_blocks=parsed.format == "epub")
         body.append(text)
         notes += chapter_notes
+    if len(pub.note_keys) == len(notes):
+        notes = [notes[i] for i in sorted(range(len(notes)), key=lambda i: _note_rank(pub, i))]
     _compare(" ".join(body), " ".join(body_blocks), labels, starts)
     _compare(" ".join(notes), " ".join(note_blocks), ["the footnotes"], [0])
+
+
+def _note_rank(pub: PubBook, i: int) -> tuple[int, int, int]:
+    """Where note ``i`` stands in the Word file: footnotes before endnotes, each by id."""
+    kind, _, number = pub.note_keys[i].rpartition("-")
+    part = {"footnote": 0, "endnote": 1}.get(kind, 2)
+    return (part, int(number), i) if number.isdigit() and part < 2 else (2, 0, i)
 
 
 def _texts(html: str, *, by_blocks: bool) -> tuple[str, list[str]]:

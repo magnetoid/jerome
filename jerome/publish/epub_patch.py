@@ -28,6 +28,8 @@ _NCX = f"{{{NS['ncx']}}}"
 _OPF_ROLE = f"{_OPF}role"  # EPUB 2: <dc:creator opf:role="aut">
 _XLINK_HREF = "{http://www.w3.org/1999/xlink}href"
 _EXT = {"image/jpeg": "jpg", "image/png": "png"}
+# fields the import fills in from the book: one left empty was cleared, so the book's own goes
+CLEARED_WHEN_EMPTY = ("publisher", "date")
 
 
 def epub_identifier(epub: bytes) -> str | None:
@@ -74,6 +76,8 @@ def patch_epub(
         if value is not None:
             el = metadata.find(f"{_DC}{name}")
             _set_text(el if el is not None else _new(metadata, name), value)
+        elif name in CLEARED_WHEN_EMPTY:  # the import fills these in: empty means cleared
+            _remove_all(metadata, name)
     if cover is not None:
         _set_cover(package, opf, metadata, cover, epub3)
     path = package.opf_path
@@ -94,6 +98,17 @@ def _set_ncx_uid(package: EpubPackage, identifier: str) -> None:
                 m.set("content", identifier)
             doc = ContentDocument(root, "xml")
             package.files[item.path] = serialize_document(doc, original, item.path)
+
+
+def _remove_all(metadata: etree._Element, name: str) -> None:
+    """Remove every ``dc:<name>``, and the metas that refine them."""
+    for el in metadata.findall(f"{_DC}{name}"):
+        ident = el.get("id")
+        if ident:
+            for meta in metadata.findall(f"{_OPF}meta"):
+                if meta.get("refines") == f"#{ident}":
+                    metadata.remove(meta)
+        metadata.remove(el)
 
 
 def _unique_identifier(opf: etree._Element) -> etree._Element | None:

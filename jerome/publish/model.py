@@ -42,6 +42,9 @@ class PubBook:
     images: dict[str, PubImage] = field(default_factory=dict)
     left_out: list[str] = field(default_factory=list)  # the source's own front pages
     warnings: list[str] = field(default_factory=list)
+    # a Word note's id ("footnote-3", "endnote-1") per note, in reading order; the text
+    # check matches notes by it, since the Word file keeps them in another order
+    note_keys: list[str] = field(default_factory=list)
 
 
 _WORDS = {

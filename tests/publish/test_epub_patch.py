@@ -67,15 +67,17 @@ def test_patch_sets_metadata_and_keeps_other_entries():
     assert [b.text for c in read_epub(out).chapters for b in c.blocks] == ["One", "a"]
 
 
-def test_patch_none_fields_leave_the_books_own():
+def test_patch_none_fields():
+    # the import fills the publisher and year in, so None there means they were cleared;
+    # the other fields the import leaves empty keep the book's own
     original = _book()
     pub = _publication(authors=[], translator=None, publisher=None, year=None, description=None)
     pub.rights = ""
     out = patch_epub(original, pub, identifier="urn:uuid:jerome-test", cover=None)
     meta = _opf(out).find("opf:metadata", NS)
     assert [c.text for c in meta.findall("dc:creator", NS)] == ["Old Author"]
-    assert meta.findtext("dc:publisher", None, NS) == "Old House"
-    assert meta.findtext("dc:date", None, NS) == "1999"
+    assert meta.find("dc:publisher", NS) is None
+    assert meta.find("dc:date", NS) is None
     assert meta.find("dc:contributor", NS) is None
     assert meta.find("dc:rights", NS) is None
 

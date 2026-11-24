@@ -18,7 +18,7 @@ from jerome.publish import build
 from jerome.publish.build import prepare, render
 from jerome.publish.model import PublishError
 from tests.fixtures.docx_builders import make_docx
-from tests.fixtures.images import make_png
+from tests.fixtures.images import make_jpeg, make_png
 from tests.fixtures.suggestions import add_one
 
 PUBLIC = Path(__file__).resolve().parents[1] / "fixtures" / "public"
@@ -91,6 +91,44 @@ def test_image_limit(session, tmp_storage, monkeypatch):
     monkeypatch.setattr(build, "IMAGE_LIMIT", 1024)
     with pytest.raises(PublishError, match="MB of images; the limit is"):
         prepare(session, tmp_storage, book.id, "epub-book")
+
+
+def test_image_limit_counts_a_kept_epubs_own_images(session, tmp_storage, monkeypatch):
+    # an EPUB-born book's EPUB keeps its files: their images count too (pg932: a 192 KB cover)
+    book = import_book(
+        session,
+        tmp_storage,
+        filename="usher.epub",
+        data=(PUBLIC / "pg932.epub").read_bytes(),
+        variant="en-US",
+    )
+    monkeypatch.setattr(build, "IMAGE_LIMIT", 100_000)
+    with pytest.raises(PublishError, match="MB of images; the limit is"):
+        prepare(session, tmp_storage, book.id, "epub-book")
+    monkeypatch.setattr(build, "IMAGE_LIMIT", 150_000)  # 192 KB + 13 KB would not fit
+    set_cover(session, tmp_storage, book.id, make_png(1400, 2100))  # added: the JPEG stays
+    with pytest.raises(PublishError, match="MB of images; the limit is"):
+        prepare(session, tmp_storage, book.id, "epub-book")
+    set_cover(session, tmp_storage, book.id, make_jpeg(1400, 2100))  # replaces the 192 KB one
+    assert prepare(session, tmp_storage, book.id, "epub-book").pub_book is None
+
+
+def test_cleared_year_warns_that_the_epubs_own_date_goes(session, tmp_storage):
+    book = import_book(
+        session,
+        tmp_storage,
+        filename="usher.epub",
+        data=(PUBLIC / "pg932.epub").read_bytes(),
+        variant="en-US",
+    )
+    assert book.year == 1997  # from its dc:date, 1997-06-01
+    assert not [w for w in prepare(session, tmp_storage, book.id, "epub-book").warnings
+                if "left out" in w]  # fmt: skip
+    update_publication(session, book.id, {"year": None})
+    prepared = prepare(session, tmp_storage, book.id, "epub-book")
+    assert "The EPUB's own date (1997-06-01) is left out: no year is set under Publication" in (
+        prepared.warnings
+    )
 
 
 def test_epub_born_book_epub_book_is_patched_clean_export(session, tmp_storage):

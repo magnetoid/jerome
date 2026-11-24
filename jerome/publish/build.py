@@ -25,7 +25,7 @@ from jerome.core.publication import Publication, publication_of, read_cover
 from jerome.core.translation import ensure_not_source, untranslated_conflict
 from jerome.documents.docx_reader import read_docx
 from jerome.documents.epub_reader import read_epub
-from jerome.documents.epub_xml import read_container
+from jerome.documents.epub_xml import EpubPackage, read_container
 from jerome.errors import Conflict, NotFound
 from jerome.orm import Block, Book, Chapter, Job, Suggestion
 from jerome.publish.epub_book import book_identifier, write_epub_book
@@ -95,9 +95,23 @@ def prepare(session: Session, storage: Storage, book_id: int, fmt: PublishFormat
             pub.rights = own
     warnings: list[str] = []
     pub_book: PubBook | None = None
+    images = 0
     if book.format == "epub" and fmt == "epub-book":
-        if cover is None and read_container(clean).cover_item is None:
+        package = read_container(clean)
+        if cover is None and package.cover_item is None:
             warnings.append(NO_COVER)
+        old = package.manifest.get(package.cover_item or "")
+        same = cover is not None and old is not None and old.media_type == cover[1]
+        images = _kept_images(package, replaced=package.cover_item if same else None)
+        for own, ours, what, field_name in (
+            (package.publisher, pub.publisher, "publisher", "publisher"),
+            (package.date, pub.year, "date", "year"),
+        ):
+            if own and not ours:  # patch_epub takes it out (a book imported before prefill)
+                warnings.append(
+                    f"The EPUB's own {what} ({own}) is left out: "
+                    f"no {field_name} is set under Publication"
+                )
     else:
         if cover is None:
             warnings.append(NO_COVER)
@@ -112,7 +126,7 @@ def prepare(session: Session, storage: Storage, book_id: int, fmt: PublishFormat
                 "Left out of the finished file (Jerome makes its own front pages and "
                 f"contents): {', '.join(pub_book.left_out)}"
             )
-    images = sum(len(i.data) for i in pub_book.images.values()) if pub_book else 0
+    images += sum(len(i.data) for i in pub_book.images.values()) if pub_book else 0
     images += len(cover[0]) if cover else 0
     if images > IMAGE_LIMIT:
         raise PublishError(
@@ -135,6 +149,16 @@ def prepare(session: Session, storage: Storage, book_id: int, fmt: PublishFormat
         identifier=book_identifier(book_id, pub, existing, created=book.created_at),
         cover=cover,
         warnings=warnings,
+    )
+
+
+def _kept_images(package: EpubPackage, *, replaced: str | None) -> int:
+    """The bytes of the images an EPUB keeps, less the cover image an upload of the same
+    type overwrites (one of another type is added beside it)."""
+    return sum(
+        len(package.files.get(item.path, b""))
+        for item_id, item in package.manifest.items()
+        if item.media_type.startswith("image/") and item_id != replaced
     )
 
 
