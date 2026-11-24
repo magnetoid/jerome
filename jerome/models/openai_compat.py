@@ -1,4 +1,5 @@
 import json
+import re
 from urllib.parse import urlparse
 
 import httpx
@@ -8,6 +9,8 @@ from jerome.models.base import CompletionResult, ModelOutputError, SystemPart, U
 
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "host.docker.internal"}
 _OPENAI_EFFORTS = {"low", "medium", "high"}
+# OpenAI's reasoning models; the others answer reasoning_effort with an error
+_OPENAI_REASONING = re.compile(r"^(o[0-9]|gpt-5)")
 
 
 class OpenAICompatProvider:
@@ -52,7 +55,7 @@ class OpenAICompatProvider:
         }
         if self.name == "openai":  # OpenAI's reasoning models refuse max_tokens
             body["max_completion_tokens"] = max_tokens
-            if effort in _OPENAI_EFFORTS:
+            if effort in _OPENAI_EFFORTS and _OPENAI_REASONING.match(model):
                 body["reasoning_effort"] = effort
         else:
             body["max_tokens"] = max_tokens

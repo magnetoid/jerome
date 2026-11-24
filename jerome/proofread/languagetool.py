@@ -4,6 +4,7 @@ import hashlib
 import json
 import time
 from collections.abc import Callable, Sequence
+from urllib.parse import urlparse
 
 import httpx
 
@@ -24,6 +25,8 @@ _FALLBACK = (Category.GRAMMAR, Severity.MEDIUM)
 _RETRIES = 3  # after a 429 (LanguageTool Premium limits requests per minute)
 _MAX_WAIT = 60.0
 _DEFAULT_WAIT = 5.0
+# LanguageTool's own hosted services; any other host is the user's own server
+_HOSTED = ("languagetool.org", "languagetoolplus.com")
 
 
 class LanguageToolClient:
@@ -37,6 +40,9 @@ class LanguageToolClient:
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self._base_url = base_url.rstrip("/")
+        host = (urlparse(self._base_url).hostname or "").lower()
+        # a hosted service sees the text, so a local-only book never goes to it
+        self.hosted = any(host == h or host.endswith("." + h) for h in _HOSTED)
         self._http = http or httpx.Client(timeout=60)
         # Premium credentials go with every check, and only when both are set
         self._auth = {"username": username, "apiKey": api_key} if username and api_key else {}

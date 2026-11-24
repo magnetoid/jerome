@@ -281,6 +281,9 @@ describe("SettingsPage", () => {
     expect(JSON.parse(call(f, "PUT", "/v1/settings/models.translate")![1]!.body as string)).toEqual({
       value: { provider: "deepl", model: "deepl" },
     });
+    // the hidden model name "deepl" does not carry over to another provider
+    await user.selectOptions(within(tr).getByLabelText("Provider"), "openai");
+    expect(within(tr).getByLabelText("Model")).toHaveValue("");
   });
 
   it("saves the LanguageTool Premium username", async () => {

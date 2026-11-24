@@ -57,10 +57,11 @@ export default function ModelSettings({
   const deepl = provider === "deepl";
   const suggestions = SUGGESTED_MODELS[provider] ?? [];
 
-  // A model name suggested for another provider would not work here: start empty instead.
+  // A model name meant for another provider would not work here: start empty instead.
   function changeProvider(next: string) {
-    const known = Object.values(SUGGESTED_MODELS).flat();
-    if (known.includes(model.trim()) && !(SUGGESTED_MODELS[next] ?? []).includes(model.trim())) {
+    const name = model.trim();
+    const known = [...Object.values(SUGGESTED_MODELS).flat(), "deepl"];
+    if (known.includes(name) && !(SUGGESTED_MODELS[next] ?? []).includes(name)) {
       setModel("");
     }
     setProvider(next);

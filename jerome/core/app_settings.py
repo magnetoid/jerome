@@ -286,13 +286,18 @@ def overlay(base: Settings, rows: Sequence[AppSetting], box: SecretBox | None) -
             base.anthropic_api_key.get_secret_value() if base.anthropic_api_key else None
         ),
         "webhook_secret": base.webhook_secret,
-        "openai_compat_api_key": base.models.get("ai", {}).get("api_key")
-        or base.models.get("translate", {}).get("api_key"),
         "languagetool_api_key": (
             base.languagetool_api_key.get_secret_value() if base.languagetool_api_key else None
         ),
     }
-    for key in SECRET_KEYS:  # the other provider keys are set only on the Settings page
+    # A provider key in the environment comes inside JEROME_MODELS, beside its provider
+    for pass_name in ("ai", "translate"):
+        config = base.models.get(pass_name)
+        if isinstance(config, dict) and config.get("api_key"):
+            key = f"{config.get('provider')}_api_key"
+            if key in SECRET_KEYS and key != "anthropic_api_key":
+                env_secrets.setdefault(key, str(config["api_key"]))
+    for key in SECRET_KEYS:
         env_secrets.setdefault(key, None)
     secrets: dict[str, str | None] = {}
     for key in SECRET_KEYS:

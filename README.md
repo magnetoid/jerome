@@ -193,6 +193,7 @@ provider. Each provider's key goes under Secrets.
 - The prompts are tuned for Claude. Other models may break formatting tags more often, and those paragraphs are retried and then flagged.
 - DeepL keeps formatting and the ignore list, but not the house style (quote marks). Run proofreading after it.
 - Only an own server on a local address may process a `local_only` book.
+- A key can also come from the environment: put `api_key` beside its provider in `JEROME_MODELS`. A key saved on the Settings page wins.
 
 **LanguageTool Premium.**
 1. Set the LanguageTool URL to `https://api.languagetoolplus.com`.
@@ -200,6 +201,7 @@ provider. Each provider's key goes under Secrets.
 3. Save the LanguageTool Premium API key under Secrets.
 
 Checks then use your Premium account. Jerome waits and retries when Premium answers "too many requests".
+A `local_only` book is not sent to LanguageTool's hosted service; its LanguageTool check is skipped and the job says so.
 
 ## Stopping and crashes
 

@@ -170,6 +170,26 @@ def test_overlay_env_models_key_and_anthropic_drops_it():
     assert "api_key" not in eff.settings.models["ai"]
 
 
+def test_overlay_env_keys_follow_their_provider():
+    base = Settings(
+        _env_file=None,
+        models={
+            "ai": {"provider": "gemini", "model": "gemini-2.5-pro", "api_key": "g-env"},
+            "translate": {"provider": "deepl", "model": "deepl", "api_key": "d-env:fx"},
+        },
+    )
+    eff = overlay(base, [], None)
+    assert eff.settings.models["ai"]["api_key"] == "g-env"
+    assert eff.settings.models["translate"]["api_key"] == "d-env:fx"
+    assert eff.meta["gemini_api_key"].source == "environment"
+    assert eff.meta["deepl_api_key"].source == "environment"
+    assert eff.meta["openai_compat_api_key"].is_set is False  # not another provider's key
+    # a key saved on the Settings page wins over the environment
+    box = SecretBox(Fernet.generate_key().decode())
+    eff = overlay(base, [row("deepl_api_key", secret=box.encrypt("d-app"))], box)
+    assert eff.settings.models["translate"]["api_key"] == "d-app"
+
+
 def test_overlay_cleared_openai_key_removes_env_key():
     base = Settings(
         _env_file=None,

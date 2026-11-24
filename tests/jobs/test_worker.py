@@ -337,6 +337,27 @@ def test_claim_respects_not_before_and_job_status(session_factory, job_two_chapt
         assert claim_task(s, now=soon + timedelta(days=1)) is None
 
 
+def test_local_only_book_skips_hosted_languagetool(session_factory, test_settings, respx_mock):
+    ids = build(session_factory, [["teh cat"]], local_only=True, passes=["languagetool"])
+    hosted = respx_mock.post("https://api.languagetoolplus.com/v2/check").respond(
+        json={"matches": []}
+    )
+    deps = make_deps(test_settings, FakeProvider([], local=False))
+    deps = WorkerDeps(deps.registry, LanguageToolClient("https://api.languagetoolplus.com"), None)
+    run_task(session_factory, ids.task_id, deps)
+    assert not hosted.called
+    assert job(session_factory, ids.job_id).stats["languagetool_skipped_local_only"] == 1
+    assert task(session_factory, ids.task_id).status == "done"
+
+
+def test_languagetool_hosted_by_host():
+    assert LanguageToolClient("https://api.languagetoolplus.com").hosted
+    assert LanguageToolClient("https://api.languagetool.org/").hosted
+    assert not LanguageToolClient("http://languagetool:8010").hosted
+    assert not LanguageToolClient("http://localhost:8010").hosted
+    assert not LanguageToolClient("https://notlanguagetool.org").hosted
+
+
 def test_local_only_book_skips_ai(session_factory, test_settings, respx_mock):
     ids = build(
         session_factory, [["teh cat", BIG, BIG]], local_only=True, passes=["languagetool", "ai"]

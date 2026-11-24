@@ -4,7 +4,8 @@ The translate pass hands DeepL each item's tagged text (``jerome.translate.tags`
 XML tag handling keeps the tags; placeholders ``⟦N⟧`` travel as ``<x n="N"/>`` and
 ignore-list words inside ``<keep>``, both of which DeepL leaves alone. What comes back goes
 through the same strict decode as a model's reply, so a changed tag fails only its item.
-DeepL bills characters, so the usage records source characters as input tokens."""
+DeepL bills characters, so the usage records the characters sent (tags, which include the
+placeholders, are not billed) as input tokens."""
 
 import re
 from collections.abc import Sequence
@@ -22,6 +23,8 @@ _X = re.compile(r'<x\s+n="([0-9]+)"\s*/>|<x\s+n="([0-9]+)"\s*>\s*</x>')
 _KEEP = re.compile(r"</?keep\s*>")
 _BLOCK = re.compile(r'<block id="-?[0-9]+">(.*?)</block>', re.DOTALL)
 _ENTITY = re.compile(r"&(?:lt|gt|amp|#x27[eE][67]);")
+# Pieces an ignore-list word is never looked for in: tags, entities and placeholders
+_SKIP = re.compile(r"(<[^<>]*>|&(?:lt|gt|amp|#x27[eE][67]);|⟦[0-9]+⟧)")
 
 
 def endpoint(api_key: str) -> str:
@@ -44,8 +47,8 @@ def _keep_words(text: str, keep: Sequence[str]) -> str:
         return text
     pattern = re.compile(r"(?<!\w)(" + "|".join(re.escape(w) for w in words) + r")(?!\w)")
     return "".join(
-        piece if _TAG.fullmatch(piece) else pattern.sub(r"<keep>\1</keep>", piece)
-        for piece in _TAG.split(text)
+        piece if _SKIP.fullmatch(piece) else pattern.sub(r"<keep>\1</keep>", piece)
+        for piece in _SKIP.split(text)
     )
 
 
@@ -81,14 +84,15 @@ class DeepLProvider:
         """Translate tagged texts, in order. Raises on any HTTP error (the task retries)."""
         if not self.api_key:
             raise JeromeError("deepl API key is not set")
+        sent = [to_deepl(t, keep) for t in texts]
         out: list[str] = []
-        for start in range(0, len(texts), _BATCH):
-            batch = texts[start : start + _BATCH]
+        for start in range(0, len(sent), _BATCH):
+            batch = sent[start : start + _BATCH]
             resp = self._http.post(
                 endpoint(self.api_key),
                 headers={"Authorization": f"DeepL-Auth-Key {self.api_key}"},
                 json={
-                    "text": [to_deepl(t, keep) for t in batch],
+                    "text": batch,
                     "source_lang": source_lang.upper(),
                     "target_lang": target_lang,
                     "tag_handling": "xml",
@@ -103,11 +107,11 @@ class DeepLProvider:
             if not isinstance(translations, list) or len(translations) != len(batch):
                 raise JeromeError("DeepL returned a different number of translations")
             out.extend(from_deepl(str(t.get("text", ""))) for t in translations)
-        return out, Usage(sum(billed_chars(t) for t in texts), 0)
+        return out, Usage(sum(billed_chars(t) for t in sent), 0)
 
     def complete(self, **_: object):  # the translate pass calls translate_texts instead
         raise JeromeError("DeepL only translates")
 
     def count_tokens(self, *, model: str, system: list[SystemPart], user: str) -> int | None:
         """Billed characters of the blocks in a translate request (the estimate's input)."""
-        return sum(billed_chars(m.group(1)) for m in _BLOCK.finditer(user))
+        return sum(billed_chars(to_deepl(m.group(1))) for m in _BLOCK.finditer(user))

@@ -425,8 +425,10 @@ def _run_chunk(
     if plan.job_type == "translate":
         return _run_translate_chunk(sf, task_id, plan, chunk, index, deps, paid)
     candidates: list[Candidate] = []
-    dropped = refusals = skipped = 0
-    if "languagetool" in plan.passes:
+    dropped = refusals = skipped = lt_skipped = 0
+    if "languagetool" in plan.passes and plan.local_only and deps.lt.hosted:
+        lt_skipped = 1
+    elif "languagetool" in plan.passes:
         found, lt_dropped = languagetool_candidates(chunk.blocks, plan.style, deps.lt)
         candidates += found
         dropped += lt_dropped
@@ -472,6 +474,8 @@ def _run_chunk(
             deltas["refusals"] = refusals
         if skipped:
             deltas["ai_skipped_local_only"] = skipped
+        if lt_skipped:
+            deltas["languagetool_skipped_local_only"] = lt_skipped
         job.stats = _bump(job.stats, **deltas)
         task.chunks_done = index + 1
         if task.chunks_done >= len(plan.chunks):
@@ -534,6 +538,8 @@ def _translate_calls(
             raise  # billed; the task is tried again
         log.warning("chunk reply unusable on the last attempt; trying each item alone")
         failed = [it.block_id for it in todo]
+    if hasattr(provider, "translate_texts"):
+        return done, refusals  # a translation service gives the same reply again: no retry
     by_id = {it.block_id: it for it in todo}
     for block_id in failed:
         try:

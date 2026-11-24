@@ -425,9 +425,11 @@ def test_openai_preset_sends_max_completion_tokens_and_effort(respx_mock):
         json=oa_reply("{}")
     )
     p = OpenAICompatProvider("https://api.openai.com/v1", "k", name="openai", require_key=True)
-    p.complete(model="m", system=[], user="u", schema=SCHEMA, max_tokens=900, effort="high")
-    p.complete(model="m", system=[], user="u", schema=SCHEMA, effort="max")
-    first, second = (json.loads(c.request.content) for c in route.calls)
+    p.complete(model="gpt-5", system=[], user="u", schema=SCHEMA, max_tokens=900, effort="high")
+    p.complete(model="gpt-5", system=[], user="u", schema=SCHEMA, effort="max")
+    p.complete(model="gpt-4.1", system=[], user="u", schema=SCHEMA, effort="high")
+    first, second, third = (json.loads(c.request.content) for c in route.calls)
     assert first["max_completion_tokens"] == 900 and "max_tokens" not in first
     assert first["reasoning_effort"] == "high"
     assert "reasoning_effort" not in second  # OpenAI has no max effort
+    assert "reasoning_effort" not in third  # not a reasoning model
