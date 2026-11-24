@@ -32,6 +32,7 @@ TASK_STATUSES = ("queued", "running", "done", "failed")
 TASK_KINDS = ("chapter", "consistency", "publish")
 TRIM_SIZES = ("6x9in", "5.5x8.5in", "5x8in", "a5")
 CHANNELS = ("api", "word", "system", "web", "auto", "mcp")
+AI_VERDICTS = ("correct", "not_an_error", "better")  # the AI's view of a LanguageTool mark
 
 
 def _values(vocab: Iterable[str]) -> tuple[str, ...]:
@@ -251,6 +252,7 @@ class Suggestion(Base):
         CheckConstraint(_in("category", Category), name="ck_suggestions_category"),
         CheckConstraint(_in("severity", Severity), name="ck_suggestions_severity"),
         CheckConstraint(_in("source", Source), name="ck_suggestions_source"),
+        CheckConstraint(_in("ai_verdict", AI_VERDICTS), name="ck_suggestions_ai_verdict"),
         Index("ix_suggestions_block_id_status", "block_id", "status"),
     )
 
@@ -276,6 +278,11 @@ class Suggestion(Base):
     disputed: Mapped[bool] = mapped_column(Boolean, server_default=sql_text("false"))
     alternative: Mapped[str | None] = mapped_column(Text)
     rule: Mapped[str | None] = mapped_column(String)
+    # the AI's view of a LanguageTool-only mark, asked for in review (None until asked)
+    ai_verdict: Mapped[str | None] = mapped_column(String)
+    ai_replacement: Mapped[str | None] = mapped_column(Text)  # only for "better"
+    ai_reason: Mapped[str | None] = mapped_column(Text)
+    ai_model: Mapped[str | None] = mapped_column(String)
     created_at: Mapped[datetime] = _ts()
 
 

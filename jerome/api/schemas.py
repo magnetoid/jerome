@@ -108,6 +108,10 @@ class SuggestionOut(BaseModel):
     job_id: int | None
     model: str | None
     created_at: datetime
+    ai_verdict: str | None
+    ai_replacement: str | None
+    ai_reason: str | None
+    ai_model: str | None
 
 
 class BlockOut(BaseModel):

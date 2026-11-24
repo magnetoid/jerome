@@ -32,7 +32,15 @@ export interface Suggestion {
   decided_by: string | null;
   /** Where the decision came from: "web", "api", "auto" or "mcp" (Janus). */
   decided_channel: string | null;
+  /** The AI's view of a LanguageTool mark, once asked for in review; null until then. */
+  ai_verdict: AiVerdict | null;
+  /** The AI's text for the same span; only with "better". */
+  ai_replacement: string | null;
+  ai_reason: string | null;
+  ai_model: string | null;
 }
+
+export type AiVerdict = "correct" | "not_an_error" | "better";
 
 export interface ReviewBlock {
   id: number;
