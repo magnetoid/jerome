@@ -60,6 +60,7 @@ def read_docx(data: bytes) -> ParsedBook:
     return ParsedBook(
         format="docx",
         title=_core_title(package),
+        authors=[c] if (c := _core_text(package, "dc:creator")) else [],
         language=styles.language,
         chapters=_chapters(body, notes),
     )
@@ -73,11 +74,15 @@ def _refuse_tracked_changes(tree: etree._ElementTree) -> None:
 
 
 def _core_title(package: Mapping[str, bytes]) -> str | None:
+    return _core_text(package, "dc:title")
+
+
+def _core_text(package: Mapping[str, bytes], tag: str) -> str | None:
     core = package.get("docProps/core.xml")
     if core is None:
         return None
-    title = parse_xml(core, "docProps/core.xml").getroot().findtext("dc:title", None, NS)
-    return (title or "").strip() or None
+    text = parse_xml(core, "docProps/core.xml").getroot().findtext(tag, None, NS)
+    return " ".join((text or "").split()) or None
 
 
 # --- block kinds ----------------------------------------------------------------------

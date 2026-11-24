@@ -56,6 +56,7 @@ def package_docx(
     footnote_links: dict[str, str] | None = None,
     title: str | None = None,
     language: str = "en-US",
+    creator: str | None = "jerome tests",
 ) -> bytes:
     """Zip a minimal DOCX around raw XML.
 
@@ -82,7 +83,7 @@ def package_docx(
                 ("rId2", _CORE_REL, "docProps/core.xml", False),
             ]
         ),
-        "docProps/core.xml": _core(title),
+        "docProps/core.xml": _core(title, creator),
         "word/document.xml": (
             f"{_DECL}<w:document {_XMLNS}><w:body>{body}{_SECT_PR}</w:body></w:document>"
         ),
@@ -131,11 +132,12 @@ def _rels(rels: list[tuple[str, str, str, bool]]) -> str:
     return f'{_DECL}<Relationships xmlns="{NS["pr"]}">{items}</Relationships>'
 
 
-def _core(title: str | None) -> str:
+def _core(title: str | None, creator: str | None) -> str:
     title_xml = f"<dc:title>{escape(title)}</dc:title>" if title is not None else ""
+    creator_xml = f"<dc:creator>{escape(creator)}</dc:creator>" if creator is not None else ""
     return (
         f'{_DECL}<cp:coreProperties xmlns:cp="{NS["cp"]}" xmlns:dc="{NS["dc"]}">'
-        f"{title_xml}<dc:creator>jerome tests</dc:creator></cp:coreProperties>"
+        f"{title_xml}{creator_xml}</cp:coreProperties>"
     )
 
 

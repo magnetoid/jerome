@@ -10,7 +10,7 @@ import codecs
 import posixpath
 import re
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from html.entities import html5
 from typing import Literal
 from urllib.parse import unquote, urldefrag
@@ -120,6 +120,9 @@ class EpubPackage:
     order: list[str]
     title: str | None = None
     language: str | None = None
+    creators: list[str] = field(default_factory=list)
+    publisher: str | None = None
+    date: str | None = None
 
 
 def parse_xml_root(data: bytes, part: str) -> etree._Element:
@@ -171,13 +174,21 @@ def read_container(data: bytes) -> EpubPackage:
     if not spine:
         raise UnsupportedDocumentError("Not a usable EPUB: its spine is empty")
 
+    def metas(tag: str) -> list[str]:
+        found = opf.iterfind(f"{{{NS['opf']}}}metadata/{{{NS['dc']}}}{tag}")
+        texts = (" ".join("".join(el.itertext()).split()) for el in found)
+        return [t for t in texts if t]
+
     def meta(tag: str) -> str | None:
-        el = opf.find(f"{{{NS['opf']}}}metadata/{{{NS['dc']}}}{tag}")
-        text = " ".join("".join(el.itertext()).split()) if el is not None else ""
-        return text or None
+        return next(iter(metas(tag)), None)
 
     package = EpubPackage(
         opf_path, manifest, spine, [], files, list(files), meta("title"), meta("language")
+    )
+    package.creators, package.publisher, package.date = (
+        metas("creator"),
+        meta("publisher"),
+        meta("date"),
     )
     package.nav_points = _read_toc(package, spine_el.get("toc") if spine_el is not None else None)
     return package

@@ -242,6 +242,13 @@ def import_for_translation(
         work="translate",
         source_book_id=source.id,
         translated_title=translated_title,
+        # Publication details carry over; the ISBNs never do: a translation is another book
+        authors=list(source.authors or []),
+        publisher=source.publisher,
+        rights=source.rights,
+        description=source.description,
+        year=source.year,
+        trim_size=source.trim_size,
     )
     book.style_sheet = StyleSheetRow(
         variant=target_variant,

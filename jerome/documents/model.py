@@ -65,3 +65,7 @@ class ParsedBook:
     title: str | None
     language: str | None
     chapters: list[ParsedChapter] = field(default_factory=list)
+    # Publication details from the file's metadata, used to prefill the book's
+    authors: list[str] = field(default_factory=list)
+    publisher: str | None = None
+    year: int | None = None

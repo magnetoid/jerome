@@ -80,6 +80,9 @@ def make_epub(
     cluttered: bool = False,
     title: str = "Test Book",
     language: str = "en",
+    creators: list[str] | None = None,
+    publisher: str | None = None,
+    date: str | None = None,
 ) -> bytes:
     """Build an EPUB. Each chapter's title is its first block, an ``h1``.
 
@@ -151,7 +154,11 @@ def make_epub(
         '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
         '<dc:identifier id="id">urn:uuid:jerome-test</dc:identifier>'
         f"<dc:title>{escape(title)}</dc:title>"
-        f"<dc:language>{language}</dc:language></metadata>"
+        f"<dc:language>{language}</dc:language>"
+        + "".join(f"<dc:creator>{escape(c)}</dc:creator>" for c in creators or [])
+        + (f"<dc:publisher>{escape(publisher)}</dc:publisher>" if publisher else "")
+        + (f"<dc:date>{escape(date)}</dc:date>" if date else "")
+        + "</metadata>"
         f"<manifest>{''.join(manifest)}</manifest><spine{toc_attr}>{itemrefs}</spine></package>"
     )
     container = (

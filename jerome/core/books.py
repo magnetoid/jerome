@@ -97,6 +97,9 @@ def import_book(
         local_only=local_only,
         original_filename=filename,
         auto_apply=policy_to_json(auto_apply),
+        authors=prefill_authors(parsed.authors),
+        publisher=parsed.publisher,
+        year=parsed.year if parsed.year and 1000 <= parsed.year <= 2999 else None,
     )
     quotes = detect_quote_style((b.text for c in parsed.chapters for b in c.blocks), variant)
     style = StyleSheet(variant, quotes, {}, [])
@@ -170,6 +173,15 @@ def _insert_blocks(
         )
     if segments:
         session.execute(insert(Segment), segments)
+
+
+# Names Word writes as the document's creator when nobody set one
+_PLACEHOLDER_CREATORS = frozenset({"microsoft office user", "user", "author", "unknown"})
+
+
+def prefill_authors(names: list[str]) -> list[str]:
+    """Authors read from a file's metadata, without Word's placeholder creators."""
+    return [n for n in names if n.strip() and n.strip().lower() not in _PLACEHOLDER_CREATORS]
 
 
 def get_book(session: Session, book_id: int) -> Book:
