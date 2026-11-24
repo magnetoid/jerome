@@ -6,18 +6,22 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import distinct_on
 from sqlalchemy.orm import Session
 
-from jerome.api.deps import Principal, SessionDep, current_principal
+from jerome.api.deps import Principal, SessionDep, current_actor, current_principal, get_registry
+from jerome.api.routes_text import get_text_limits, too_many
 from jerome.api.schemas import (
     BlockOut,
     BulkBody,
     BulkOut,
+    ChapterAiCheckOut,
     EditBody,
     SuggestionFilterIn,
     SuggestionOut,
 )
-from jerome.core import books, suggestions
+from jerome.core import ai_check, books, suggestions, translation
 from jerome.core.suggestions import SuggestionFilter
+from jerome.models import Registry
 from jerome.orm import Block, Decision, Suggestion
+from jerome.proofread.text import TextLimits
 from jerome.types import Category, Severity, Source, Status
 
 router = APIRouter()
@@ -30,6 +34,9 @@ _PLAIN_FIELDS = (
 )  # fmt: skip
 
 PrincipalDep = Annotated[Principal, Depends(current_principal)]
+RegistryDep = Annotated[Registry, Depends(get_registry)]
+ActorDep = Annotated[str, Depends(current_actor)]
+LimitsDep = Annotated[TextLimits, Depends(get_text_limits)]
 
 
 def suggestion_out(session: Session, rows: Sequence[Suggestion]) -> list[dict]:
@@ -146,6 +153,47 @@ def edit(suggestion_id: int, body: EditBody, session: SessionDep, principal: Pri
         replacement=body.replacement,
     )
     return suggestion_out(session, [row])[0]
+
+
+@router.post("/suggestions/{suggestion_id}/ai-check", response_model=SuggestionOut)
+def ai_check_suggestion(
+    suggestion_id: int,
+    session: SessionDep,
+    registry: RegistryDep,
+    actor: ActorDep,
+    limits: LimitsDep,
+):
+    """Ask the AI whether a LanguageTool mark is right, and keep its verdict on the
+    suggestion. A paid model call on the ai pass model, under the key's per-minute rate
+    limit; billed to the proofreading job. Decides nothing."""
+    if (wait := limits.take(actor)) is not None:
+        raise too_many("Rate limit exceeded", wait)
+    row = ai_check.check_suggestion(session, registry, suggestion_id, actor=actor)
+    return suggestion_out(session, [row])[0]
+
+
+@router.post("/books/{book_id}/chapters/{chapter_id}/ai-check", response_model=ChapterAiCheckOut)
+def ai_check_chapter(
+    book_id: int,
+    chapter_id: int,
+    session: SessionDep,
+    registry: RegistryDep,
+    actor: ActorDep,
+    limits: LimitsDep,
+):
+    """Ask the AI about the chapter's unchecked LanguageTool marks, up to 40 per request, one
+    paid call per paragraph; one rate-limit token per request."""
+    books.get_book(session, book_id)
+    translation.ensure_not_source(session, book_id)
+    if (wait := limits.take(actor)) is not None:
+        raise too_many("Rate limit exceeded", wait)
+    result = ai_check.check_chapter(session, registry, book_id, chapter_id, actor=actor)
+    return {
+        "checked": len(result.checked),
+        "remaining": result.remaining,
+        "failed": result.failed,
+        "suggestions": suggestion_out(session, result.checked),
+    }
 
 
 @router.post("/suggestions/{suggestion_id}/{action}", response_model=SuggestionOut)

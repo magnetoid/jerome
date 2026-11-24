@@ -176,6 +176,7 @@ def test_source_book_is_read_only_everywhere(client, auth):
         "review import": client.post(
             f"/v1/books/{sid}/review-imports", files={"file": ("r.docx", DOCX)}, headers=auth
         ),
+        "AI check": client.post(f"/v1/books/{sid}/chapters/{chapter['id']}/ai-check", headers=auth),
         "delete": client.delete(f"/v1/books/{sid}", headers=auth),
     }
     for name, r in calls.items():

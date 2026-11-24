@@ -114,6 +114,13 @@ class SuggestionOut(BaseModel):
     ai_model: str | None
 
 
+class ChapterAiCheckOut(BaseModel):
+    checked: int  # marks that now have the AI's verdict
+    remaining: int  # unchecked marks this request did not reach; ask again for them
+    failed: int  # marks asked about that got no usable verdict
+    suggestions: list[SuggestionOut]
+
+
 class BlockOut(BaseModel):
     original: str
     current: str

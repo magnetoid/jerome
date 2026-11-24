@@ -25,6 +25,7 @@ from jerome.core.suggestions import bulk_decide as bulk_decide_core
 from jerome.mcp.context import ToolContext, call
 from jerome.mcp.rest import READ_ONLY, rest_json
 from jerome.mcp.server import mcp
+from jerome.mcp.tools_translation import CALLS_MODEL
 from jerome.types import Category, Severity, Source, Status
 
 
@@ -170,6 +171,38 @@ def edit_suggestion(suggestion_id: int, replacement: str) -> dict[str, Any]:
             book_id=out["book_id"],
             chapter_id=out["chapter_id"],
             after={"suggestion_ids": [out["id"]]},
+        )
+        return out
+
+    return call(body)
+
+
+@mcp.tool(annotations=CALLS_MODEL)
+def ai_check_suggestion(suggestion_id: int) -> dict[str, Any]:
+    """Ask the AI whether a mark LanguageTool made is right (`suggestion_id` from
+    `list_suggestions`: an open suggestion with `source` "languagetool", not `agreed`, and no
+    `ai_verdict` yet). The verdict is kept on the suggestion: `ai_verdict` is `correct`
+    (LanguageTool's fix stands), `not_an_error` (reject it) or `better` (`ai_replacement` is
+    a better text for the same span; use it with `edit_suggestion`), with `ai_reason`. It
+    decides nothing. A paid model call on the ai pass model, billed to the proofreading
+    job, under the key's per-minute rate limit. The same JSON as POST
+    /v1/suggestions/{id}/ai-check. Logged in the Janus activity log."""
+
+    def body(c: ToolContext) -> dict[str, Any]:
+        out = rest_json(
+            routes_suggestions.ai_check_suggestion(
+                suggestion_id, c.session, c.registry, c.principal.actor, c.app.state.text_limits
+            ),
+            SuggestionOut,
+        )
+        record_action(
+            c.session,
+            actor=c.principal.actor,
+            tool="ai_check_suggestion",
+            summary="Asked the AI about a LanguageTool mark",
+            book_id=out["book_id"],
+            chapter_id=out["chapter_id"],
+            after={"suggestion_ids": [out["id"]], "ai_verdict": out["ai_verdict"]},
         )
         return out
 

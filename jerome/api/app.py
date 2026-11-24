@@ -33,6 +33,7 @@ from jerome.core.app_settings import InvalidSetting
 from jerome.core.publication import InvalidPublication
 from jerome.db import make_engine
 from jerome.errors import (
+    AiCheckError,
     Conflict,
     InvalidChangeError,
     NotFound,
@@ -54,6 +55,7 @@ _ERROR_STATUS: dict[type[Exception], int] = {
     InvalidSetting: 400,
     UnsupportedLanguagePair: 400,
     InvalidPublication: 422,
+    AiCheckError: 502,
 }
 
 

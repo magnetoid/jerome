@@ -51,7 +51,8 @@ def book(sf, storage, paragraphs=("Katharina said teh cat sat.", "The dog barkd.
         s.add(job)
         s.commit()
         book_id, job_id = b.id, job.id
-        blocks = list(s.scalars(select(Block).where(Block.book_id == book_id).order_by(Block.ordinal)))
+        stmt = select(Block).where(Block.book_id == book_id).order_by(Block.ordinal)
+        blocks = list(s.scalars(stmt))
         s.expunge_all()
         return book_id, blocks, job_id
 
