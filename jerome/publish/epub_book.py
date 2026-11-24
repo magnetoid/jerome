@@ -93,7 +93,7 @@ def write_epub_book(
         spine.append("cover")
     add("title", "title.xhtml", "application/xhtml+xml", _xml(_title_page(pub)))
     add("copyright", "copyright.xhtml", "application/xhtml+xml", _xml(_copyright_page(pub)))
-    spine += ["title", "copyright"]
+    spine += ["title", "copyright", "nav"]  # the contents page, written below
     for n, (chapter, name, body) in enumerate(zip(pub_book.chapters, names, bodies, strict=True)):
         title = labels[n] if chapter.in_toc else pub.title
         page = _page(title, lang, "chapter" if chapter.in_toc else None, None)

@@ -1,7 +1,7 @@
 """The finished EPUB of an EPUB-born book: its clean export, with the publication details
 written into the OPF and the uploaded cover put in. The publisher's design stays: every
-entry but the OPF (and the cover image, and a page showing a cover of another type) keeps
-its bytes."""
+entry but the OPF (and the NCX's identifier, the cover image, and a page showing a cover of
+another type) keeps its bytes."""
 
 import posixpath
 import re
@@ -24,6 +24,7 @@ from jerome.documents.epub_xml import (
 
 _OPF = f"{{{NS['opf']}}}"
 _DC = f"{{{NS['dc']}}}"
+_NCX = f"{{{NS['ncx']}}}"
 _OPF_ROLE = f"{_OPF}role"  # EPUB 2: <dc:creator opf:role="aut">
 _XLINK_HREF = "{http://www.w3.org/1999/xlink}href"
 _EXT = {"image/jpeg": "jpg", "image/png": "png"}
@@ -59,6 +60,7 @@ def patch_epub(
         ident.set("id", opf.get("unique-identifier") or "pub-id")
         opf.set("unique-identifier", ident.get("id"))
     _set_text(ident, identifier)
+    _set_ncx_uid(package, identifier)
     if pub.authors:
         _set_people(metadata, "creator", pub.authors, "aut", epub3)
     if pub.translator:
@@ -77,6 +79,21 @@ def patch_epub(
     path = package.opf_path
     package.files[path] = serialize_document(ContentDocument(opf, "xml"), package.files[path], path)
     return write_package(package.files, clean_epub)
+
+
+def _set_ncx_uid(package: EpubPackage, identifier: str) -> None:
+    """Keep the NCX's ``dtb:uid`` the same as the package identifier (EPUBCheck NCX-001)."""
+    for item in package.manifest.values():
+        original = package.files.get(item.path)
+        if item.media_type != "application/x-dtbncx+xml" or original is None:
+            continue
+        root = parse_xml_root(original, item.path)
+        uids = [m for m in root.iterfind(f"{_NCX}head/{_NCX}meta") if m.get("name") == "dtb:uid"]
+        if uids and any(m.get("content") != identifier for m in uids):
+            for m in uids:
+                m.set("content", identifier)
+            doc = ContentDocument(root, "xml")
+            package.files[item.path] = serialize_document(doc, original, item.path)
 
 
 def _unique_identifier(opf: etree._Element) -> etree._Element | None:

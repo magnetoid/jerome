@@ -116,6 +116,7 @@ def test_epub_book_structure():
         "cover.xhtml",
         "title.xhtml",
         "copyright.xhtml",
+        "nav.xhtml",  # the contents page; its landmark must point into the spine (RSC-011)
         "chapter-001.xhtml",
         "chapter-002.xhtml",
         "chapter-003.xhtml",

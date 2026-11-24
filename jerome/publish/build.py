@@ -185,17 +185,30 @@ def render(prepared: Prepared) -> tuple[bytes, str]:
     return data, EPUB_MEDIA_TYPE
 
 
-def epubcheck_warnings(data: bytes) -> list[str]:
-    """EPUBCheck's errors as warnings, when it is installed; none otherwise."""
+def epubcheck_command() -> list[str] | None:
+    """How to run EPUBCheck, or None when it is not installed. Some systems (Debian) install
+    it as a link to its .jar, which runs through Java."""
     exe = shutil.which("epubcheck")
     if exe is None:
+        return None
+    target = Path(exe).resolve()
+    if target.suffix != ".jar":
+        return [exe]
+    java = shutil.which("java")
+    return [java, "-jar", str(target)] if java else None
+
+
+def epubcheck_warnings(data: bytes) -> list[str]:
+    """EPUBCheck's errors as warnings, when it is installed; none otherwise."""
+    command = epubcheck_command()
+    if command is None:
         return []
     try:
         with tempfile.TemporaryDirectory(prefix="jerome-epubcheck-") as tmp:
             book, report = Path(tmp) / "book.epub", Path(tmp) / "report.json"
             book.write_bytes(data)
             subprocess.run(
-                [exe, str(book), "--json", str(report)],
+                [*command, str(book), "--json", str(report)],
                 capture_output=True,
                 timeout=EPUBCHECK_TIMEOUT,
             )

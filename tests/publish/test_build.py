@@ -178,3 +178,30 @@ def test_word_book_identifier_uses_the_book_row(session, tmp_storage):
     assert first == prepare(session, tmp_storage, book.id, "epub-book").identifier
     assert first == build.book_identifier(book.id, build.publication_of(session, book),
                                           created=book.created_at)  # fmt: skip
+
+
+def _which(found: dict[str, str]):
+    return lambda name: found.get(name)
+
+
+def test_epubcheck_command_runs_a_jar_through_java(tmp_path, monkeypatch):
+    # Debian's /usr/bin/epubcheck is a link to a .jar, which the kernel cannot run itself
+    jar = tmp_path / "epubcheck.jar"
+    jar.write_bytes(b"PK")
+    link = tmp_path / "epubcheck"
+    link.symlink_to(jar)
+    found = {"epubcheck": str(link), "java": "/usr/bin/java"}
+    monkeypatch.setattr(build.shutil, "which", _which(found))
+    assert build.epubcheck_command() == ["/usr/bin/java", "-jar", str(jar.resolve())]
+
+    del found["java"]
+    assert build.epubcheck_command() is None  # a jar without Java cannot run: not installed
+
+
+def test_epubcheck_command_runs_a_script_as_it_is(tmp_path, monkeypatch):
+    script = tmp_path / "epubcheck"
+    script.write_text("#!/bin/sh\n")
+    monkeypatch.setattr(build.shutil, "which", _which({"epubcheck": str(script)}))
+    assert build.epubcheck_command() == [str(script)]
+    monkeypatch.setattr(build.shutil, "which", _which({}))
+    assert build.epubcheck_command() is None

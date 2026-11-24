@@ -142,3 +142,13 @@ def test_patch_adds_no_epubcheck_errors():
         original, _publication(), identifier="urn:uuid:x", cover=(make_png(1600, 2400), "image/png")
     )
     assert set(run_epubcheck(out)) <= before
+
+
+def test_new_identifier_reaches_the_ncx():
+    # EPUBCheck NCX-001: the NCX's dtb:uid must match the OPF's identifier
+    original = (PUBLIC / "pg932.epub").read_bytes()
+    out = patch_epub(original, _publication(), identifier="urn:uuid:x", cover=None)
+    ncx = etree.fromstring(zipfile.ZipFile(io.BytesIO(out)).read("OEBPS/toc.ncx"))
+    ns = {"ncx": "http://www.daisy.org/z3986/2005/ncx/"}
+    [uid] = ncx.findall("ncx:head/ncx:meta[@name='dtb:uid']", ns)
+    assert uid.get("content") == "urn:uuid:x"

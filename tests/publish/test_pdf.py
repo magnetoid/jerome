@@ -82,10 +82,10 @@ def test_text_order_and_front_pages(weasy):
     title = text.index("Tom & Jerry <Teil 2> – „Straße“")
     isbn = text.index("ISBN 978-3-16-148410-0")
     contents = text.index("Contents")
-    first = text.index("Text more words")
+    first = text.index("more words in the first chapter")  # after the note call "1"
     assert title < isbn < contents < first
     assert text.index("Second chapter words") < text.index("Third chapter words")
-    toc = text[contents:first]
+    toc = text[contents : text.index(" | ", contents)]  # the contents page alone
     assert "One" in toc and "Chapter 2" in toc and "Three" in toc
     assert any(ch.isdigit() for ch in toc)
 
@@ -103,7 +103,8 @@ def test_fonts_embedded(weasy):
             descriptor = descriptor.get_object()
             assert "/FontFile2" in descriptor or "/FontFile3" in descriptor
             names.add(str(font["/BaseFont"]))
-    assert names and all("EBGaramond" in n for n in names), names
+    # WeasyPrint names an embedded font after its family: "EB-Garamond", "EB-Garamond-Italic"
+    assert names and all("EB-Garamond" in n for n in names), names
 
 
 def test_bookmarks_and_metadata(weasy):
@@ -130,7 +131,8 @@ def test_german_hyphenation(weasy):
     lines = ["# Eins", " ".join(f"Die {word} und das Wort" for _ in range(40))]
     reader = _pdf(_publication(language="de-DE", trim_size="5x8in"), _pub_book(lines, "de-DE"))
     text = "\n".join(page.extract_text() or "" for page in reader.pages)
-    assert any(line.rstrip().endswith("-") for line in text.splitlines())
+    # the break is shown as U+2010 HYPHEN
+    assert any(line.rstrip().endswith(("-", "\u2010")) for line in text.splitlines())
 
 
 def test_url_fetcher_refuses_outside_files(weasy, tmp_path, respx_mock):
