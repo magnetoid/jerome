@@ -19,6 +19,7 @@ from jerome.errors import (
     NotFound,
     UnknownModelPrice,
     UnsupportedDocumentError,
+    UnsupportedLanguagePair,
 )
 
 INTERNAL = "error: internal error"
@@ -31,6 +32,7 @@ _CODES: dict[type[Exception], str] = {
     UnsupportedDocumentError: "invalid",
     UnknownModelPrice: "invalid",
     InvalidSetting: "invalid",
+    UnsupportedLanguagePair: "invalid",
 }
 
 

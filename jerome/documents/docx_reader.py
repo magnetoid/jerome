@@ -15,11 +15,11 @@ from jerome.documents.docx_xml import (
     read_package,
 )
 from jerome.documents.model import (
-    PLACEHOLDER,
     BlockKind,
     ParsedBlock,
     ParsedBook,
     ParsedChapter,
+    title_text,
 )
 from jerome.errors import UnsupportedDocumentError
 
@@ -199,7 +199,7 @@ def _split_at_headings(body: list[tuple[ParsedBlock, int | None]]) -> list[Parse
     chapters: list[ParsedChapter] = []
     for block, level in body:
         if level == 0:
-            chapters.append(_chapter(" ".join(block.text.replace(PLACEHOLDER, " ").split()), block))
+            chapters.append(_chapter(title_text(block.text), block))
         elif not chapters:
             chapters.append(_chapter(FRONT_MATTER_TITLE, block))
         chapters[-1].blocks.append(block)

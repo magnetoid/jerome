@@ -30,6 +30,7 @@ def row(key, value=None, secret=None):
 def test_key_lists():
     assert RUNTIME_KEYS == (
         "models.ai",
+        "models.translate",
         "prices",
         "text_daily_cost_cap",
         "text_rpm",
@@ -262,3 +263,78 @@ def test_urls_reject_embedded_credentials():
             "models.ai",
             {"provider": "openai_compat", "model": "m", "base_url": "https://u:p@h.org/v1"},
         )
+
+
+def test_models_translate_validates_like_ai():
+    good = {"provider": "anthropic", "model": " m ", "effort": "high"}
+    assert validate("models.translate", good) == {
+        "provider": "anthropic",
+        "model": "m",
+        "effort": "high",
+    }
+    bad = [
+        "x",
+        {"provider": "openai_compat", "model": "m"},
+        {"provider": "anthropic", "model": "m", "api_key": "k"},
+        {"provider": "anthropic", "model": ""},
+        {"provider": "anthropic", "model": "m", "extra": 1},
+    ]
+    for value in bad:
+        with pytest.raises(InvalidSetting) as exc:
+            validate("models.translate", value)
+        assert "models.ai" not in str(exc.value)
+    with pytest.raises(InvalidSetting, match="models.translate must be an object"):
+        validate("models.translate", [])
+    with pytest.raises(InvalidSetting, match="models.translate cannot hold an API key"):
+        validate("models.translate", {"provider": "anthropic", "model": "m", "api_key": "k"})
+
+
+def test_app_value_for_translate_overrides_env_and_keeps_ai():
+    base = Settings(
+        _env_file=None,
+        models={
+            "ai": {"provider": "anthropic", "model": "a"},
+            "translate": {"provider": "anthropic", "model": "env-t"},
+        },
+    )
+    eff = overlay(base, [], None)
+    assert eff.meta["models.translate"].source == "environment"
+    assert eff.meta["models.ai"].source == "environment"
+    new = {"provider": "anthropic", "model": "claude-sonnet-5-5"}
+    eff = overlay(base, [row("models.translate", new)], None)
+    assert eff.settings.models["translate"]["model"] == "claude-sonnet-5-5"
+    assert eff.settings.models["ai"]["model"] == "a"
+    assert eff.meta["models.translate"].source == "app"
+    assert eff.meta["models.ai"].source == "environment"
+    assert value_of(eff.settings, "models.translate") == new
+    default = overlay(Settings(_env_file=None), [], None)
+    assert default.meta["models.translate"].source == "default"
+    assert value_of(default.settings, "models.translate")["model"] == "claude-opus-5-5"
+
+
+def test_openai_compat_key_injected_for_translate():
+    box = SecretBox(Fernet.generate_key().decode())
+    base = Settings(_env_file=None)
+    compat = {"provider": "openai_compat", "model": "m", "base_url": "http://llm:1"}
+    eff = overlay(
+        base,
+        [
+            row("models.ai", compat),
+            row("models.translate", compat),
+            row("openai_compat_api_key", secret=box.encrypt("k1")),
+        ],
+        box,
+    )
+    assert eff.settings.models["ai"]["api_key"] == "k1"
+    assert eff.settings.models["translate"]["api_key"] == "k1"
+    assert "api_key" not in value_of(eff.settings, "models.translate")
+    only_t = overlay(
+        base,
+        [
+            row("models.translate", compat),
+            row("openai_compat_api_key", secret=box.encrypt("k1")),
+        ],
+        box,
+    )
+    assert only_t.settings.models["translate"]["api_key"] == "k1"
+    assert "api_key" not in only_t.settings.models["ai"]

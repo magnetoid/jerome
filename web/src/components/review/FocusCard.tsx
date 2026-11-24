@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  canAccept, canEdit, canReject, resultText, RULE_LABELS, SOURCE_LABELS, stateLabel,
+  categoryLabel, canAccept, canEdit, canReject, resultText, RULE_LABELS, SOURCE_LABELS, stateLabel,
   type Suggestion,
 } from "@/lib/review";
 import { cn } from "@/lib/utils";
@@ -13,6 +13,8 @@ interface Props {
   s: Suggestion;
   /** The mark that took its place in the text; null when it is marked itself. */
   hiddenBy: Suggestion | null;
+  /** The source paragraph on a translated book. */
+  source?: string | null;
   editing: boolean;
   busy: boolean;
   canUndo: boolean;
@@ -109,8 +111,14 @@ export default function FocusCard(p: Props) {
       className="sticky bottom-4 z-[5] mt-2 mb-2 space-y-3 rounded-lg border bg-card p-4 shadow-md outline-none md:mr-[15.5rem]"
     >
       <Change s={s} />
+      {p.source != null && (
+        <div aria-label="Original paragraph" className="rounded-md bg-muted/50 p-2 text-sm">
+          <span className="font-medium">Original: </span>
+          <span className="text-muted-foreground">{p.source}</span>
+        </div>
+      )}
       <div className="flex flex-wrap gap-1.5">
-        <Badge variant="secondary">{s.category}</Badge>
+        <Badge variant="secondary">{categoryLabel(s.category)}</Badge>
         <Badge variant="outline">{s.severity}</Badge>
         <Badge variant="outline">{SOURCE_LABELS[s.source] ?? s.source}</Badge>
       </div>

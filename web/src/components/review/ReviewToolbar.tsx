@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { NATIVE_SELECT } from "@/components/NativeSelect";
 import type { ChapterSummary } from "@/lib/jobs";
-import { CATEGORIES, SEVERITIES, VIEWS, type Filters, type View } from "@/lib/review";
+import { categoryLabel, CATEGORIES, SEVERITIES, VIEWS, type Filters, type View } from "@/lib/review";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -57,7 +57,7 @@ export default function ReviewToolbar(p: Props) {
             onChange={(e) => p.onFilters({ ...p.filters, category: e.target.value })}
           >
             <option value="">All categories</option>
-            {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+            {CATEGORIES.map((c) => <option key={c} value={c}>{categoryLabel(c)}</option>)}
           </select>
         </Field>
         <Field id="review-severity" label="Severity">

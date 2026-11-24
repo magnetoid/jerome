@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from jerome.core.books import get_book
 from jerome.core.suggestions import decide, lock_blocks, record_editor_change
+from jerome.core.translation import ensure_not_source
 from jerome.documents.docx_review import (
     BOOKMARK_PREFIX,
     PendingRevision,
@@ -831,6 +832,7 @@ def _is_conflict(
 
 
 def import_review(session: Session, book_id: int, data: bytes, actor: str) -> ReviewImportReport:
+    ensure_not_source(session, book_id)
     get_book(session, book_id)
     doc = _read(data)
     rx = _export_for(session, book_id, doc.properties)

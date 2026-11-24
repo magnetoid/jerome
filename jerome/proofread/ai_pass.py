@@ -15,6 +15,7 @@ from jerome.types import BlockText, Candidate, Category, Severity, Source, Style
 class Chunk:
     blocks: list[BlockText]
     context: BlockText | None
+    sources: dict[int, str] | None = None  # block id -> its source paragraph (translated books)
 
 
 @dataclass
@@ -24,35 +25,46 @@ class AiPassResult:
     result: CompletionResult
 
 
-_ITEM_PROPERTIES = {
-    "block_id": {"type": "integer"},
-    "original": {"type": "string"},
-    "replacement": {"type": "string"},
-    "category": {"type": "string", "enum": [c.value for c in Category]},
-    "severity": {"type": "string", "enum": [s.value for s in Severity]},
-    "explanation": {"type": "string"},
-    "occurrence": {
-        "type": "integer",
-        "description": "1-based index of the occurrence of original within the block.",
-    },
-}
+def _item_properties(categories: list[str]) -> dict:
+    return {
+        "block_id": {"type": "integer"},
+        "original": {"type": "string"},
+        "replacement": {"type": "string"},
+        "category": {"type": "string", "enum": categories},
+        "severity": {"type": "string", "enum": [s.value for s in Severity]},
+        "explanation": {"type": "string"},
+        "occurrence": {
+            "type": "integer",
+            "description": "1-based index of the occurrence of original within the block.",
+        },
+    }
 
-SUGGESTIONS_SCHEMA: dict = {
-    "type": "object",
-    "properties": {
-        "suggestions": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": _ITEM_PROPERTIES,
-                "required": list(_ITEM_PROPERTIES),
-                "additionalProperties": False,
-            },
-        }
-    },
-    "required": ["suggestions"],
-    "additionalProperties": False,
-}
+
+def suggestions_schema(translated: bool) -> dict:
+    """The reply schema. ``translation`` is a category only for a translated book's chunk
+    (one with ``sources``), so a proofread-only book's request is what it always was."""
+    categories = [c.value for c in Category if translated or c != Category.TRANSLATION]
+    properties = _item_properties(categories)
+    return {
+        "type": "object",
+        "properties": {
+            "suggestions": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": properties,
+                    "required": list(properties),
+                    "additionalProperties": False,
+                },
+            }
+        },
+        "required": ["suggestions"],
+        "additionalProperties": False,
+    }
+
+
+SUGGESTIONS_SCHEMA: dict = suggestions_schema(translated=False)  # a proofread-only book's
+TRANSLATED_SUGGESTIONS_SCHEMA: dict = suggestions_schema(translated=True)
 
 
 def chunk_blocks(blocks: Sequence[BlockText], target_words: int = 2500) -> list[Chunk]:
@@ -92,6 +104,14 @@ def _style_text(style: StyleSheet) -> str:
     return f"{heading}:\n" + json.dumps(sheet, ensure_ascii=False, sort_keys=True, indent=2)
 
 
+def _translation_check(style: StyleSheet) -> str:
+    return (
+        resources.files("jerome.proofread")
+        .joinpath("prompts", f"translation_check_{style.language}.md")
+        .read_text(encoding="utf-8")
+    )
+
+
 _REMINDER = (
     "Reminder: U+FFFC marks an inline object. It must never appear in `original` or "
     "`replacement`. Only propose corrections for the <block> elements above."
@@ -103,13 +123,21 @@ def build_request(style: StyleSheet, chunk: Chunk) -> tuple[list[SystemPart], st
         SystemPart(_instructions(style), cache=True),
         SystemPart(_style_text(style), cache=True),
     ]
+    if chunk.sources is not None:
+        system.append(SystemPart(_translation_check(style), cache=True))
+    sources = chunk.sources or {}
     parts: list[str] = []
     if chunk.context is not None:
         parts.append(
             f'<context_block id="{chunk.context.id}" read_only="true">\n'
             f"{chunk.context.text}\n</context_block>"
         )
-    parts.extend(f'<block id="{b.id}">\n{b.text}\n</block>' for b in chunk.blocks)
+    for b in chunk.blocks:
+        if b.id in sources:
+            parts.append(
+                f'<source_block for="{b.id}" read_only="true">\n{sources[b.id]}\n</source_block>'
+            )
+        parts.append(f'<block id="{b.id}">\n{b.text}\n</block>')
     parts.append(_REMINDER)
     return system, "\n\n".join(parts)
 
@@ -301,10 +329,18 @@ def run_ai_pass(
 ) -> AiPassResult:
     system, user = build_request(style, chunk)
     result = provider.complete(
-        model=model, system=system, user=user, schema=SUGGESTIONS_SCHEMA, effort=effort
+        model=model,
+        system=system,
+        user=user,
+        schema=TRANSLATED_SUGGESTIONS_SCHEMA if chunk.sources is not None else SUGGESTIONS_SCHEMA,
+        effort=effort,
     )
     try:
         candidates, dropped = parse_suggestions(result.data, chunk)
+        if chunk.sources is None:  # nothing to compare against: a translation flag is unfounded
+            kept = [c for c in candidates if c.category != Category.TRANSLATION]
+            dropped += len(candidates) - len(kept)
+            candidates = kept
     except ModelOutputError as exc:  # the call was billed even though its output is unusable
         raise ModelOutputError(
             str(exc), usage=result.usage, model=result.model, provider=result.provider

@@ -4,12 +4,13 @@ import FocusCard from "./FocusCard";
 import { aiSug, sug } from "./fixtures";
 import type { Suggestion } from "@/lib/review";
 
-function renderCard(hiddenBy: Suggestion | null) {
+function renderCard(hiddenBy: Suggestion | null, source?: string | null) {
   const noop = vi.fn();
   return render(
     <FocusCard
       s={sug({ id: 2, start: 4, end: 9, original: "h cat", replacement: "h dog" })}
       hiddenBy={hiddenBy}
+      source={source}
       editing={false}
       busy={false}
       canUndo={false}
@@ -41,5 +42,17 @@ describe("FocusCard 'not marked' note (R29)", () => {
   it("names a rejected suggestion", () => {
     renderCard(sug({ id: 1, status: "rejected", decided_by: "bob@example.com" }));
     expect(screen.getByText("Not marked in the text: it overlaps a rejected suggestion shown there.")).toBeInTheDocument();
+  });
+});
+
+describe("FocusCard source paragraph", () => {
+  it("shows the source paragraph of a translated block", () => {
+    renderCard(null, "Die Katze sass.");
+    expect(screen.getByLabelText("Original paragraph")).toHaveTextContent("Die Katze sass.");
+  });
+
+  it("shows no original without a source", () => {
+    renderCard(null, null);
+    expect(screen.queryByLabelText("Original paragraph")).toBeNull();
   });
 });

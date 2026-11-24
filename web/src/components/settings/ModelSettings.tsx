@@ -7,7 +7,15 @@ import { SettingFrame, useSettingActions, type SettingRow } from "./shared";
 type Ai = { provider?: string; model?: string; effort?: string; base_url?: string };
 const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
 
-export default function ModelSettings({ row }: { row: SettingRow }) {
+export default function ModelSettings({
+  row,
+  label,
+  idPrefix,
+}: {
+  row: SettingRow;
+  label: string;
+  idPrefix: string;
+}) {
   const { save, reset } = useSettingActions();
   const v = (row.value ?? {}) as Ai;
   const [provider, setProvider] = useState(v.provider ?? "anthropic");
@@ -24,7 +32,7 @@ export default function ModelSettings({ row }: { row: SettingRow }) {
 
   return (
     <SettingFrame
-      label="AI model"
+      label={label}
       row={row}
       busy={save.isPending || reset.isPending}
       onSave={onSave}
@@ -32,9 +40,9 @@ export default function ModelSettings({ row }: { row: SettingRow }) {
     >
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="grid gap-2">
-          <Label htmlFor="ai-provider">Provider</Label>
+          <Label htmlFor={`${idPrefix}-provider`}>Provider</Label>
           <select
-            id="ai-provider"
+            id={`${idPrefix}-provider`}
             className={NATIVE_SELECT}
             value={provider}
             onChange={(e) => setProvider(e.target.value)}
@@ -44,13 +52,13 @@ export default function ModelSettings({ row }: { row: SettingRow }) {
           </select>
         </div>
         <div className="grid gap-2">
-          <Label htmlFor="ai-model">Model</Label>
-          <Input id="ai-model" value={model} onChange={(e) => setModel(e.target.value)} />
+          <Label htmlFor={`${idPrefix}-model`}>Model</Label>
+          <Input id={`${idPrefix}-model`} value={model} onChange={(e) => setModel(e.target.value)} />
         </div>
         <div className="grid gap-2">
-          <Label htmlFor="ai-effort">Effort</Label>
+          <Label htmlFor={`${idPrefix}-effort`}>Effort</Label>
           <select
-            id="ai-effort"
+            id={`${idPrefix}-effort`}
             className={NATIVE_SELECT}
             value={effort}
             onChange={(e) => setEffort(e.target.value)}
@@ -65,9 +73,9 @@ export default function ModelSettings({ row }: { row: SettingRow }) {
         </div>
         {provider === "openai_compat" && (
           <div className="grid gap-2">
-            <Label htmlFor="ai-base-url">Base URL</Label>
+            <Label htmlFor={`${idPrefix}-base-url`}>Base URL</Label>
             <Input
-              id="ai-base-url"
+              id={`${idPrefix}-base-url`}
               type="url"
               placeholder="https://example.com/v1"
               value={baseUrl}

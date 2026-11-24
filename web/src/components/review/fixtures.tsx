@@ -21,8 +21,9 @@ export const aiSug = (over: Partial<Suggestion> = {}) =>
 
 export function block(
   id: number, ordinal: number, original: string, suggestions: Suggestion[] = [], kind = "paragraph",
+  source: string | null = null,
 ): ReviewBlock {
-  return { id, ordinal, kind, original, current: original, suggestions };
+  return { id, ordinal, kind, original, current: original, suggestions, source, translation_status: source === null ? null : "done" };
 }
 
 export function page(blocks: ReviewBlock[], total = blocks.length, offset = 0, chapter_id = 11): ReviewPageData {

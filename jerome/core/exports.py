@@ -1,6 +1,8 @@
 """Exports: apply the recorded decisions to the original file.
 
-Only blocks with accepted or edited suggestions are touched.
+Only blocks with accepted or edited suggestions are touched. A translated book's exports are
+made on its translated base (``translation.original_for``): the source book's original file
+with every block translated.
 """
 
 import re
@@ -14,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from jerome.core.books import get_book
 from jerome.core.suggestions import is_auto_applied, spans_overlap
+from jerome.core.translation import ensure_not_source, original_for
 from jerome.documents.changes import Change
 from jerome.documents.docx_writer import DocxWriteOptions, write_docx
 from jerome.documents.epub_writer import write_epub
@@ -165,7 +168,7 @@ def _review_copy(
         bookmarks,
         {"jerome_review_export_id": str(rx.id)},
     )
-    data = write_docx(storage.read_original(book.id), changes, options)
+    data = write_docx(original_for(session, storage, book), changes, options)
     filename = f"{_safe_title(book)}-review-{rx.id}.docx"
     storage.save_export(book.id, filename, data)
     return ExportFile(filename, DOCX_MEDIA_TYPE, data)
@@ -181,6 +184,7 @@ def export_book(
     actor: str | None = None,
     now: datetime | None = None,
 ) -> ExportFile:
+    ensure_not_source(session, book_id)
     book = get_book(session, book_id)
     wanted = {
         "epub-clean": "epub",
@@ -196,7 +200,7 @@ def export_book(
         )
     if fmt == "docx-review":
         return _review_copy(session, storage, book, filters, actor, now)
-    original = storage.read_original(book_id)
+    original = original_for(session, storage, book)
     changes = recorded_changes(session, book_id)
     if fmt == "epub-clean":
         data, media_type = write_epub(original, changes), EPUB_MEDIA_TYPE

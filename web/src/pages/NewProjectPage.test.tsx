@@ -184,4 +184,59 @@ describe("NewProjectPage", () => {
     );
     expect(callsTo(f, "POST /v1/books")).toHaveLength(1);
   });
+
+  it("sends work=translate with the source and target variants", async () => {
+    const user = userEvent.setup();
+    const { f } = setup();
+    await choose(user);
+    await user.click(screen.getByRole("radio", { name: "Translate + proofread" }));
+    await user.selectOptions(screen.getByLabelText("From"), "en-US");
+    await user.selectOptions(screen.getByLabelText("To"), "de-CH");
+    await user.type(screen.getByLabelText(/Translated title/), "Mein Roman");
+    await user.click(screen.getByRole("button", { name: "House style" }));
+    expect(screen.getByLabelText("Quote style")).toHaveValue("«»‹›");
+    await user.click(screen.getByRole("button", { name: "Create project" }));
+    await waitFor(() => expect(screen.getByTestId("where")).toHaveTextContent("/projects/7"));
+    const body = callsTo(f, "POST /v1/books")[0][1]!.body as FormData;
+    expect(body.get("work")).toBe("translate");
+    expect(body.get("variant")).toBe("en-US");
+    expect(body.get("target_variant")).toBe("de-CH");
+    expect(body.get("translated_title")).toBe("Mein Roman");
+    expect(body.get("title")).toBe("My Novel");
+    // The quote style is the target language's default, so there is nothing to PUT.
+    expect(callsTo(f, "PUT /v1/books/7/style-sheet")).toHaveLength(0);
+  });
+
+  it("proofread only sends work=proofread and no translation fields", async () => {
+    const user = userEvent.setup();
+    const { f } = setup();
+    expect(screen.getByRole("radio", { name: "Proofread only" })).toBeChecked();
+    expect(screen.queryByLabelText("To")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Translated title/)).not.toBeInTheDocument();
+    await choose(user);
+    await user.click(screen.getByRole("button", { name: "Create project" }));
+    await waitFor(() => expect(screen.getByTestId("where")).toHaveTextContent("/projects/7"));
+    const body = callsTo(f, "POST /v1/books")[0][1]!.body as FormData;
+    expect(body.get("work")).toBe("proofread");
+    expect(body.has("target_variant")).toBe(false);
+    expect(body.has("translated_title")).toBe(false);
+  });
+
+  it("To lists only the other language", async () => {
+    const user = userEvent.setup();
+    setup();
+    await user.click(screen.getByRole("radio", { name: "Translate + proofread" }));
+    const options = () =>
+      Array.from((screen.getByLabelText("To") as HTMLSelectElement).options).map((o) => o.value);
+    expect(screen.getByLabelText("From")).toHaveValue("en-GB");
+    expect(options()).toEqual(["de-DE", "de-AT", "de-CH"]);
+    expect(screen.getByLabelText("To")).toHaveValue("de-DE");
+    await user.selectOptions(screen.getByLabelText("From"), "de-AT");
+    expect(options()).toEqual(["en-US", "en-GB"]);
+    expect(screen.getByLabelText("To")).toHaveValue("en-GB");
+    // A target of the other language survives a change of source variant.
+    await user.selectOptions(screen.getByLabelText("To"), "en-US");
+    await user.selectOptions(screen.getByLabelText("From"), "de-CH");
+    expect(screen.getByLabelText("To")).toHaveValue("en-US");
+  });
 });

@@ -5,6 +5,7 @@ from jerome.models.base import ModelOutputError, ModelRefusal
 from jerome.models.fake import FakeProvider
 from jerome.proofread.ai_pass import (
     SUGGESTIONS_SCHEMA,
+    TRANSLATED_SUGGESTIONS_SCHEMA,
     Chunk,
     build_request,
     chunk_blocks,
@@ -119,8 +120,11 @@ def test_schema_strict_and_no_numeric_constraints():
                 walk(v)
 
     walk(SUGGESTIONS_SCHEMA)
+    walk(TRANSLATED_SUGGESTIONS_SCHEMA)
     props = SUGGESTIONS_SCHEMA["properties"]["suggestions"]["items"]["properties"]
-    assert set(props["category"]["enum"]) == {c.value for c in Category}
+    assert set(props["category"]["enum"]) == {c.value for c in Category} - {"translation"}
+    translated = TRANSLATED_SUGGESTIONS_SCHEMA["properties"]["suggestions"]["items"]["properties"]
+    assert set(translated["category"]["enum"]) == {c.value for c in Category}
     assert set(props["severity"]["enum"]) == {s.value for s in Severity}
     assert "1-based" in props["occurrence"]["description"]
 

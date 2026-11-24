@@ -1,5 +1,5 @@
 from decimal import Decimal
-from typing import Annotated
+from typing import Annotated, Literal
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends
@@ -9,7 +9,7 @@ from sqlalchemy import select
 from jerome.api.deps import SessionDep, current_actor, get_registry
 from jerome.core import books
 from jerome.jobs import service
-from jerome.jobs.estimate import ALL_PASSES, PassName, estimate_job
+from jerome.jobs.estimate import ALL_PASSES, PassName, estimate_job, estimate_translation
 from jerome.models import Registry
 from jerome.orm import Job
 
@@ -21,12 +21,16 @@ MaxCost = Annotated[Decimal, Field(gt=0, max_digits=12, decimal_places=4)]
 
 
 class EstimateIn(BaseModel):
+    """``passes`` and ``chapters`` are for proofreading; a translation covers every pending
+    block and ignores them."""
+
+    type: Literal["proofread", "translate"] = "proofread"
     passes: Passes = list(ALL_PASSES)
     chapters: Annotated[list[int], Field(min_length=1)] | None = None
 
 
 class JobIn(EstimateIn):
-    type: Annotated[str, Field(pattern="^proofread$")]
+    type: Annotated[str, Field(pattern="^(proofread|translate)$")]
     max_cost: MaxCost
     callback_url: str | None = None
 
@@ -79,6 +83,8 @@ def _job_json(job: Job) -> dict:
 
 @router.post("/books/{book_id}/estimate")
 def estimate(book_id: int, body: EstimateIn, session: SessionDep, registry: RegistryDep):
+    if body.type == "translate":
+        return estimate_translation(session, registry, book_id).to_json()
     return estimate_job(
         session, registry, book_id, passes=body.passes, chapter_ids=body.chapters
     ).to_json()
@@ -99,6 +105,16 @@ def create(
     registry: RegistryDep,
     actor: Annotated[str, Depends(current_actor)],
 ):
+    if body.type == "translate":
+        job = service.create_translation_job(
+            session,
+            registry,
+            book_id,
+            max_cost=body.max_cost,
+            callback_url=body.callback_url,
+            actor=actor,
+        )
+        return _job_json(job)
     job = service.create_job(
         session,
         registry,

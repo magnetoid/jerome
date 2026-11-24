@@ -159,4 +159,25 @@ describe("ProjectsPage", () => {
     await act(() => vi.advanceTimersByTimeAsync(10_000));
     expect(listCalls(f)).toBe(1);
   });
+
+  it("shows the language pair and the Translating stage", async () => {
+    const translate = { work: "translate", source_variant: "en-GB", variant: "de-DE" };
+    listRoutes([
+      project({ id: 6, title: "Running Translation", stage: "translating", active_job: job(), translation: { pending: 3, done: 9 }, ...translate }),
+      project({ id: 7, title: "Waiting Translation", stage: "set_up", translation: { pending: 12 }, ...translate }),
+      project({ id: 8, title: "Finished Translation", stage: "translated", translation: { done: 12 }, ...translate }),
+    ]);
+    renderApp(<ProjectsPage />);
+    const table = within(await screen.findByRole("table"));
+    const row = table.getByText("Running Translation").closest("tr")!;
+    const cells = within(row).getAllByRole("cell");
+    expect(cells[1]).toHaveTextContent(/^en-GB → de-DE$/);
+    expect(within(cells[2]).getByText("Translating")).toBeInTheDocument();
+    expect(within(cells[4]).getByRole("link")).toHaveTextContent("View progress");
+    const waiting = within(table.getByText("Waiting Translation").closest("tr")!).getAllByRole("cell");
+    expect(within(waiting[4]).getByRole("link")).toHaveTextContent("Start translation");
+    const finished = within(table.getByText("Finished Translation").closest("tr")!).getAllByRole("cell");
+    expect(within(finished[2]).getByText("Translated")).toBeInTheDocument();
+    expect(within(finished[4]).getByRole("link")).toHaveTextContent("Start proofreading");
+  });
 });

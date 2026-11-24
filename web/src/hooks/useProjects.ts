@@ -15,7 +15,14 @@ export interface Project {
   id: number | string;
   title: string;
   format: string;
+  /** The book's language: the target language of a translation. */
   variant: string;
+  /** Absent from older servers; treated as "proofread". */
+  work?: "proofread" | "translate";
+  /** The source language of a translation, else null. */
+  source_variant?: string | null;
+  /** Blocks per translation status ("pending", "done", "flagged", "kept") of a translation. */
+  translation?: Record<string, number> | null;
   stage: Stage;
   open_count: number;
   auto_applied_count: number;

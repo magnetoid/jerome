@@ -86,6 +86,9 @@ def get_policy(session: Session, book_id: int) -> AutoApplyPolicy:
 
 
 def set_policy(session: Session, book_id: int, p: AutoApplyPolicy) -> AutoApplyPolicy:
+    from jerome.core.translation import ensure_not_source  # it imports this module
+
+    ensure_not_source(session, book_id)
     _book(session, book_id).auto_apply = policy_to_json(p)
     session.flush()
     return p

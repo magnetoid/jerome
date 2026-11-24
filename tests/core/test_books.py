@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from io import BytesIO
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 
 from jerome.core.auto_apply import DEFAULT_POLICY, OFF_POLICY, get_policy, policy_to_json
 from jerome.core.books import (
@@ -22,7 +23,7 @@ from jerome.documents.docx_review import read_reviewed_docx
 from jerome.documents.docx_writer import DocxWriteOptions, write_docx
 from jerome.documents.epub_reader import read_epub
 from jerome.errors import NotFound, UnsupportedDocumentError
-from jerome.orm import Block, Book, Chapter, Segment
+from jerome.orm import Block, Book, Chapter, Segment, Suggestion
 from jerome.proofread.consistency import consistency_candidates
 from tests.fixtures.docx_builders import make_docx
 from tests.fixtures.epub_builders import make_epub
@@ -348,3 +349,55 @@ def test_detect_quote_style_pairs_and_straight_quotes():
     # a German closing “ is not an opener
     german = [f"Er sagte „hallo{n}“ und ging." for n in range(10)]
     assert detect_quote_style(german, "en-US") == "„“‚‘"
+
+
+def test_book_work_defaults_to_proofread(session, book):
+    session.refresh(book)
+    assert book.work == "proofread" and book.source_book_id is None and book.is_source is False
+    assert book.translated_title is None
+
+
+def test_book_work_rejects_unknown_value(session, book_factory):
+    with pytest.raises(IntegrityError):
+        book_factory(work="polish")
+
+
+def test_translation_status_rejects_unknown_value(session, book):
+    blk = book.chapters[0].blocks[0]
+    blk.translation_status = "maybe"
+    with pytest.raises(IntegrityError):
+        session.flush()
+
+
+def test_translation_columns_round_trip(session, book_factory, add_chapter):
+    src = book_factory()
+    add_chapter(src, 0, ["Source one."])
+    tr = book_factory(work="translate", source_book_id=src.id, translated_title="Titel")
+    add_chapter(tr, 0, ["Quelle eins."])
+    blk = tr.chapters[0].blocks[0]
+    blk.source_block_id = src.chapters[0].blocks[0].id
+    blk.translation_status = "done"
+    blk.placeholders = [1, 0]
+    session.flush()
+    session.refresh(blk)
+    assert blk.placeholders == [1, 0] and blk.translation_status == "done"
+    assert tr.work == "translate" and tr.source_book_id == src.id
+
+
+def test_translation_category_is_allowed(session, book):
+    blk = book.chapters[0].blocks[0]
+    session.add(
+        Suggestion(
+            book_id=book.id,
+            block_id=blk.id,
+            start=0,
+            end=1,
+            original="S",
+            replacement="s",
+            category="translation",
+            severity="low",
+            source="model",
+            explanation="x",
+        )
+    )
+    session.flush()

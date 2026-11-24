@@ -6,10 +6,19 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from jerome.core.books import get_book
+from jerome.core.translation import ensure_not_source
 from jerome.errors import Conflict, NotFound
-from jerome.jobs.estimate import ALL_PASSES, PassName, estimate_job, included_chapter_ids
+from jerome.jobs.estimate import (
+    ALL_PASSES,
+    PassName,
+    estimate_job,
+    estimate_translation,
+    included_chapter_ids,
+    pending_chapter_ids,
+)
 from jerome.models import Registry
-from jerome.orm import ACTIVE_JOB_STATUSES, Job, JobTask
+from jerome.orm import ACTIVE_JOB_STATUSES, Block, Job, JobTask
 
 RESUMABLE = ("cancelled", "failed", "paused_cost_cap")
 
@@ -37,8 +46,8 @@ def _active_job_id(session: Session, book_id: int, *, exclude: int | None = None
     return session.scalars(stmt).first()
 
 
-def _already_active(book_id: int) -> Conflict:
-    return Conflict(f"book {book_id} already has an active proofreading job")
+def _already_active(book_id: int, what: str = "an active proofreading job") -> Conflict:
+    return Conflict(f"book {book_id} already has {what}")
 
 
 def create_job(
@@ -52,6 +61,9 @@ def create_job(
     callback_url: str | None,
     actor: str,
 ) -> Job:
+    ensure_not_source(session, book_id)
+    if get_book(session, book_id).work == "translate" and _has_pending(session, book_id):
+        raise Conflict("translate the book before proofreading it")
     if _active_job_id(session, book_id) is not None:
         raise _already_active(book_id)
     included = included_chapter_ids(session, book_id, chapter_ids)
@@ -73,13 +85,58 @@ def create_job(
         job.tasks.append(JobTask(kind="chapter", chapter_id=chapter_id))
     if "consistency" in passes:
         job.tasks.append(JobTask(kind="consistency"))
+    return _add(session, job)
+
+
+def _add(session: Session, job: Job) -> Job:
     try:
         with session.begin_nested():
             session.add(job)
     except IntegrityError as exc:  # lost a race for the one-active-job slot
-        raise _already_active(book_id) from exc
+        what = "an active job" if job.type == "translate" else "an active proofreading job"
+        raise _already_active(job.book_id, what) from exc
     session.refresh(job)
     return job
+
+
+def _has_pending(session: Session, book_id: int) -> bool:
+    stmt = select(Block.id).where(Block.book_id == book_id, Block.translation_status == "pending")
+    return session.scalars(stmt.limit(1)).first() is not None
+
+
+def create_translation_job(
+    session: Session,
+    registry: Registry,
+    book_id: int,
+    *,
+    max_cost: Decimal,
+    callback_url: str | None,
+    actor: str,
+) -> Job:
+    """A job that translates every pending block, one task per chapter that has any."""
+    ensure_not_source(session, book_id)
+    if get_book(session, book_id).work != "translate":
+        raise Conflict(f"book {book_id} is not a translation project")
+    chapters = pending_chapter_ids(session, book_id)
+    if not chapters:
+        raise Conflict(f"book {book_id} has nothing left to translate")
+    if _active_job_id(session, book_id) is not None:
+        raise _already_active(book_id, "an active job")
+    estimate = estimate_translation(session, registry, book_id)
+    job = Job(
+        book_id=book_id,
+        type="translate",
+        status="queued",
+        passes=["translate"],
+        chapter_ids=None,
+        max_cost=max_cost,
+        estimate=estimate.to_json(),
+        callback_url=callback_url,
+        created_by=actor,
+    )
+    for chapter_id in chapters:
+        job.tasks.append(JobTask(kind="chapter", chapter_id=chapter_id))
+    return _add(session, job)
 
 
 def cancel_job(session: Session, job_id: int) -> Job:

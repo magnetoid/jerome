@@ -19,30 +19,20 @@ Block offsets map back to raw node text through the pieces ``element_text`` give
   (it may be a link target).
 """
 
-import codecs
-import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
 from lxml import etree
-from lxml import html as lxml_html
 
 from jerome.documents.changes import NOT_XML, Change, validate_changes
 from jerome.documents.docx_xml import ParagraphText, write_package
 from jerome.documents.epub_xml import (
-    ContentDocument,
-    EpubPackage,
     EpubPiece,
-    content_documents,
-    element_text,
-    is_block_text,
-    iter_epub_blocks,
-    parse_content_document,
+    find_blocks,
     read_container,
+    serialize_document,
 )
-from jerome.errors import InvalidChangeError, UnsupportedDocumentError
-
-_XML_WS = " \t\n\r"
+from jerome.errors import InvalidChangeError
 
 # (element, "text" | "tail", raw_start, raw_end, new text)
 _Edit = tuple[etree._Element, str, int, int, str]
@@ -56,7 +46,9 @@ def write_epub(original: bytes, changes: Mapping[str, Sequence[Change]]) -> byte
     ``validate_changes`` refuses or whose replacement is not XML text.
     """
     package = read_container(original)
-    blocks, docs = _find_blocks(package, set(changes))
+    blocks, docs = find_blocks(package, set(changes))
+    if missing := changes.keys() - blocks.keys():
+        raise InvalidChangeError(f"No block with key {min(missing)!r}")
     ordered = {key: _validate(blocks[key][1], key, cs) for key, cs in changes.items()}
     dirty: set[str] = set()
     for key, cs in ordered.items():
@@ -65,28 +57,8 @@ def write_epub(original: bytes, changes: Mapping[str, Sequence[Change]]) -> byte
             _patch(element, text.pieces, cs)  # type: ignore[arg-type]
             dirty.add(key.partition("#")[0])
     for path in dirty:  # only these are re-serialized
-        package.files[path] = _serialize(docs[path], package.files[path], path)
+        package.files[path] = serialize_document(docs[path], package.files[path], path)
     return write_package(package.files, original)
-
-
-def _find_blocks(
-    package: EpubPackage, keys: set[str]
-) -> tuple[dict[str, tuple[etree._Element, ParagraphText]], dict[str, ContentDocument]]:
-    """The ``(element, text)`` of each block in ``keys``, and the documents holding them."""
-    paths = {key.partition("#")[0] for key in keys}
-    docs: dict[str, ContentDocument] = {}
-    blocks: dict[str, tuple[etree._Element, ParagraphText]] = {}
-    for item in content_documents(package):
-        if item.path not in paths or item.path in docs:
-            continue
-        doc = docs[item.path] = parse_content_document(package.files[item.path], item.path)
-        for n, el in iter_epub_blocks(doc.root):
-            key = f"{item.path}#{n}"
-            if key in keys and is_block_text((text := element_text(el)).text):
-                blocks[key] = (el, text)
-    if missing := keys - blocks.keys():
-        raise InvalidChangeError(f"No block with key {min(missing)!r}")
-    return blocks, docs
 
 
 def _validate(text: ParagraphText, key: str, changes: Sequence[Change]) -> list[Change]:
@@ -253,103 +225,3 @@ def _remove(el: etree._Element) -> None:
         else:
             parent.text = (parent.text or "") + el.tail
     parent.remove(el)
-
-
-# --- serialization --------------------------------------------------------------------
-
-_BOMS = (
-    (codecs.BOM_UTF8, "utf-8"),
-    (codecs.BOM_UTF16_LE, "utf-16-le"),
-    (codecs.BOM_UTF16_BE, "utf-16-be"),
-)
-_XHTML_NS = "http://www.w3.org/1999/xhtml"
-_VOID = frozenset(
-    "area base br col embed hr img input link meta param source track wbr".split()
-)  # HTML elements that never have content or an end tag
-_COMMENT_OR_PI = re.compile(r"<!--.*?-->|<\?.*?\?>", re.S)
-_DOCTYPE = re.compile("<!DOCTYPE", re.I)
-
-
-def _serialize(doc: ContentDocument, original: bytes, path: str) -> bytes:
-    """The patched document: the original's bytes up to its root element, then the root
-    and what follows it serialized as parsed, then the original's trailing whitespace."""
-    codec = _codec(doc, original, path)
-    if doc.parser == "xml":
-        _keep_end_tags(doc.root)
-    tostring = lxml_html.tostring if doc.parser == "html" else etree.tostring
-    nodes = (doc.root, *doc.root.itersiblings())
-    body = "".join(tostring(node, encoding="unicode") for node in nodes)
-    try:
-        text = original.decode(codec, "surrogateescape")  # a BOM stays, as U+FEFF
-        start, end = _root_start(text), len(text.rstrip(_XML_WS))
-        return (
-            text[:start].encode(codec, "surrogateescape")
-            + body.encode(codec, "xmlcharrefreplace")  # character references if need be
-            + text[max(start, end) :].encode(codec, "surrogateescape")
-        )
-    except UnicodeError as exc:
-        raise UnsupportedDocumentError(f"{path} cannot be written back as {codec}") from exc
-
-
-def _keep_end_tags(root: etree._Element) -> None:
-    """Make empty non-void XHTML elements serialize as ``<a id="n"></a>``, not ``<a/>``.
-
-    Reading systems with an HTML parser read ``<a/>``, ``<div/>`` or ``<script/>`` as a
-    start tag and swallow what follows; some show a page with ``<title/>`` blank. The tree
-    cannot tell how the original wrote them, so every one gets an end tag. Void elements
-    (``<br/>``), and SVG and MathML elements, stay self-closed.
-    """
-    for el in root.iter(etree.Element):
-        if el.text is None and len(el) == 0:
-            name = etree.QName(el)
-            if name.namespace in (_XHTML_NS, None) and name.localname.lower() not in _VOID:
-                el.text = ""
-
-
-def _codec(doc: ContentDocument, original: bytes, path: str) -> str:
-    """The original's encoding: from its BOM, else the one it was parsed with."""
-    for bom, codec in _BOMS:
-        if original.startswith(bom):
-            return codec
-    name = doc.root.getroottree().docinfo.encoding or "utf-8"
-    try:
-        return codecs.lookup(name).name
-    except LookupError as exc:
-        raise UnsupportedDocumentError(f"{path} is in an unknown encoding: {name}") from exc
-
-
-def _root_start(text: str) -> int:
-    """Where the root element starts: after a BOM, and the XML declaration, comments,
-    processing instructions, doctype and whitespace before the root."""
-    pos = 1 if text.startswith("﻿") else 0
-    while True:
-        while pos < len(text) and text[pos] in _XML_WS:
-            pos += 1
-        if m := _COMMENT_OR_PI.match(text, pos):
-            pos = m.end()
-        elif _DOCTYPE.match(text, pos) and (end := _doctype_end(text, pos)):
-            pos = end
-        else:
-            return pos
-
-
-def _doctype_end(text: str, pos: int) -> int | None:
-    """The end of the doctype at ``pos``, or None if it has none. Quoted strings, and
-    comments and processing instructions in the internal subset, may hold ``>`` or ``]``."""
-    i, subset = pos + len("<!DOCTYPE"), False
-    while i < len(text):
-        ch = text[i]
-        if ch in "\"'":
-            i = text.find(ch, i + 1)
-            if i < 0:
-                return None
-        elif subset and (m := _COMMENT_OR_PI.match(text, i)):
-            i = m.end() - 1
-        elif ch == "[":
-            subset = True
-        elif ch == "]":
-            subset = False
-        elif ch == ">" and not subset:
-            return i + 1
-        i += 1
-    return None

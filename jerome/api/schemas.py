@@ -15,6 +15,9 @@ class BookOut(BaseModel):
     local_only: bool
     original_filename: str | None
     created_at: datetime
+    work: Literal["proofread", "translate"]
+    source_book_id: int | None
+    translated_title: str | None
 
 
 class ChapterOut(BaseModel):

@@ -6,7 +6,27 @@ export const FULL_PASSES: Passes = ["languagetool", "ai", "consistency"];
 export const FREE_PASSES: Passes = ["languagetool"];
 
 export function passesLabel(passes: string[]): string {
+  if (passes.includes("translate")) return "Translation";
   return passes.includes("ai") ? "AI + LanguageTool" : "Free check";
+}
+
+/** "Translation" or "Proofreading", for copy that names what a job does. */
+export const jobNoun = (j: { type: string }) => (j.type === "translate" ? "Translation" : "Proofreading");
+
+/** GET /v1/books/{id}/translation. */
+export interface TranslationState {
+  counts: Partial<Record<"pending" | "done" | "flagged" | "kept", number>>;
+  flagged: { block_id: number; chapter_id: number; source: string }[];
+  /** Chapters whose title could not be translated; present only when there are any. */
+  untranslated_titles?: number[];
+}
+
+/** The block a Translate again or Keep original returns. */
+export interface TranslatedBlock {
+  id: number;
+  chapter_id: number;
+  text: string;
+  translation_status: "pending" | "done" | "flagged" | "kept" | null;
 }
 
 export interface JobTask {
@@ -23,6 +43,7 @@ export interface JobTask {
 
 export interface Job {
   id: number;
+  /** "proofread" or "translate". */
   book_id: number;
   type: string;
   status: "queued" | "running" | "paused_cost_cap" | "cancelled" | "failed" | "completed";
@@ -71,6 +92,7 @@ export const chaptersKey = (id: string) => ["chapters", id] as const;
 export const summaryKey = (id: string) => ["chapter-summary", id] as const;
 export const jobsKey = (id: string) => ["jobs", id] as const;
 export const jobKey = (id: number | string) => ["job", String(id)] as const;
+export const translationKey = (id: string) => ["translation", id] as const;
 
 export function detailOf(e: unknown): string {
   return e instanceof ApiError ? e.detail : "Something went wrong. Try again.";

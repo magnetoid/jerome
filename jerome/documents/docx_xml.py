@@ -335,11 +335,11 @@ _DELETED = {qn("w:del"), qn("w:moveFrom")}
 # Containers whose runs are part of the visible text. Everything else at paragraph level
 # holds no visible text: properties, bookmarks, proofErr, comment ranges, and deleted
 # content (w:del, w:moveFrom).
-_TRANSPARENT = {qn(f"w:{tag}") for tag in ("smartTag", "customXml", "ins", "moveTo", "dir", "bdo")}
+TRANSPARENT = {qn(f"w:{tag}") for tag in ("smartTag", "customXml", "ins", "moveTo", "dir", "bdo")}
 # Paragraph-level elements that are one placeholder each.
-_OBJECTS = {qn("w:fldSimple"), qn("m:oMath"), qn("m:oMathPara"), qn("mc:AlternateContent")}
+OBJECTS = {qn("w:fldSimple"), qn("m:oMath"), qn("m:oMathPara"), qn("mc:AlternateContent")}
 # Run children that are one placeholder each.
-_RUN_OBJECTS = {
+_RUNOBJECTS = {
     qn(f"w:{tag}")
     for tag in (
         "tab ptab br cr softHyphen noBreakHyphen sym drawing pict object"
@@ -347,15 +347,15 @@ _RUN_OBJECTS = {
     ).split()
 } | {qn("mc:AlternateContent")}
 
-_TOGGLE_MARKS = {
+TOGGLE_MARKS = {
     qn("w:b"): MarkKind.BOLD,
     qn("w:i"): MarkKind.ITALIC,
     qn("w:smallCaps"): MarkKind.SMALLCAPS,
     qn("w:strike"): MarkKind.STRIKE,
     qn("w:dstrike"): MarkKind.STRIKE,
 }
-_OFF = {"0", "false", "off"}
-_VERT_ALIGN_MARKS = {"superscript": MarkKind.SUPERSCRIPT, "subscript": MarkKind.SUBSCRIPT}
+OFF = {"0", "false", "off"}
+VERT_ALIGN_MARKS = {"superscript": MarkKind.SUPERSCRIPT, "subscript": MarkKind.SUBSCRIPT}
 
 
 @dataclass
@@ -392,13 +392,13 @@ class _Walker:
                 self.deletion(child)
             elif tag == _HYPERLINK:
                 self.hyperlink(child)
-            elif tag in _TRANSPARENT:
+            elif tag in TRANSPARENT:
                 self.walk(child)
             elif tag == _SDT:
                 content = child.find(_SDT_CONTENT)
                 if content is not None:
                     self.walk(content)
-            elif tag in _OBJECTS:
+            elif tag in OBJECTS:
                 self.emit(PLACEHOLDER, child, child)
 
     def insertion(self, ins: etree._Element) -> None:
@@ -407,7 +407,7 @@ class _Walker:
             child.text or "" if child.tag == _T else PLACEHOLDER
             for r in ins.iter(_R)
             for child in r
-            if child.tag == _T or child.tag in _RUN_OBJECTS
+            if child.tag == _T or child.tag in _RUNOBJECTS
         )
         if text:
             at = self.length
@@ -444,7 +444,7 @@ class _Walker:
             elif tag == _T or (self.deleted and tag == _DEL_TEXT):
                 if child.text:
                     self.emit(child.text, r, child)
-            elif tag in _RUN_OBJECTS:
+            elif tag in _RUNOBJECTS:
                 self.emit(PLACEHOLDER, r, child)
         if self.field is not None:
             self.field.last_run = r
@@ -493,14 +493,14 @@ def _run_marks(run: etree._Element) -> list[MarkKind]:
         return []
     kinds = []
     for prop in rpr:
-        if prop.tag in _TOGGLE_MARKS:
-            if prop.get(_VAL) not in _OFF:
-                kinds.append(_TOGGLE_MARKS[prop.tag])
+        if prop.tag in TOGGLE_MARKS:
+            if prop.get(_VAL) not in OFF:
+                kinds.append(TOGGLE_MARKS[prop.tag])
         elif prop.tag == qn("w:u"):
             if prop.get(_VAL) != "none":
                 kinds.append(MarkKind.UNDERLINE)
         elif prop.tag == qn("w:vertAlign"):
-            if kind := _VERT_ALIGN_MARKS.get(prop.get(_VAL)):
+            if kind := VERT_ALIGN_MARKS.get(prop.get(_VAL)):
                 kinds.append(kind)
     return kinds
 
@@ -515,3 +515,91 @@ def merge_marks(marks: list[Mark]) -> list[Mark]:
         else:
             merged.append(Mark(m.start, m.end, m.kind, m.href))
     return sorted(merged, key=lambda m: (m.start, m.end, m.kind))
+
+
+# --- package parts --------------------------------------------------------------------
+
+OFFICE_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+CONTENT_TYPES = "[Content_Types].xml"
+_DECLARATION = b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n'
+
+
+def word_roots(
+    package: Mapping[str, bytes], trees: Mapping[str, etree._ElementTree]
+) -> list[etree._Element]:
+    """Every XML part directly in word/, where revision, bookmark and comment ids live."""
+    roots = []
+    for name, data in package.items():
+        folder, base = posixpath.split(name)
+        if folder == "word" and base.endswith(".xml"):
+            roots.append((trees[name] if name in trees else parse_xml(data, name)).getroot())
+    return roots
+
+
+def next_id(roots: list[etree._Element], tags: tuple[str, ...]) -> int:
+    """One more than the largest w:id on ``tags`` elements (1 when there are none)."""
+    ids = [0]
+    for root in roots:
+        ids += [int_or_zero(el.get(qn("w:id"))) for el in root.iter(*tags)]
+    return max(ids) + 1
+
+
+def int_or_zero(value: str | None) -> int:
+    """An XML attribute as an int, 0 when missing or not a number."""
+    try:
+        return int(value or "")
+    except ValueError:
+        return 0
+
+
+def related_part(
+    package: dict[str, bytes], source: str, rel_type: str, default: str, content_type: str
+) -> str:
+    """The part ``source`` (``""`` for the package) relates to by ``rel_type``.
+
+    Adds the relationship, to ``default``, when there is none, and the part's content type
+    override when it is missing.
+    """
+    folder, name = posixpath.split(source)
+    rels_part = posixpath.join(folder, "_rels", f"{name}.rels")
+    if rels_part in package:
+        rels = parse_xml(package[rels_part], rels_part)
+    else:
+        rels = etree.ElementTree(etree.Element(qn("pr:Relationships"), nsmap={None: NS["pr"]}))
+    root = rels.getroot()
+    part = None
+    for rel in root.iterfind("pr:Relationship", NS):
+        if rel.get("Type") == rel_type and rel.get("TargetMode") != "External":
+            target = rel.get("Target", "")
+            part = target[1:] if target.startswith("/") else posixpath.join(folder, target)
+            part = posixpath.normpath(part)
+            break
+    if part is None:
+        part = default
+        ids = {rel.get("Id") for rel in root}
+        n = len(ids) + 1
+        while f"rId{n}" in ids:
+            n += 1
+        target = posixpath.relpath(default, folder or ".")
+        etree.SubElement(
+            root, qn("pr:Relationship"), {"Id": f"rId{n}", "Type": rel_type, "Target": target}
+        )
+        package[rels_part] = serialize(rels)
+    _add_override(package, part, content_type)
+    return part
+
+
+def _add_override(package: dict[str, bytes], part: str, content_type: str) -> None:
+    if CONTENT_TYPES not in package:
+        raise UnsupportedDocumentError(f"Not a DOCX file: {CONTENT_TYPES} is missing")
+    tree = parse_xml(package[CONTENT_TYPES], CONTENT_TYPES)
+    root = tree.getroot()
+    name = f"/{part}"
+    if any(o.get("PartName", "").lower() == name.lower() for o in root.iterfind("ct:Override", NS)):
+        return
+    etree.SubElement(root, qn("ct:Override"), {"PartName": name, "ContentType": content_type})
+    package[CONTENT_TYPES] = serialize(tree)
+
+
+def serialize(xml: etree._ElementTree) -> bytes:
+    return _DECLARATION + etree.tostring(xml, encoding="UTF-8")

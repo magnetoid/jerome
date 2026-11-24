@@ -20,3 +20,7 @@ class InvalidChangeError(JeromeError):
 
 class UnknownModelPrice(JeromeError):
     """A model has no known price, so its cost cannot be estimated or capped."""
+
+
+class UnsupportedLanguagePair(JeromeError):
+    """Source and target of a translation must differ in language."""

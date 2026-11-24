@@ -1,8 +1,8 @@
 // Review screen data: API shapes, query keys, views and how marks are laid out in a block.
-import type { ChapterSummary } from "@/lib/jobs";
+import type { ChapterSummary, TranslatedBlock } from "@/lib/jobs";
 
 export type Status = "open" | "accepted" | "rejected" | "edited" | "superseded";
-export type Category = "typo" | "grammar" | "punctuation" | "consistency" | "style";
+export type Category = "typo" | "grammar" | "punctuation" | "consistency" | "style" | "translation";
 export type Severity = "high" | "medium" | "low";
 
 export interface Suggestion {
@@ -41,6 +41,9 @@ export interface ReviewBlock {
   original: string;
   current: string;
   suggestions: Suggestion[];
+  /** The source block's text on a translated book; null (or absent) otherwise. */
+  source?: string | null;
+  translation_status?: TranslatedBlock["translation_status"];
 }
 
 export interface ReviewPageData {
@@ -58,7 +61,11 @@ export const reviewKey = (bookId: string, chapterId?: string) =>
 export const openCountKey = (bookId: string, chapterId?: string, category?: string) =>
   ["open-count", bookId, chapterId, category].filter((x) => x !== undefined);
 
-export const CATEGORIES: Category[] = ["typo", "grammar", "punctuation", "consistency", "style"];
+export const CATEGORIES: Category[] = ["typo", "grammar", "punctuation", "consistency", "style", "translation"];
+
+/** How a category reads in the filter and on the focus card. */
+export const CATEGORY_LABELS: Record<string, string> = { translation: "Translation" };
+export const categoryLabel = (c: string) => CATEGORY_LABELS[c] ?? c;
 export const SEVERITIES: Severity[] = ["high", "medium", "low"];
 
 export type View = "needs" | "ai" | "all";

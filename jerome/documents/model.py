@@ -6,6 +6,11 @@ from typing import Literal
 PLACEHOLDER = "￼"
 
 
+def title_text(text: str) -> str:
+    """A heading's text as a chapter title: inline objects dropped, whitespace collapsed."""
+    return " ".join(text.replace(PLACEHOLDER, " ").split())
+
+
 class MarkKind(StrEnum):
     BOLD = "bold"
     ITALIC = "italic"

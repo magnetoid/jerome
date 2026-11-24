@@ -78,6 +78,7 @@ from jerome.mcp import (  # noqa: E402, F401
     tools_jobs,
     tools_review,
     tools_text,
+    tools_translation,
 )
 
 

@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from jerome.api.routes_suggestions import suggestion_out
 from jerome.core.suggestions import text_with_changes
+from jerome.core.translation import source_texts
 from jerome.errors import NotFound
 from jerome.orm import (
     ACTIVE_JOB_STATUSES,
@@ -20,15 +21,40 @@ from jerome.orm import (
     Suggestion,
 )
 
-Stage = Literal["set_up", "proofreading", "needs_attention", "to_review", "done"]
+Stage = Literal[
+    "set_up", "translating", "translated", "proofreading", "needs_attention", "to_review", "done"
+]
 _DECIDED_BY_TEAM = ("accepted", "rejected", "edited")
 
 
 def derive_stage(
-    *, active_job: bool, latest_job_status: str | None, open_count: int, completed_jobs: int
+    *,
+    active_job: bool,
+    latest_job_status: str | None,
+    open_count: int,
+    completed_jobs: int,
+    work: str = "proofread",
+    latest_job_type: str | None = None,
+    pending_blocks: int = 0,
 ) -> Stage:
     """The book's stage, from the first row that applies. A job paused at its cost cap is in
-    ACTIVE_JOB_STATUSES (it holds the book's one active slot) but nothing is running."""
+    ACTIVE_JOB_STATUSES (it holds the book's one active slot) but nothing is running.
+
+    A translated book first goes through its translate job: ``translating`` while it runs,
+    ``needs_attention`` when it failed or paused, ``set_up`` while blocks are still waiting
+    for it, and ``translated`` once it completed, until a proofread job runs or completes.
+
+    ``completed_jobs`` counts completed proofread jobs only: a completed translation is not
+    proofreading done."""
+    translate_job = work == "translate" and latest_job_type == "translate"
+    if translate_job and active_job:
+        return "translating"
+    if translate_job and latest_job_status in ("failed", "paused_cost_cap"):
+        return "needs_attention"
+    if work == "translate" and pending_blocks > 0:
+        return "set_up"
+    if translate_job and latest_job_status == "completed":
+        return "translated"
     if active_job:
         return "proofreading"
     if latest_job_status in ("failed", "paused_cost_cap"):
@@ -37,6 +63,8 @@ def derive_stage(
         return "to_review"
     if completed_jobs > 0:
         return "done"
+    if work == "translate":  # translated (nothing pending), and no proofreading completed
+        return "translated"
     return "set_up"
 
 
@@ -70,9 +98,25 @@ def list_projects(session: Session) -> list[dict]:
     """Every book with its stage and progress, newest activity first, in a fixed number of
     queries however many books there are."""
     books = session.execute(
-        select(Book.id, Book.title, Book.format, StyleSheetRow.variant, Book.created_at)
+        select(Book.id, Book.title, Book.format, Book.work, StyleSheetRow.variant, Book.created_at)
         .outerjoin(StyleSheetRow, StyleSheetRow.book_id == Book.id)
+        .where(Book.is_source.is_(False))
     ).all()  # fmt: skip
+    source_variant = {
+        r.id: r.variant
+        for r in session.execute(
+            select(Book.id, StyleSheetRow.variant)
+            .join(StyleSheetRow, StyleSheetRow.book_id == Book.source_book_id)
+            .where(Book.work == "translate")
+        )
+    }
+    translation: dict[int, dict[str, int]] = {}
+    for book_id, status, n in session.execute(
+        select(Block.book_id, Block.translation_status, func.count())
+        .where(Block.translation_status.is_not(None))
+        .group_by(Block.book_id, Block.translation_status)
+    ):
+        translation.setdefault(book_id, {})[status] = n
 
     latest = _latest_channel().subquery()
     o, a, d = _count_columns(latest)
@@ -99,7 +143,7 @@ def list_projects(session: Session) -> list[dict]:
     latest_job = {
         r.book_id: r
         for r in session.execute(
-            select(Job.book_id, Job.status, Job.created_by, Job.created_at)
+            select(Job.book_id, Job.type, Job.status, Job.created_by, Job.created_at)
             .ext(distinct_on(Job.book_id))
             .order_by(Job.book_id, Job.created_at.desc(), Job.id.desc())
         )
@@ -107,7 +151,9 @@ def list_projects(session: Session) -> list[dict]:
     completed = {
         book_id: n
         for book_id, n in session.execute(
-            select(Job.book_id, func.count()).where(Job.status == "completed").group_by(Job.book_id)
+            select(Job.book_id, func.count())
+            .where(Job.status == "completed", Job.type == "proofread")
+            .group_by(Job.book_id)
         )
     }
 
@@ -144,17 +190,24 @@ def list_projects(session: Session) -> list[dict]:
         if job is not None:
             candidates.append((job.created_by, job.created_at, None))
         last = max(candidates, key=lambda c: c[1]) if candidates else None
+        counts_by_status = translation.get(b.id, {}) if b.work == "translate" else None
         out.append(
             {
                 "id": b.id,
                 "title": b.title,
                 "format": b.format,
                 "variant": b.variant,
+                "work": b.work,
+                "source_variant": source_variant.get(b.id),
+                "translation": counts_by_status,
                 "stage": derive_stage(
                     active_job=act is not None and act.status in ("queued", "running"),
                     latest_job_status=job.status if job else None,
                     open_count=open_n,
                     completed_jobs=completed.get(b.id, 0),
+                    work=b.work,
+                    latest_job_type=job.type if job else None,
+                    pending_blocks=(counts_by_status or {}).get("pending", 0),
                 ),
                 "open_count": open_n,
                 "auto_applied_count": auto_n,
@@ -236,6 +289,7 @@ def chapter_review(session: Session, chapter_id: int, offset: int, limit: int) -
     for s in rows:
         by_block[s.block_id].append(s)
     out = {s.id: o for s, o in zip(rows, suggestion_out(session, rows), strict=True)}
+    sources = source_texts(session, [b.id for b in blocks])
     return {
         "chapter_id": chapter_id,
         "book_id": chapter.book_id,
@@ -249,6 +303,8 @@ def chapter_review(session: Session, chapter_id: int, offset: int, limit: int) -
                 "original": b.text,
                 "current": text_with_changes(b.text, by_block[b.id]),
                 "suggestions": [out[s.id] for s in by_block[b.id]],
+                "source": sources.get(b.id),
+                "translation_status": b.translation_status,
             }
             for b in blocks
         ],

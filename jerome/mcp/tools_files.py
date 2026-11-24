@@ -16,11 +16,11 @@ from typing import Any
 
 from mcp.types import ToolAnnotations
 
-from jerome.api import routes_exports
+from jerome.api import routes_books, routes_exports
+from jerome.api.routes_books import Work
 from jerome.api.schemas import BookOut
 from jerome.core import books, exports, transfer_links
 from jerome.core.agent_actions import record_action
-from jerome.core.auto_apply import DEFAULT_POLICY, OFF_POLICY
 from jerome.core.exports import ExportFormat, ReviewFilters
 from jerome.core.review_imports import import_review
 from jerome.mcp.context import ToolContext, call, current_request
@@ -75,19 +75,26 @@ def import_book(
     title: str | None = None,
     local_only: bool = False,
     auto_apply: bool = True,
+    work: Work = "proofread",
+    target_variant: Variant | None = None,
+    translated_title: str | None = None,
 ) -> dict[str, Any]:
     """Import a manuscript as a new book from an upload (`upload_id` from
     `request_upload`, after the file was PUT to its link). `filename` is the file's name;
     its extension (.docx or .epub) says the format. `variant` is the language variant
     (en-US, en-GB, de-DE, de-AT, de-CH). `title` defaults to the one in the file.
     `local_only` keeps the book away from remote models. `auto_apply` (on by default) lets
-    jobs accept clear-cut AI suggestions themselves. Returns the book, as `get_book` shows
-    it; its `id` is the `book_id` other tools take. Same as POST /v1/books. Logged in the
-    Janus activity log."""
+    jobs accept clear-cut AI suggestions themselves. `work` is `proofread` (the default)
+    or `translate`: to translate, `variant` is the file's language and `target_variant`
+    (required, another language) the translation's; `translated_title` is written to the
+    exported file's metadata. Translating returns the translated book (the file itself is
+    kept as a hidden, read-only source book); start its translation with `start_job` and
+    `type` `translate`. Returns the book, as `get_book` shows it; its `id` is the `book_id`
+    other tools take. Same as POST /v1/books. Logged in the Janus activity log."""
 
     def body(c: ToolContext) -> dict[str, Any]:
         data = _consume(c, upload_id)
-        book = books.import_book(
+        book = routes_books.import_upload(
             c.session,
             c.storage,
             filename=filename or "upload",
@@ -95,7 +102,10 @@ def import_book(
             variant=variant,
             title=title,
             local_only=local_only,
-            auto_apply=DEFAULT_POLICY if auto_apply else OFF_POLICY,
+            auto_apply=auto_apply,
+            work=work,
+            target_variant=target_variant,
+            translated_title=translated_title,
         )
         out = rest_json(book, BookOut)
         record_action(

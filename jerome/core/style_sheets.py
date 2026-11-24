@@ -2,6 +2,7 @@ from typing import get_args
 
 from sqlalchemy.orm import Session
 
+from jerome.core.translation import ensure_not_source
 from jerome.errors import InvalidChangeError, NotFound
 from jerome.orm import StyleSheetRow
 from jerome.types import DEFAULT_QUOTES, StyleSheet, Variant
@@ -43,6 +44,7 @@ def update_style_sheet(
             "quote_style must be exactly 4 characters: opening and closing double quote, "
             "then opening and closing single quote"
         )
+    ensure_not_source(session, book_id)
     row = _row(session, book_id)
     if variant is not None:
         if variant != row.variant and quote_style is None:

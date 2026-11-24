@@ -6,7 +6,7 @@ positive is refused exactly as REST refuses it.
 """
 
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 
 from jerome.api import routes_jobs
 from jerome.api.routes_jobs import EstimateIn, JobIn, ResumeIn
@@ -22,21 +22,27 @@ def _given(**kwargs: Any) -> dict[str, Any]:
     return {k: v for k, v in kwargs.items() if v is not None}
 
 
+JobType = Literal["proofread", "translate"]
+
+
 @mcp.tool(annotations=READ_ONLY)
 def estimate_job(
     book_id: int,
     passes: list[PassName] | None = None,
     chapters: list[int] | None = None,
+    type: JobType = "proofread",
 ) -> dict[str, Any]:
     """Estimate what a proofreading job would cost, without starting it or paying for
     anything. `book_id` from `list_books`; `passes` defaults to all three
     (languagetool, ai, consistency); `chapters` (ids from `list_chapters`) defaults to
-    every chapter marked proofread. Returns the chunk count and low/high cost per pass and
-    in total, in USD as strings: the same JSON as POST /v1/books/{id}/estimate. Call this
-    before `start_job` and choose its `max_cost` from the high total."""
+    every chapter marked proofread. With `type` `translate`, it estimates translating a
+    translated book's untranslated paragraphs instead (`passes` and `chapters` are
+    ignored). Returns the chunk count and low/high cost per pass and in total, in USD as
+    strings: the same JSON as POST /v1/books/{id}/estimate. Call this before `start_job`
+    and choose its `max_cost` from the high total."""
 
     def body(c: ToolContext) -> dict[str, Any]:
-        request = EstimateIn(**_given(passes=passes, chapters=chapters))
+        request = EstimateIn(type=type, **_given(passes=passes, chapters=chapters))
         return rest_json(routes_jobs.estimate(book_id, request, c.session, c.registry))
 
     return call(body)
@@ -72,19 +78,21 @@ def start_job(
     passes: list[PassName] | None = None,
     chapters: list[int] | None = None,
     callback_url: str | None = None,
+    type: JobType = "proofread",
 ) -> dict[str, Any]:
     """Start a proofreading job on a book. This runs paid model work: call `estimate_job`
-    first with the same `passes` and `chapters`, and set `max_cost` (USD, more than 0, up to
-    4 decimal places) to at least its high total; the job pauses when it reaches the cap
-    (`resume_job` can raise it). `book_id` from `list_books`; `passes` and `chapters` as in
-    `estimate_job`; `callback_url` (http or https) gets a POST when the job completes,
-    fails or pauses. A book has at most one active job. Returns the job, as `get_job` shows
-    it; its suggestions then appear in `list_suggestions`. Logged in the Janus activity
-    log."""
+    first with the same `passes` and `chapters` (and `type`), and set `max_cost` (USD, more
+    than 0, up to 4 decimal places) to at least its high total; the job pauses when it
+    reaches the cap (`resume_job` can raise it). `book_id` from `list_books`; `passes` and
+    `chapters` as in `estimate_job`; `callback_url` (http or https) gets a POST when the job
+    completes, fails or pauses. With `type` `translate`, it translates a translated book
+    (from `import_book` with `work` `translate`) first; proofread it once that job has
+    completed. A book has at most one active job. Returns the job, as `get_job` shows it;
+    its suggestions then appear in `list_suggestions`. Logged in the Janus activity log."""
 
     def body(c: ToolContext) -> dict[str, Any]:
         request = JobIn(
-            type="proofread",
+            type=type,
             max_cost=max_cost,
             **_given(passes=passes, chapters=chapters, callback_url=callback_url),
         )

@@ -19,6 +19,7 @@ function body(over: { storage?: string; settings?: unknown[]; secrets?: unknown[
   return {
     settings: over.settings ?? [
       row("models.ai", { provider: "anthropic", model: "claude-opus-5-5" }),
+      row("models.translate", { provider: "anthropic", model: "claude-opus-5-5", effort: "high" }),
       row("prices", {
         "model-a": { input: 1, output: 2, cache_read: 0.5, cache_write: 1.5 },
         "model-b": { input: 3, output: 4, cache_read: 1, cache_write: 2 },
@@ -119,7 +120,8 @@ describe("SettingsPage", () => {
 
   it("flags a value that can't be read", async () => {
     const s = body();
-    s.settings[3] = row("text_rpm", 30, "default", { unreadable: true });
+    const at = s.settings.findIndex((r) => (r as { key: string }).key === "text_rpm");
+    s.settings[at] = row("text_rpm", 30, "default", { unreadable: true });
     setup({}, s);
     const rpm = await screen.findByRole("group", { name: "Text requests per minute" });
     expect(within(rpm).getByText("Can't be read; using the fallback")).toBeInTheDocument();
@@ -236,17 +238,32 @@ describe("SettingsPage", () => {
   it("saves the AI model as one value and shows base URL only for openai_compat", async () => {
     const f = setup({ "PUT /v1/settings/models.ai": () => json(200, body()) }).f;
     const user = userEvent.setup();
-    await screen.findByLabelText("Provider");
-    expect(screen.queryByLabelText("Base URL")).not.toBeInTheDocument();
-    await user.selectOptions(screen.getByLabelText("Provider"), "openai_compat");
-    await user.type(await screen.findByLabelText("Base URL"), "https://llm.example.com/v1");
-    await user.selectOptions(screen.getByLabelText("Effort"), "high");
-    const group = screen.getByRole("group", { name: "AI model" });
+    const group = await screen.findByRole("group", { name: "Proofreading model" });
+    expect(within(group).queryByLabelText("Base URL")).not.toBeInTheDocument();
+    await user.selectOptions(within(group).getByLabelText("Provider"), "openai_compat");
+    await user.type(await within(group).findByLabelText("Base URL"), "https://llm.example.com/v1");
+    await user.selectOptions(within(group).getByLabelText("Effort"), "high");
     await user.click(within(group).getByRole("button", { name: "Save" }));
     await waitFor(() => expect(call(f, "PUT", "/v1/settings/models.ai")).toBeTruthy());
     expect(JSON.parse(call(f, "PUT", "/v1/settings/models.ai")![1]!.body as string)).toEqual({
       value: { provider: "openai_compat", model: "claude-opus-5-5", effort: "high", base_url: "https://llm.example.com/v1" },
     });
+  });
+
+  it("renders the translation model editor and saves models.translate", async () => {
+    const f = setup({ "PUT /v1/settings/models.translate": () => json(200, body()) }).f;
+    const user = userEvent.setup();
+    const group = await screen.findByRole("group", { name: "Translation model" });
+    expect(within(group).getByLabelText("Model")).toHaveValue("claude-opus-5-5");
+    expect(within(group).getByLabelText("Effort")).toHaveValue("high");
+    await user.clear(within(group).getByLabelText("Model"));
+    await user.type(within(group).getByLabelText("Model"), "claude-sonnet-5-5");
+    await user.click(within(group).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(call(f, "PUT", "/v1/settings/models.translate")).toBeTruthy());
+    expect(JSON.parse(call(f, "PUT", "/v1/settings/models.translate")![1]!.body as string)).toEqual({
+      value: { provider: "anthropic", model: "claude-sonnet-5-5", effort: "high" },
+    });
+    expect(call(f, "PUT", "/v1/settings/models.ai")).toBeFalsy();
   });
 
   it("saves an empty service URL as null", async () => {

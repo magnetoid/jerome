@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { PROJECTS_KEY } from "@/hooks/useProjects";
 import { money } from "@/lib/format";
-import { chaptersKey, detailOf, jobKey, jobsKey, type Chapter, type Job } from "@/lib/jobs";
+import { chaptersKey, detailOf, jobKey, jobNoun, jobsKey, type Chapter, type Job } from "@/lib/jobs";
 
 interface Props {
   bookId: string;
@@ -64,12 +64,12 @@ export default function AttentionPanel({ bookId, activeJobId }: Props) {
     <div className="space-y-4">
       {capped ? (
         <p>
-          Proofreading paused at its cost limit ({money(job.cost_actual)} of {money(job.max_cost)}).
+          {jobNoun(job)} paused at its cost limit ({money(job.cost_actual)} of {money(job.max_cost)}).
           Raise the limit to carry on.
         </p>
       ) : (
         <p>
-          Proofreading {job.status === "cancelled" ? "was cancelled" : "stopped because something went wrong"}.
+          {jobNoun(job)} {job.status === "cancelled" ? "was cancelled" : "stopped because something went wrong"}.
         </p>
       )}
       {failed.length > 0 && (
