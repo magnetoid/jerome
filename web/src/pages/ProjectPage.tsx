@@ -15,12 +15,14 @@ import AttentionPanel from "@/components/project/AttentionPanel";
 import SummaryPanel from "@/components/project/SummaryPanel";
 import JobsList from "@/components/project/JobsList";
 import ExportMenu from "@/components/project/ExportMenu";
+import PublicationSection from "@/components/project/PublicationSection";
+import FinishedFiles from "@/components/project/FinishedFiles";
 import ReviewUpload from "@/components/project/ReviewUpload";
 import SettingsTab from "@/components/project/SettingsTab";
 import TranslationPanel, { FlaggedParagraphs, SourceBookLink } from "@/components/project/TranslationPanel";
 import { PROJECTS_KEY, useProjects, type Project } from "@/hooks/useProjects";
 import { useBookJobs } from "@/hooks/useBookJobs";
-import { bookKey, detailOf } from "@/lib/jobs";
+import { bookKey, detailOf, latestReviewJob } from "@/lib/jobs";
 
 interface Book {
   id: number;
@@ -86,7 +88,7 @@ export default function ProjectPage() {
   // A cancelled job is not a stage of its own (the stage shows what is there to review), but
   // the cancel promised it could be resumed: offer that until another job takes its place.
   const resumable =
-    idle && project.stage !== "needs_attention" && jobs.data?.[0]?.status === "cancelled";
+    idle && project.stage !== "needs_attention" && latestReviewJob(jobs.data)?.status === "cancelled";
   // set_up and translated already show the proofreading start (or the translation's).
   const rerun = idle && project.stage !== "set_up" && project.stage !== "translated";
   const sourceId = book.data?.source_book_id;
@@ -141,6 +143,10 @@ export default function ProjectPage() {
           )}
           <JobsList jobs={jobs} />
           <ExportMenu bookId={id} format={format} untranslated={untranslated} />
+          <div className="space-y-8 border-t pt-4">
+            <PublicationSection bookId={id} />
+            <FinishedFiles bookId={id} untranslated={untranslated} />
+          </div>
           {format === "docx" && <ReviewUpload bookId={id} />}
           <section className="border-t pt-4">
             <Button variant="destructive" onClick={() => setConfirmDelete(true)}>Delete project</Button>

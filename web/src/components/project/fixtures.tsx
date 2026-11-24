@@ -77,6 +77,12 @@ export const TRANSLATION = {
 export const STYLE = { variant: "en-GB", quote_style: "‘’“”", house_spellings: {}, ignore_words: [] };
 export const AUTO = { enabled: true, categories: ["typo", "punctuation"], min_severity: "high", house_rules: true };
 
+export const PUBLICATION = {
+  title: "Sea Book", language: "en-GB", authors: ["Ann Author"], translator: null,
+  publisher: "House Press", isbn_epub: null, isbn_pdf: null, year: 2026,
+  rights: "© 2026 Ann Author", description: null, trim_size: "6x9in", has_cover: false,
+};
+
 /** Every read the page makes, with sensible defaults; override per test. */
 export function pageApi(over: Record<string, Parameters<typeof mockApi>[0][string]> = {}, proj: P = project()) {
   return mockApi({
@@ -88,6 +94,7 @@ export function pageApi(over: Record<string, Parameters<typeof mockApi>[0][strin
     "GET /v1/books/1/style-sheet": () => json(200, STYLE),
     "GET /v1/books/1/auto-apply": () => json(200, AUTO),
     "POST /v1/books/1/estimate": () => json(200, estimate()),
+    "GET /v1/books/1/publication": () => json(200, PUBLICATION),
     ...over,
   });
 }

@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api";
 import { POLL_MS, type ActiveJob } from "@/hooks/useProjects";
-import { jobsKey, type Job } from "@/lib/jobs";
+import { isJobActive, jobsKey, type Job } from "@/lib/jobs";
 
 /**
  * A book's jobs, newest first. While the project's active job is queued or running the list
@@ -16,7 +16,9 @@ export function useBookJobs(bookId: string, activeJob: ActiveJob | null | undefi
   const jobs = useQuery({
     queryKey: jobsKey(bookId),
     queryFn: () => apiFetch<Job[]>(`/v1/books/${bookId}/jobs`),
-    refetchInterval: running ? POLL_MS : false,
+    // A publish job is not the project's active job, so the list also polls while one runs.
+    refetchInterval: (q) =>
+      running || q.state.data?.some((j) => j.type === "publish" && isJobActive(j)) ? POLL_MS : false,
   });
 
   const marker = activeJob === undefined ? undefined : activeJob ? `${activeJob.id}:${activeJob.status}` : "";

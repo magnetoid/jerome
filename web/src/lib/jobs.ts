@@ -5,13 +5,23 @@ export type Passes = string[];
 export const FULL_PASSES: Passes = ["languagetool", "ai", "consistency"];
 export const FREE_PASSES: Passes = ["languagetool"];
 
+const FINISHED: Record<string, string> = { "epub-book": "Finished EPUB", "pdf-book": "Finished PDF" };
+
 export function passesLabel(passes: string[]): string {
   if (passes.includes("translate")) return "Translation";
+  if (FINISHED[passes[0]]) return FINISHED[passes[0]];
   return passes.includes("ai") ? "AI + LanguageTool" : "Free check";
 }
 
-/** "Translation" or "Proofreading", for copy that names what a job does. */
-export const jobNoun = (j: { type: string }) => (j.type === "translate" ? "Translation" : "Proofreading");
+/** "Translation", "Proofreading" or "Finished EPUB"/"Finished PDF", for copy that names what a job does. */
+export function jobNoun(j: { type: string; passes?: string[] }): string {
+  if (j.type === "translate") return "Translation";
+  if (j.type === "publish") return FINISHED[j.passes?.[0] ?? ""] ?? "Finished file";
+  return "Proofreading";
+}
+
+/** The newest job that is part of the review (proofreading or translation), not a finished file. */
+export const latestReviewJob = (jobs: Job[] | undefined) => jobs?.find((j) => j.type !== "publish");
 
 /** GET /v1/books/{id}/translation. */
 export interface TranslationState {
@@ -31,11 +41,11 @@ export interface TranslatedBlock {
 
 export interface JobTask {
   id: number;
-  kind: "chapter" | "consistency";
+  kind: "chapter" | "consistency" | "publish";
   chapter_id: number | null;
   status: "queued" | "running" | "done" | "failed";
   chunks_done: number;
-  /** Null for the consistency check, which is not split into chunks. */
+  /** Null for the consistency check and a publish task, which are not split into chunks. */
   chunks_total: number | null;
   attempts: number;
   error: string | null;
@@ -43,7 +53,7 @@ export interface JobTask {
 
 export interface Job {
   id: number;
-  /** "proofread" or "translate". */
+  /** "proofread", "translate" or "publish". */
   book_id: number;
   type: string;
   status: "queued" | "running" | "paused_cost_cap" | "cancelled" | "failed" | "completed";
@@ -51,7 +61,8 @@ export interface Job {
   chapter_ids: number[];
   max_cost: string;
   cost_actual: string;
-  stats: { auto_applied?: number } & Record<string, unknown>;
+  /** A publish job's `file` (its name, once done) and `warnings`. */
+  stats: { auto_applied?: number; file?: string; warnings?: string[] } & Record<string, unknown>;
   created_at: string;
   finished_at: string | null;
   tasks: JobTask[];
