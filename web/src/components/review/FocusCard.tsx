@@ -4,8 +4,8 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  categoryLabel, canAccept, canEdit, canReject, resultText, RULE_LABELS, SOURCE_LABELS, stateLabel,
-  type Suggestion,
+  AI_VERDICT_LABELS, categoryLabel, canAccept, canAskAi, canEdit, canReject, canUseAiFix, resultText,
+  RULE_LABELS, SOURCE_LABELS, stateLabel, type Suggestion,
 } from "@/lib/review";
 import { cn } from "@/lib/utils";
 
@@ -24,6 +24,25 @@ interface Props {
   onUndo: () => void;
   onSave: (replacement: string) => void;
   onCancelEdit: () => void;
+  /** Asking the AI about this LanguageTool mark is under way. */
+  asking: boolean;
+  onAskAi: () => void;
+  /** Accept the mark with the AI's own text. */
+  onUseAiFix: () => void;
+}
+
+/** The AI's verdict on a LanguageTool mark, once asked for. */
+function AiVerdict({ s }: { s: Suggestion }) {
+  if (s.ai_verdict === null) return null;
+  return (
+    <p aria-label="AI verdict" className="text-sm">
+      <span className="font-medium text-ai">
+        {AI_VERDICT_LABELS[s.ai_verdict]}
+        {s.ai_verdict === "better" && s.ai_replacement !== null ? `: “${s.ai_replacement}”` : ""}
+      </span>
+      {s.ai_reason && <span>{` · ${s.ai_reason}`}</span>}
+    </p>
+  );
 }
 
 function Change({ s }: { s: Suggestion }) {
@@ -103,6 +122,8 @@ function Key({ k }: { k: string }) {
  */
 export default function FocusCard(p: Props) {
   const { s } = p;
+  // When the AI says the mark is not an error, rejecting it is the likely next step.
+  const rejectFirst = s.ai_verdict === "not_an_error" && s.status === "open";
   return (
     <section
       aria-label="Focused suggestion"
@@ -136,18 +157,24 @@ export default function FocusCard(p: Props) {
         </p>
       )}
       {s.rule && <p className="text-sm">{RULE_LABELS[s.rule] ?? s.rule}</p>}
+      <AiVerdict s={s} />
       <p className={cn("text-sm text-muted-foreground", s.auto_applied && "text-ai")}>{stateLabel(s)}</p>
       {p.hiddenBy && <p className="text-sm text-muted-foreground">{hiddenNote(p.hiddenBy)}</p>}
       {p.editing ? (
         <EditField initial={resultText(s)} busy={p.busy} onSave={p.onSave} onCancel={p.onCancelEdit} />
       ) : (
         <div className="flex flex-wrap gap-2">
-          <Button size="sm" onClick={p.onAccept} disabled={p.busy || !canAccept(s)}>
+          <Button
+            size="sm"
+            variant={rejectFirst ? "outline" : "default"}
+            onClick={p.onAccept}
+            disabled={p.busy || !canAccept(s)}
+          >
             Accept <Key k="a" />
           </Button>
           <Button
             size="sm"
-            variant="outline"
+            variant={rejectFirst ? "default" : "outline"}
             onClick={p.onReject}
             disabled={p.busy || !canReject(s)}
             title={s.auto_applied ? "Reverts the AI's change" : undefined}
@@ -160,6 +187,22 @@ export default function FocusCard(p: Props) {
           <Button size="sm" variant="ghost" onClick={p.onUndo} disabled={p.busy || !p.canUndo}>
             Undo <Key k="u" />
           </Button>
+          {canUseAiFix(s) && (
+            <Button size="sm" variant="outline" className="border-ai text-ai" onClick={p.onUseAiFix} disabled={p.busy}>
+              Use AI fix
+            </Button>
+          )}
+          {canAskAi(s) && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={p.onAskAi}
+              disabled={p.busy || p.asking}
+              title="Asks the AI whether LanguageTool is right here. A paid model call."
+            >
+              {p.asking ? "Asking AI…" : "Ask AI"}
+            </Button>
+          )}
         </div>
       )}
     </section>

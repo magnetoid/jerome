@@ -3,6 +3,8 @@ import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import Paragraph from "@/components/review/Paragraph";
 import FocusCard from "@/components/review/FocusCard";
 import ReviewToolbar from "@/components/review/ReviewToolbar";
+import CheckLtMarks from "@/components/review/CheckLtMarks";
+import { useAiCheck } from "@/hooks/useAiCheck";
 import BulkAccept from "@/components/review/BulkAccept";
 import NextChapterPrompt from "@/components/review/NextChapterPrompt";
 import { Button } from "@/components/ui/button";
@@ -96,6 +98,8 @@ function ChapterReview({ bookId, chapterId, chapters }: {
     },
   });
 
+  const aiCheck = useAiCheck(bookId);
+
   // A failed next page waits for "Try again" rather than being asked for again on its own.
   const canLoadMore = query.hasNextPage && !query.isFetchingNextPage && !query.isFetchNextPageError;
 
@@ -174,9 +178,14 @@ function ChapterReview({ bookId, chapterId, chapters }: {
         filters={filters}
         onFilters={setFilters}
         left={here?.open}
-        bulk={filters.category ? (
-          <BulkAccept bookId={bookId} chapterId={chapterId} category={filters.category} onDone={() => setDecidedIn(chapterId)} />
-        ) : null}
+        bulk={
+          <>
+            {filters.category && (
+              <BulkAccept bookId={bookId} chapterId={chapterId} category={filters.category} onDone={() => setDecidedIn(chapterId)} />
+            )}
+            {(here?.open ?? 0) > 0 && <CheckLtMarks bookId={bookId} chapterId={chapterId} />}
+          </>
+        }
       />
       <div className="space-y-3 py-4">
         {finished && <NextChapterPrompt bookId={bookId} chapters={chapters} chapterId={chapterId} />}
@@ -213,6 +222,13 @@ function ChapterReview({ bookId, chapterId, chapters }: {
                 onEdit={actions.edit}
                 onUndo={actions.undo}
                 onSave={(text) => run(current.id, "edit", text)}
+                asking={aiCheck.isPending && aiCheck.variables === current.id}
+                onAskAi={() => {
+                  if (!aiCheck.isPending) aiCheck.mutate(current.id);
+                }}
+                onUseAiFix={() => {
+                  if (current.ai_replacement !== null) run(current.id, "edit", current.ai_replacement);
+                }}
                 onCancelEdit={() => {
                   setEditing(null);
                   focusMark(current.id);

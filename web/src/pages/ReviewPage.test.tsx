@@ -311,4 +311,35 @@ describe("focus card placement (S2)", () => {
     expect(within(card()).getByText("Translation")).toBeInTheDocument();
     expect(within(card()).getByLabelText("Original paragraph")).toHaveTextContent("Die Katze sass.");
   });
+
+  it("Ask AI posts, shows the verdict, and Use AI fix edits with the AI's text", async () => {
+    const mark = sug({ id: 1, block_id: 100, start: 2, end: 5, original: "teh", replacement: "tea", source: "languagetool" });
+    const summary = SUMMARY.map((c) => (c.chapter_id === 11 ? { ...c, open: 1 } : c));
+    const { fetchMock } = reviewServer([block(100, 1, "𝔄 teh cat sat.", [mark])], summary, {
+      "POST /v1/suggestions/1/ai-check": () =>
+        json(200, { ...mark, ai_verdict: "better", ai_replacement: "the", ai_reason: "A typo of the.", ai_model: "m-1" }),
+    });
+    renderReview();
+    await screen.findByText("1 left");
+    await userEvent.keyboard("j");
+    await userEvent.click(within(card()).getByRole("button", { name: "Ask AI" }));
+    await waitFor(() => expect(posts(fetchMock, "/v1/suggestions/1/ai-check")).toHaveLength(1));
+    expect(await within(card()).findByLabelText("AI verdict")).toHaveTextContent("A typo of the.");
+    await userEvent.click(within(card()).getByRole("button", { name: "Use AI fix" }));
+    await waitFor(() => expect(posts(fetchMock, "/v1/suggestions/1/edit")).toHaveLength(1));
+    expect(bodyOf(posts(fetchMock, "/v1/suggestions/1/edit")[0])).toEqual({ replacement: "the" });
+  });
+
+  it("Check LT marks posts the chapter and reports what is left", async () => {
+    const { fetchMock } = reviewServer(BLOCKS, SUMMARY, {
+      "POST /v1/books/1/chapters/11/ai-check": () => json(200, { checked: 40, remaining: 23, failed: 0, suggestions: [] }),
+    });
+    renderReview();
+    await screen.findByText("2 left");
+    const button = screen.getByRole("button", { name: "Check LT marks in this chapter" });
+    expect(button.closest("[data-review-toolbar]")).not.toBeNull();
+    await userEvent.click(button);
+    await waitFor(() => expect(posts(fetchMock, "/v1/books/1/chapters/11/ai-check")).toHaveLength(1));
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Checked 40 of 63; click again for the rest"));
+  });
 });

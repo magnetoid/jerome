@@ -196,6 +196,18 @@ export const canAccept = (s: Suggestion) => s.status === "open";
 export const canReject = (s: Suggestion) =>
   s.status === "open" || s.status === "accepted" || s.status === "edited";
 export const canEdit = (s: Suggestion) => s.status === "open" || s.auto_applied;
+/** An open mark LanguageTool made alone, not yet checked by the AI. */
+export const canAskAi = (s: Suggestion) =>
+  s.status === "open" && s.source === "languagetool" && !s.agreed && s.ai_verdict === null;
+/** The AI's own fix can be used: it found a better text and the mark is still open. */
+export const canUseAiFix = (s: Suggestion) =>
+  s.status === "open" && s.ai_verdict === "better" && s.ai_replacement !== null;
+
+export const AI_VERDICT_LABELS: Record<AiVerdict, string> = {
+  correct: "AI: LanguageTool is right",
+  not_an_error: "AI: not an error",
+  better: "AI suggests a better fix",
+};
 
 /** The chapter to open without one in the URL: the first with open items, else the first. */
 export const defaultChapter = (chapters: ChapterSummary[]) =>
