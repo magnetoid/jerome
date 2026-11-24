@@ -11,8 +11,9 @@ from mcp.types import ToolAnnotations
 from pydantic import Field
 from starlette.responses import Response
 
-from jerome.api import routes_projects, routes_suggestions
+from jerome.api import routes_activity, routes_projects, routes_suggestions
 from jerome.api.schemas import (
+    ActivityItemOut,
     BlockOut,
     BulkBody,
     EditBody,
@@ -209,6 +210,60 @@ def bulk_decide(
             summary=f"{'Accepted' if action == 'accept' else 'Rejected'} {n} {noun}",
             book_id=book_id,
             after={"decided": n, "suggestion_ids": decided},
+        )
+        return out
+
+    return call(body)
+
+
+@mcp.tool(annotations=READ_ONLY)
+def list_activity(
+    book_id: int | None = None,
+    chapter_id: int | None = None,
+    who: Literal["people", "agent", "automatic", "api"] | None = None,
+    offset: Annotated[int, Field(ge=0)] = 0,
+    limit: Annotated[int, Field(ge=1, le=200)] = 50,
+) -> dict[str, Any]:
+    """Everything done, newest first: each correction decision by anyone (people, you,
+    automatic apply, Word import, API keys) and your other logged changes. Optionally for
+    one book (`book_id`) or chapter (`chapter_id`), or one kind of author (`who`). A
+    correction row (`kind` "decision") with `revertable` true can be undone with
+    `revert_decision` and its `id`. Returns `{"items": [...], "total": n}`; the items are
+    the same JSON as GET /v1/activity."""
+
+    def body(c: ToolContext) -> dict[str, Any]:
+        response = Response()
+        items = routes_activity.list_activity(
+            c.session, response, book_id, chapter_id, who, limit, offset
+        )
+        return {
+            "items": rest_json(items, list[ActivityItemOut]),
+            "total": int(response.headers["X-Total-Count"]),
+        }
+
+    return call(body)
+
+
+@mcp.tool(annotations=DECISION)
+def revert_decision(decision_id: int) -> dict[str, Any]:
+    """Revert one correction decision (`id` of a `list_activity` row whose `kind` is
+    "decision"): its suggestion goes back to open and what it displaced comes back.
+    Refused with `conflict:` when the suggestion was decided again later or the row is
+    itself an undo. Returns the suggestion: the same JSON as
+    POST /v1/activity/decisions/{id}/revert."""
+
+    def body(c: ToolContext) -> dict[str, Any]:
+        out = rest_json(
+            routes_activity.revert_decision(decision_id, c.session, c.principal), SuggestionOut
+        )
+        record_action(
+            c.session,
+            actor=c.principal.actor,
+            tool="revert_decision",
+            summary="Reverted a decision",
+            book_id=out["book_id"],
+            chapter_id=out["chapter_id"],
+            after={"decision_id": decision_id, "suggestion_ids": [out["id"]]},
         )
         return out
 

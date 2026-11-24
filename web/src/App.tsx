@@ -19,7 +19,7 @@ const queryClient = new QueryClient({
 
 function Placeholder({ title }: { title: string }) {
   return (
-    <main className="mx-auto max-w-3xl p-8">
+    <main className="w-full p-8">
       <h1 className="text-2xl font-semibold">{title}</h1>
     </main>
   );
