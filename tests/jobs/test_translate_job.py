@@ -434,6 +434,24 @@ def test_chapter_title_follows_translated_heading(session_factory, tmp_storage, 
     assert titles == ["DE Chapter One", "Chapter Two"]  # a flagged heading keeps the title
 
 
+def test_chapter_title_follows_translated_heading_with_inline_object(
+    session_factory, tmp_storage, test_settings
+):
+    # the title is the heading's text without its inline objects: a footnote reference here,
+    # a line break in an EPUB heading; so is the translated title
+    data = make_docx(["# Chapter One[^1]", "A line.", "# Two", "B line."], footnotes={1: "N."})
+    t = imported(session_factory, tmp_storage, data=data)
+    with session_factory() as s:
+        stmt = select(Chapter.title).where(Chapter.book_id == t).order_by(Chapter.ordinal)
+        assert list(s.scalars(stmt)) == ["Chapter One", "Two"]
+    reg = registry_for(test_settings, FakeProvider(echo()))
+    start(session_factory, reg, t)
+    drain(session_factory, deps_for(reg))
+    assert blocks(session_factory, t)[0].text == f"DE Chapter One{PLACEHOLDER}"
+    with session_factory() as s:
+        assert list(s.scalars(stmt)) == ["DE Chapter One", "DE Two"]
+
+
 def _flagged_book(sf, storage, test_settings):
     data = make_docx(["First para.", "Second para.", "Third para."])
     t = imported(sf, storage, data=data)

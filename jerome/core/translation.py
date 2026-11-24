@@ -15,7 +15,7 @@ from jerome.documents.epub_translate import (
     fit_epub_text,
     write_translated_epub,
 )
-from jerome.documents.model import BlockKind, Mark, MarkKind
+from jerome.documents.model import BlockKind, Mark, MarkKind, title_text
 from jerome.documents.segments import block_spans
 from jerome.documents.translated import TranslatedBlock
 from jerome.errors import Conflict, NotFound, UnsupportedLanguagePair
@@ -395,7 +395,9 @@ def store_translation(
 
 def sync_chapter_title(session: Session, chapter_id: int) -> None:
     """Give the chapter the translated text of its first heading, when that heading's source
-    text is the source chapter's title and its translation is done."""
+    text is the source chapter's title and its translation is done. Both are compared, and the
+    title is written, as ``title_text``: a heading's inline objects (a line break, a footnote
+    reference) are not in its chapter's title."""
     heading = session.scalars(
         select(Block)
         .where(Block.chapter_id == chapter_id, Block.kind == BlockKind.HEADING.value)
@@ -407,8 +409,10 @@ def sync_chapter_title(session: Session, chapter_id: int) -> None:
     source = session.get(Block, heading.source_block_id) if heading.source_block_id else None
     if source is None:
         return
-    if source.text == session.get(Chapter, source.chapter_id).title:
-        session.get(Chapter, chapter_id).title = heading.text
+    title = title_text(heading.text)
+    source_title = session.get(Chapter, source.chapter_id).title
+    if title and title_text(source.text) == title_text(source_title):
+        session.get(Chapter, chapter_id).title = title
 
 
 def _active_job(session: Session, book_id: int) -> int | None:
