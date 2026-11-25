@@ -1,0 +1,158 @@
+from jerome.pdfimport.assemble import assemble, report
+from jerome.pdfimport.model import PageBlock, PageResult, Run
+
+
+def para(text, top=0.3, bottom=0.4, **kw):
+    return PageBlock("paragraph", [Run(text)], top=top, bottom=bottom, **kw)
+
+
+def text_of(b):
+    return "".join(r.text for r in b.runs)
+
+
+def texts(blocks):
+    return [text_of(b) for b in blocks]
+
+
+def page(n, *blocks, source="text"):
+    return PageResult(n, source, list(blocks))
+
+
+def test_running_header_with_page_number_is_dropped():
+    pages = [
+        page(
+            n,
+            para(f"Chapter One · {n}", top=0.03, bottom=0.05),
+            para(f"Body {n}.", top=0.2, bottom=0.5),
+        )
+        for n in (12, 13, 14)
+    ]
+    assert texts(assemble(pages)) == ["Body 12.", "Body 13.", "Body 14."]
+
+
+def test_header_seen_on_too_few_pages_stays():
+    pages = [
+        page(1, para("Chapter One · 1", top=0.03, bottom=0.05), para("A.")),
+        page(2, para("B.")),
+        page(3, para("C.")),
+    ]
+    assert "Chapter One · 1" in texts(assemble(pages))
+
+
+def test_lone_page_numbers_are_dropped():
+    nums = ["12", "— 12 —", "· 13", "- 7 -", "xiv", "XII"]
+    pages = [
+        page(i + 1, para("Text.", top=0.2, bottom=0.5), para(s, top=0.95, bottom=0.98))
+        for i, s in enumerate(nums)
+    ]
+    assert texts(assemble(pages)) == ["Text."] * len(nums)
+
+
+def test_number_outside_band_and_images_stay():
+    img = PageBlock("image", image=b"x", image_type="png", top=0.01, bottom=0.03)
+    out = assemble([page(1, para("12", top=0.4, bottom=0.45), img)])
+    assert [b.kind for b in out] == ["paragraph", "image"]
+
+
+def test_paragraph_continues_across_pages():
+    p1 = page(1, para("The cat sat on the", top=0.2, bottom=0.9))
+    p2 = page(2, para("mat and slept.", top=0.1, bottom=0.2), para("Next."))
+    assert texts(assemble([p1, p2])) == ["The cat sat on the mat and slept.", "Next."]
+
+
+def test_no_join_after_sentence_end_uppercase_or_gap():
+    p1 = page(1, para("It ended."))
+    p2 = page(2, para("then more"))
+    assert len(assemble([p1, p2])) == 2
+    p3 = page(3, para("open ended"))
+    p4 = page(4, para("More text"))
+    assert len(assemble([p3, p4])) == 2
+    p5 = page(5, para("open ended"))
+    p7 = page(7, para("more text"))
+    assert len(assemble([p5, p7])) == 2
+
+
+def test_join_keeps_styles_and_footnotes_stay_after_body():
+    p1 = PageResult(
+        1,
+        "text",
+        [
+            PageBlock("paragraph", [Run("one "), Run("two", italic=True)]),
+            PageBlock("footnote", [Run("note")], note=1),
+        ],
+    )
+    p2 = page(2, PageBlock("paragraph", [Run("three", bold=True)]))
+    out = assemble([p1, p2])
+    assert texts(out) == ["one two three", "note"]
+    assert out[0].runs[1].italic and out[0].runs[-1].bold
+
+
+def test_hyphen_joined_only_between_lowercase():
+    def one(text):
+        return texts(assemble([page(1, para(text))]))[0]
+
+    assert one("a long Hy- Phen here") == "a long Hy- Phen here"
+    assert one("a con- tinued word") == "a continued word"
+    assert one("Nord- Süd") == "Nord- Süd"
+    assert one("pre- and post-war") == "pre- and post-war"
+    assert one("Ein- und Ausgang") == "Ein- und Ausgang"
+    assert one("Nord- und süd- lich") == "Nord- und südlich"
+    # across runs
+    b = PageBlock("paragraph", [Run("con-"), Run(" tinued", italic=True)])
+    assert texts(assemble([page(1, b)])) == ["continued"]
+    # across pages
+    out = assemble([page(1, para("a con-")), page(2, para("tinued word"))])
+    assert texts(out) == ["a continued word"]
+    out = assemble([page(1, para("pre-")), page(2, para("and post"))])
+    assert texts(out) == ["pre- and post"]
+    out = assemble([page(1, para("Nord-")), page(2, para("Süd"))])
+    assert texts(out) == ["Nord-", "Süd"]
+
+
+def test_footnotes_match_their_references_and_strays_stay_paragraphs():
+    p1 = PageResult(
+        1,
+        "text",
+        [
+            PageBlock("paragraph", [Run("A"), Run("", note=3), Run(" and B"), Run("", note=7)]),
+            PageBlock("footnote", [Run("three")], note=3),
+            PageBlock("footnote", [Run("stray")], note=9),
+        ],
+    )
+    p2 = PageResult(
+        2,
+        "text",
+        [
+            PageBlock("paragraph", [Run("Sea"), Run("", note=1)]),
+            PageBlock("footnote", [Run("one")], note=1),
+        ],
+    )
+    out = assemble([p1, p2])
+    assert [b.kind for b in out] == ["paragraph", "footnote", "paragraph", "paragraph", "footnote"]
+    assert [r.note for r in out[0].runs] == [None, 1, None, None]
+    assert text_of(out[0]) == "A and B7"
+    assert out[1].note == 1 and text_of(out[1]) == "three"
+    assert out[2].note is None and text_of(out[2]) == "stray"
+    assert out[3].runs[1].note == 2 and out[4].note == 2
+    # input untouched
+    assert p1.blocks[0].runs[1].note == 3 and p1.blocks[1].note == 3
+
+
+def test_report_counts_and_lists_failed_pages():
+    pages = [
+        page(3, para("x"), source="ai"),
+        page(1, para("x"), source="text"),
+        PageResult(5, "failed", [], "boom"),
+        page(2, para("x"), source="tesseract"),
+        PageResult(4, "image", []),
+        PageResult(6, "failed", [], "boom"),
+        page(7, para("x"), source="ai"),
+    ]
+    assert report(pages) == {
+        "pages": 7,
+        "text_pages": 1,
+        "ocr_pages": 3,
+        "engine_pages": {"ai": 2, "tesseract": 1},
+        "image_pages": 1,
+        "failed_pages": [5, 6],
+    }
