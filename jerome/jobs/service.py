@@ -18,7 +18,7 @@ from jerome.jobs.estimate import (
     pending_chapter_ids,
 )
 from jerome.models import Registry
-from jerome.orm import ACTIVE_JOB_STATUSES, Block, Job, JobTask
+from jerome.orm import ACTIVE_JOB_STATUSES, Block, Book, Job, JobTask
 from jerome.publish.build import PublishFormat, check_publishable
 
 RESUMABLE = ("cancelled", "failed", "paused_cost_cap")
@@ -188,6 +188,10 @@ def cancel_job(session: Session, job_id: int) -> Job:
         raise Conflict(f"job {job_id} is {job.status} and cannot be cancelled")
     job.status = "cancelled"
     job.finished_at = datetime.now(UTC)
+    if job.type == "import":  # the book is not ready, and nothing is making it so
+        book = session.get(Book, job.book_id)
+        book.import_status = "failed"
+        book.import_error = "The import was cancelled"
     session.flush()
     return job
 
@@ -222,6 +226,10 @@ def resume_job(session: Session, job_id: int, *, max_cost: Decimal | None = None
     if pending:
         job.status = "queued"
         job.finished_at = None
+        if job.type == "import":  # the book is being imported again
+            book = session.get(Book, job.book_id)
+            book.import_status = "importing"
+            book.import_error = None
     else:  # e.g. cancelled while its last chunk was in flight: nothing is left to claim
         job.status = "completed"
         job.finished_at = datetime.now(UTC)

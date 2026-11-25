@@ -249,6 +249,7 @@ class JobTask(Base):
     chapter_id: Mapped[int | None] = mapped_column(ForeignKey("chapters.id", ondelete="CASCADE"))
     kind: Mapped[str] = mapped_column(String)
     status: Mapped[str] = mapped_column(String, server_default="queued")
+    # import_pages tasks: 1 once the free pages of the task's range are read (jerome.pdfimport.job)
     chunks_done: Mapped[int] = mapped_column(Integer, server_default=sql_text("0"))
     attempts: Mapped[int] = mapped_column(Integer, server_default=sql_text("0"))
     not_before: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

@@ -201,7 +201,8 @@ def assemble(pages: list[PageResult]) -> list[PageBlock]:
 
 def report(pages: list[PageResult]) -> dict:
     count = {
-        s: sum(1 for p in pages if p.source == s) for s in ("text", "ai", "tesseract", "image")
+        s: sum(1 for p in pages if p.source == s)
+        for s in ("text", "ai", "tesseract", "image", "blank")
     }
     return {
         "pages": len(pages),
@@ -209,5 +210,7 @@ def report(pages: list[PageResult]) -> dict:
         "ocr_pages": count["ai"] + count["tesseract"],
         "engine_pages": {"ai": count["ai"], "tesseract": count["tesseract"]},
         "image_pages": count["image"],
-        "failed_pages": sorted(p.page for p in pages if p.source == "failed"),
+        "blank_pages": count["blank"],
+        # 1-based, as a reader counts pages (PageResult.page is 0-based)
+        "failed_pages": sorted(p.page + 1 for p in pages if p.source == "failed"),
     }

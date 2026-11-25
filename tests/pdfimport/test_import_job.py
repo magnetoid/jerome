@@ -11,9 +11,9 @@ from sqlalchemy import select
 from jerome.core.auto_apply import DEFAULT_POLICY
 from jerome.core.books import start_pdf_import
 from jerome.errors import Conflict
-from jerome.jobs.service import confirm_import, use_tesseract
+from jerome.jobs.service import cancel_job, confirm_import, resume_job, use_tesseract
 from jerome.jobs.worker import WorkerDeps, claim_task, run_task
-from jerome.models import FakeProvider, ModelRefusal, Registry, Usage
+from jerome.models import FakeProvider, ModelOutputError, ModelRefusal, Registry, Usage
 from jerome.orm import Block, Book, Chapter, Job, ModelUsage
 from jerome.pdfimport import job as import_job
 from jerome.pdfimport.model import PageBlock, PageResult, Run
@@ -45,7 +45,9 @@ def deps_for(test_settings, storage, provider=None, models=OCR) -> WorkerDeps:
     return WorkerDeps(registry, lt, None, sleep_base=0, storage=storage)
 
 
-def start(sf, storage, pdf, *, engine="ai", reocr=True, work="proofread", target=None) -> int:
+def start(
+    sf, storage, pdf, *, engine="ai", reocr=True, work="proofread", target=None, translated=None
+) -> int:
     with sf() as s:
         book = start_pdf_import(
             s,
@@ -60,7 +62,7 @@ def start(sf, storage, pdf, *, engine="ai", reocr=True, work="proofread", target
             reocr=reocr,
             work=work,
             target_variant=target,
-            translated_title=None,
+            translated_title=translated,
             actor="tester",
         )
         s.commit()
@@ -212,25 +214,35 @@ def test_use_tesseract_instead_spends_nothing(
 
 
 def test_ai_failure_falls_back_to_tesseract(session_factory, tmp_storage, test_settings, tesseract):
-    refusal = ModelRefusal("no", usage=Usage(1000, 150), model="claude-opus-5-5", provider="fake")
-    provider = FakeProvider([refusal])
+    billed = {"usage": Usage(1000, 150), "model": "claude-opus-5-5", "provider": "fake"}
+    provider = FakeProvider(
+        [
+            ModelRefusal("no", **billed),
+            ModelOutputError("not JSON", **billed),
+            {"blocks": []},
+            RuntimeError("Anthropic API key is not set"),
+        ]
+    )
     # no ocr pass configured: the ai pass's model reads the pages and prices the estimate
     models = {"ai": {"provider": "fake", "model": "claude-opus-5-5"}}
     deps = deps_for(test_settings, tmp_storage, provider, models)
-    book_id = start(session_factory, tmp_storage, joined(text_pdf(ONE), scan_pdf(text_pdf(TWO))))
+    scans = scan_pdf(text_pdf(TWO + BREAK + THREE + BREAK + ONE + BREAK + TWO))
+    book_id = start(session_factory, tmp_storage, joined(text_pdf(ONE), scans))
     drain(session_factory, deps)
     assert Decimal(job_of(session_factory, book_id).estimate["cost"]) > 0
     with session_factory() as s:
         confirm_import(s, book_id, Decimal("5"))
         s.commit()
     drain(session_factory, deps)
-    assert len(provider.calls) == 1 and tesseract == [1]
-    assert usage_passes(session_factory) == ["ocr"]  # the refused call was billed
+    assert len(provider.calls) == 4 and tesseract == [1, 2, 3, 4]
+    assert usage_passes(session_factory) == ["ocr"] * 3  # every billed call is on the books
     assert job_of(session_factory, book_id).cost_actual > 0
     book = book_of(session_factory, book_id)
     assert book.import_status is None
-    assert book.import_report["engine_pages"] == {"ai": 0, "tesseract": 1}
-    assert book.import_report["failed_pages"] == []
+    report = book.import_report
+    assert report["engine_pages"] == {"ai": 0, "tesseract": 4}
+    assert report["ai_fallbacks"] == {"refusal": 1, "billed_error": 1, "empty": 1, "error": 1}
+    assert report["failed_pages"] == []
     assert "Tesseract read page 2 of the book." in texts(session_factory, book_id)
 
 
@@ -251,6 +263,7 @@ def test_cost_cap_reached_mid_task_falls_back_to_tesseract(
     assert job.status == "completed"
     report = book_of(session_factory, book_id).import_report
     assert report["engine_pages"] == {"ai": 1, "tesseract": 1}
+    assert report["ai_fallbacks"] == {"cost_cap": 1}
 
 
 def test_reocr_off_uses_the_existing_layer(session_factory, tmp_storage, test_settings, tesseract):
@@ -275,7 +288,7 @@ def test_failed_page_is_reported_and_the_book_is_ready(
     drain(session_factory, deps_for(test_settings, tmp_storage))
     book = book_of(session_factory, book_id)
     assert book.import_status is None
-    assert book.import_report["failed_pages"] == [1]
+    assert book.import_report["failed_pages"] == [2]  # page numbers as a reader counts them
     saved = tmp_storage.read_page(book_id, 1)
     assert saved["source"] == "failed" and "broken page" in saved["error"]
     found = " ".join(texts(session_factory, book_id))
@@ -289,7 +302,13 @@ def test_translate_from_pdf_makes_source_and_translation(
 ):
     pdf = text_pdf(ONE + BREAK + TWO)
     book_id = start(
-        session_factory, tmp_storage, pdf, engine="tesseract", work="translate", target="de-DE"
+        session_factory,
+        tmp_storage,
+        pdf,
+        engine="tesseract",
+        work="translate",
+        target="de-DE",
+        translated="Die Reise",
     )
     drain(session_factory, deps_for(test_settings, tmp_storage))
     book = book_of(session_factory, book_id)
@@ -297,6 +316,7 @@ def test_translate_from_pdf_makes_source_and_translation(
     assert book.work == "translate" and book.style_sheet.variant == "de-DE"
     assert book.source_book_id is not None
     source = book_of(session_factory, book.source_book_id)
+    assert book.title == "Die Reise" and source.title == "Voyage"
     assert source.is_source and source.style_sheet.variant == "en-US"
     assert source.original_filename == "Voyage.docx" and source.import_status is None
     assert chapter_titles(session_factory, source.id) == ["Arrival", "Departure"]
@@ -366,12 +386,25 @@ def _image_pdf() -> bytes:
     return out.getvalue()
 
 
+def _inked_pdf() -> bytes:
+    """A one-page scan with lines of ink on it, made with Pillow alone."""
+    from PIL import Image, ImageDraw
+
+    image = Image.new("RGB", (420, 595), "white")
+    draw = ImageDraw.Draw(image)
+    for y in range(60, 500, 24):
+        draw.rectangle([50, y, 370, y + 8], fill="black")
+    out = io.BytesIO()
+    image.save(out, "PDF", resolution=72)
+    return out.getvalue()
+
+
 def test_confirm_before_the_pause_sets_the_cap_and_the_job_runs_on(
     session_factory, tmp_storage, test_settings, tesseract
 ):
     provider = FakeProvider([ai_reply("The ship came in on a grey morning.")])
     deps = deps_for(test_settings, tmp_storage, provider)
-    book_id = start(session_factory, tmp_storage, _image_pdf())
+    book_id = start(session_factory, tmp_storage, _inked_pdf())
     with session_factory() as s:
         scan_task = claim_task(s)
     run_task(session_factory, scan_task, deps)  # the scan alone: no page is read yet
@@ -393,7 +426,7 @@ def test_a_billed_page_whose_save_fails_is_recorded_as_ocr(
     reply = ai_reply("The ship came in on a grey morning.")
     provider = FakeProvider([reply, reply])
     deps = deps_for(test_settings, tmp_storage, provider)
-    book_id = start(session_factory, tmp_storage, _image_pdf())
+    book_id = start(session_factory, tmp_storage, _inked_pdf())
     drain(session_factory, deps)
     with session_factory() as s:
         confirm_import(s, book_id, Decimal("5"))
@@ -411,3 +444,172 @@ def test_a_billed_page_whose_save_fails_is_recorded_as_ocr(
     assert job_of(session_factory, book_id).status == "completed"
     assert len(provider.calls) == 2  # the failed attempt's page is read again
     assert usage_passes(session_factory) == ["ocr", "ocr"]  # and both calls are on the books
+
+
+def _picture_png(width: int, height: int) -> bytes:
+    """A colourful picture (not near white), as a PNG."""
+    from PIL import Image, ImageDraw
+
+    image = Image.new("RGB", (width, height), (30, 90, 160))
+    draw = ImageDraw.Draw(image)
+    for i in range(0, width, 40):
+        draw.rectangle([i, 0, i + 20, height], fill=(200, 60 + i % 150, 40))
+    out = io.BytesIO()
+    image.save(out, "PNG")
+    return out.getvalue()
+
+
+def test_a_saved_picture_is_a_jpeg_of_at_most_1600_px(
+    session_factory, tmp_storage, test_settings, tesseract
+):
+    import base64
+
+    from PIL import Image
+
+    data = base64.b64encode(_picture_png(600, 400)).decode()
+    pdf = text_pdf(f'<img src="data:image/png;base64,{data}" style="width: 120mm">')
+    book_id = start(session_factory, tmp_storage, pdf, engine="tesseract")
+    drain(session_factory, deps_for(test_settings, tmp_storage))
+    assert job_of(session_factory, book_id).stats["kinds"] == ["image"]
+    saved = tmp_storage.read_page(book_id, 0)
+    (block,) = saved["blocks"]
+    assert saved["source"] == "image" and block["image_type"] == "image/jpeg"
+    with Image.open(io.BytesIO(base64.b64decode(block["image"]))) as image:
+        assert image.format == "JPEG" and max(image.size) <= 1600  # rendered at 2480 x 3508
+    assert book_of(session_factory, book_id).import_report["image_pages"] == 1
+
+
+def _near_white_pdf() -> bytes:
+    """A scanned blank page: near-white paper with specks of dust, a full-page image."""
+    import random
+
+    from PIL import Image, ImageDraw
+
+    image = Image.new("L", (1240, 1754), 250)
+    draw = ImageDraw.Draw(image)
+    rnd = random.Random(7)
+    for _ in range(3000):
+        x, y = rnd.randrange(1240), rnd.randrange(1754)
+        draw.point((x, y), fill=rnd.randint(80, 200))
+    out = io.BytesIO()
+    image.convert("RGB").save(out, "PDF", resolution=150)
+    return out.getvalue()
+
+
+@pytest.mark.parametrize("ocr_engine", ["ai", "tesseract"])
+def test_a_blank_scanned_page_is_blank_for_both_engines(
+    session_factory, tmp_storage, test_settings, tesseract, ocr_engine
+):
+    provider = FakeProvider([])
+    deps = deps_for(test_settings, tmp_storage, provider)
+    book_id = start(
+        session_factory, tmp_storage, joined(_near_white_pdf(), _image_pdf()), engine=ocr_engine
+    )
+    drain(session_factory, deps)
+    if ocr_engine == "ai":
+        assert job_of(session_factory, book_id).stats["kinds"] == ["scan", "scan"]
+        with session_factory() as s:
+            confirm_import(s, book_id, Decimal("5"))
+            s.commit()
+        drain(session_factory, deps)
+    assert job_of(session_factory, book_id).status == "completed"
+    assert provider.calls == [] and tesseract == []
+    assert tmp_storage.read_page(book_id, 0) == {
+        "page": 0,
+        "source": "blank",
+        "error": None,
+        "blocks": [],
+    }
+    report = book_of(session_factory, book_id).import_report
+    assert report["blank_pages"] == 2 and report["image_pages"] == 0
+
+
+def _classify_all_but_last(pdf: bytes) -> list:
+    """classify_pages, but it misses the last page (pdfminer and pdfium disagree)."""
+    from jerome.pdfimport.reader import classify_pages
+
+    return classify_pages(pdf)[:-1]
+
+
+def _classify_fails(pdf: bytes) -> list:
+    raise ValueError("pdfminer cannot parse this PDF")
+
+
+@pytest.mark.parametrize("classify", [_classify_all_but_last, _classify_fails])
+def test_pages_the_sorting_missed_are_read_as_scans(
+    session_factory, tmp_storage, test_settings, tesseract, monkeypatch, classify
+):
+    monkeypatch.setattr(import_job, "classify_pages", classify)
+    pdf = text_pdf(ONE + BREAK + TWO + BREAK + THREE)
+    book_id = start(session_factory, tmp_storage, pdf, engine="tesseract")
+    drain(session_factory, deps_for(test_settings, tmp_storage))
+    job = job_of(session_factory, book_id)
+    assert job.status == "completed" and len(job.stats["kinds"]) == 3
+    assert tesseract == ([2] if classify is _classify_all_but_last else [0, 1, 2])
+    report = book_of(session_factory, book_id).import_report
+    assert report["pages"] == 3 and report["failed_pages"] == []
+
+
+def _fail_the_import(sf, storage, deps) -> int:
+    book_id = start(sf, storage, _image_pdf(), engine="tesseract")
+    source = storage.root / "books" / str(book_id) / "source.pdf"
+    kept = source.read_bytes()
+    source.unlink()
+    drain(sf, deps)
+    assert job_of(sf, book_id).status == "failed"
+    source.write_bytes(kept)
+    return book_id
+
+
+def test_resume_after_a_failed_import_makes_the_book_ready(
+    session_factory, tmp_storage, test_settings
+):
+    deps = deps_for(test_settings, tmp_storage)
+    book_id = _fail_the_import(session_factory, tmp_storage, deps)
+    assert book_of(session_factory, book_id).import_status == "failed"
+    with session_factory() as s:
+        resume_job(s, job_of(session_factory, book_id).id)
+        s.commit()
+    book = book_of(session_factory, book_id)
+    assert book.import_status == "importing" and book.import_error is None
+    drain(session_factory, deps)
+    assert job_of(session_factory, book_id).status == "completed"
+    book = book_of(session_factory, book_id)
+    assert book.import_status is None and book.import_error is None
+
+
+def test_a_resumed_import_that_fails_again_says_why(
+    session_factory, tmp_storage, test_settings, monkeypatch
+):
+    deps = deps_for(test_settings, tmp_storage)
+    book_id = _fail_the_import(session_factory, tmp_storage, deps)
+    assert "source PDF" in book_of(session_factory, book_id).import_error
+    with session_factory() as s:
+        resume_job(s, job_of(session_factory, book_id).id)
+        s.commit()
+
+    def broken(book: int) -> bytes:
+        raise RuntimeError("the disk is on fire")
+
+    monkeypatch.setattr(tmp_storage, "read_source_pdf", broken)
+    drain(session_factory, deps)
+    book = book_of(session_factory, book_id)
+    assert book.import_status == "failed" and book.import_error == "the disk is on fire"
+
+
+def test_cancelling_an_import_fails_the_book_until_it_is_resumed(
+    session_factory, tmp_storage, test_settings
+):
+    book_id = start(session_factory, tmp_storage, _image_pdf(), engine="tesseract")
+    job_id = job_of(session_factory, book_id).id
+    with session_factory() as s:
+        cancel_job(s, job_id)
+        s.commit()
+    book = book_of(session_factory, book_id)
+    assert book.import_status == "failed" and book.import_error == "The import was cancelled"
+    with session_factory() as s:
+        resume_job(s, job_id)
+        s.commit()
+    assert book_of(session_factory, book_id).import_status == "importing"
+    drain(session_factory, deps_for(test_settings, tmp_storage))
+    assert book_of(session_factory, book_id).import_status is None

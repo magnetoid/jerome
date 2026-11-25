@@ -147,12 +147,14 @@ def test_report_counts_and_lists_failed_pages():
         PageResult(4, "image", []),
         PageResult(6, "failed", [], "boom"),
         page(7, para("x"), source="ai"),
+        PageResult(0, "blank", []),
     ]
     assert report(pages) == {
-        "pages": 7,
+        "pages": 8,
         "text_pages": 1,
         "ocr_pages": 3,
         "engine_pages": {"ai": 2, "tesseract": 1},
         "image_pages": 1,
-        "failed_pages": [5, 6],
+        "blank_pages": 1,
+        "failed_pages": [6, 7],  # 1-based, as a reader counts pages
     }

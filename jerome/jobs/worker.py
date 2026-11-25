@@ -791,9 +791,8 @@ def _record_failure(
                 job.status = "failed"
                 job.finished_at = deps.now()
                 note = _notification(job, "job.failed")
-            if job.type == "import":  # the book cannot become ready: say why
-                book = s.get(Book, job.book_id)
-                if book is not None and book.import_status == "importing":
+                if job.type == "import":  # the book cannot become ready: say why
+                    book = s.get(Book, job.book_id)
                     book.import_status = "failed"
                     book.import_error = (str(exc) or type(exc).__name__)[:2000]
         else:

@@ -43,6 +43,9 @@ class Storage:
         raw = json.dumps(d, ensure_ascii=False).encode()
         return _write_atomic(self._book_dir(book_id) / "import" / f"page-{page:04d}.json", raw)
 
+    def has_page(self, book_id: int, page: int) -> bool:
+        return (self._book_dir(book_id) / "import" / f"page-{page:04d}.json").is_file()
+
     def read_page(self, book_id: int, page: int) -> dict | None:
         path = self._book_dir(book_id) / "import" / f"page-{page:04d}.json"
         return json.loads(path.read_bytes()) if path.is_file() else None

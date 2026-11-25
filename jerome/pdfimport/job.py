@@ -14,13 +14,17 @@ the cap at its first AI page while another queued page task has not read its fre
 ranges with that task and reads those free pages; the job pauses only when no free page is
 left unread. Within a task, an AI page the model cannot read (a refusal, an unusable or empty
 reply, an error) or one met after the cap was reached is read by Tesseract instead. A page that
-cannot be read at all is saved as ``failed``. The last page task makes ``import_build``.
+cannot be read at all is saved as ``failed``; a rendered page that is all but white is saved
+as ``blank`` without asking either engine. Why the AI did not read a page is counted in
+``stats["ai_fallbacks"]``. Pictures are kept as JPEGs of at most 1600 px. The last page task
+makes ``import_build``.
 
 ``import_build`` assembles the saved pages into a DOCX and fills the book from it (for a
 translation: a hidden source book, and the translated book made from it), then completes the
 job. A task that keeps failing fails the import (see ``jerome.jobs.worker._record_failure``).
 """
 
+import io
 import logging
 import threading
 from typing import Literal
@@ -31,7 +35,8 @@ from sqlalchemy.orm import Session
 from jerome.core.books import populate_from_docx
 from jerome.core.translation import make_translation
 from jerome.jobs import worker as w
-from jerome.models import Provider, Registry
+from jerome.models import ModelRefusal, Provider, Registry
+from jerome.models.base import BilledError
 from jerome.models.registry import PassConfig
 from jerome.orm import ACTIVE_JOB_STATUSES, Book, Job, JobTask
 from jerome.pdfimport.assemble import assemble, report
@@ -47,6 +52,12 @@ log = logging.getLogger(__name__)
 
 PAGES_PER_TASK = 25
 OCR_PASS = "ocr"
+PICTURE_PX = 1600  # the long side of a kept picture, at most
+PICTURE_QUALITY = 85
+# Blank page test (see is_blank): at 150 dpi, a pixel darker than this is ink...
+_INK = 160
+# ...and a page with more ink pixels than this, left after a 3 x 3 erosion, is not blank
+_INK_PIXELS = 2
 Chosen = tuple[Provider, PassConfig]
 
 
@@ -114,8 +125,15 @@ def _scan(
     pdf = storage.read_source_pdf(plan.book_id)
     with sf() as s:
         pages = int(s.get(Job, plan.job_id).stats.get("pages") or 0)
-    kinds: list[PageKind] = run_isolated(classify_pages, pdf, timeout=120 + pages)
+    try:
+        kinds: list[PageKind] = run_isolated(classify_pages, pdf, timeout=120 + pages)
+    except PageReadError as exc:  # each page is still rendered and read on its own
+        log.warning("the pages of book %s could not be sorted (%s)", plan.book_id, exc)
+        kinds = []
     del pdf
+    if len(kinds) != pages:  # pdfminer and pdfium disagree: every page pdfium counts is read
+        log.warning("book %s: %s pages sorted of %s", plan.book_id, len(kinds), pages)
+        kinds = (kinds + ["scan"] * pages)[:pages]
     note = None
     with sf() as s:
         job, task = w._lock_job_task(s, plan.job_id, task_id)
@@ -163,7 +181,7 @@ def _pages(
             reocr = bool(job.stats.get("reocr"))
             variant = job.stats["variant"]
             ai = _engine(job, deps.registry, plan.local_only) is not None
-        todo = [p for p in range(first, last + 1) if storage.read_page(plan.book_id, p) is None]
+        todo = [p for p in range(first, last + 1) if not storage.has_page(plan.book_id, p)]
         free = [p for p in todo if not (ai and needs_ocr(kinds[p], reocr))]
         paid_pages = [p for p in todo if p not in free]
         for page in free:
@@ -171,7 +189,7 @@ def _pages(
                 w._requeue_for_stop(sf, task_id, plan)
                 return
             result = _read_free(pdf, page, kinds[page], reocr, variant)
-            if not _save(sf, task_id, plan, deps, paid, storage, result):
+            if not _save(sf, task_id, plan, deps, paid, storage, result, None):
                 return
         verdict = _read_paid(sf, task_id, plan, deps, paid, storage, stop, pdf, paid_pages)
         if verdict == "stop":
@@ -204,13 +222,15 @@ def _read_paid(
         if verdict in ("stop", "swapped"):
             return verdict
         first = False
+        fallback = None
         if verdict == "ai":
-            result = _read_ai(pdf, page, chosen, variant, paid)
+            result, fallback = _read_ai(pdf, page, chosen, variant, paid)
         elif verdict == "capped":
             result = _read_scan(pdf, page, variant, after="the job's cost cap was reached")
+            fallback = "cost_cap" if result.source != "blank" else None
         else:  # the engine became Tesseract while the job ran (use_tesseract)
             result = _read_scan(pdf, page, variant)
-        if not _save(sf, task_id, plan, deps, paid, storage, result):
+        if not _save(sf, task_id, plan, deps, paid, storage, result, fallback):
             return "stop"
     return "done"
 
@@ -278,18 +298,47 @@ def _failed(page: int, error: str) -> PageResult:
     return PageResult(page, "failed", [], error=error[:500])
 
 
+def is_blank(png: bytes) -> bool:
+    """True for a page image with no ink: nothing darker than mid grey at 150 dpi survives
+    a 3 x 3 erosion, so specks of dust up to about 4 px at 300 dpi do not count, while one
+    short word does. Grey paper and show-through are lighter than ink, so they count as
+    blank too."""
+    from PIL import Image, ImageChops
+
+    with Image.open(io.BytesIO(png)) as image:
+        gray = image.convert("L")
+    half = gray.resize((max(gray.width // 2, 1), max(gray.height // 2, 1)), Image.Resampling.BOX)
+    ink = half.point(lambda v: 255 if v < _INK else 0)
+    eroded = ink
+    for dx in (-1, 0, 1):
+        for dy in (-1, 0, 1):
+            if dx or dy:
+                eroded = ImageChops.darker(eroded, ImageChops.offset(ink, dx, dy))
+    return eroded.histogram()[255] <= _INK_PIXELS
+
+
+def _render(pdf: bytes, page: int) -> tuple[bytes | None, PageResult | None]:
+    """The page's image, or instead the page's result when it is failed or blank."""
+    try:
+        png = render_page(pdf, page)
+    except PageReadError as exc:
+        return None, _failed(page, str(exc))
+    if is_blank(png):
+        return None, PageResult(page, "blank", [])
+    return png, None
+
+
 def _read_free(pdf: bytes, page: int, kind: PageKind, reocr: bool, variant: str) -> PageResult:
     if kind == "blank":
-        return PageResult(page, "text", [])
+        return PageResult(page, "blank", [])
     if kind == "text" or (kind == "scan_with_layer" and not reocr):
         try:
             return run_isolated(read_text_page, pdf, page)
         except PageReadError as exc:
             return _failed(page, str(exc))
-    try:
-        png = render_page(pdf, page)
-    except PageReadError as exc:
-        return _failed(page, str(exc))
+    png, done = _render(pdf, page)
+    if done is not None:
+        return done
     if kind == "image":
         block = PageBlock("image", image=png, image_type="image/png", top=0.0, bottom=1.0)
         return PageResult(page, "image", [block])
@@ -313,20 +362,29 @@ def _tesseract(png: bytes, page: int, variant: str, *, after: str | None = None)
 
 
 def _read_scan(pdf: bytes, page: int, variant: str, *, after: str | None = None) -> PageResult:
-    try:
-        png = render_page(pdf, page)
-    except PageReadError as exc:
-        return _failed(page, str(exc))
+    png, done = _render(pdf, page)
+    if done is not None:
+        return done
     return _tesseract(png, page, variant, after=after)
 
 
-def _read_ai(pdf: bytes, page: int, chosen: Chosen, variant: str, paid: w._Paid) -> PageResult:
-    """The AI's reading of a page, or Tesseract's when the AI gives nothing usable. Every
-    billed call goes to ``paid.calls`` before anything else can raise."""
-    try:
-        png = render_page(pdf, page)
-    except PageReadError as exc:
-        return _failed(page, str(exc))
+def _fallback_reason(exc: Exception) -> str:
+    if isinstance(exc, ModelRefusal):
+        return "refusal"
+    if isinstance(exc, BilledError):
+        return "billed_error"
+    return "error"
+
+
+def _read_ai(
+    pdf: bytes, page: int, chosen: Chosen, variant: str, paid: w._Paid
+) -> tuple[PageResult, str | None]:
+    """The AI's reading of a page, or Tesseract's when the AI gives nothing usable, with the
+    reason it fell back (None when it did not). Every billed call goes to ``paid.calls``
+    before anything else can raise."""
+    png, done = _render(pdf, page)
+    if done is not None:
+        return done, None
     provider, cfg = chosen
     try:
         result, usage = ai_page(provider, cfg, png, page, variant)
@@ -335,10 +393,43 @@ def _read_ai(pdf: bytes, page: int, chosen: Chosen, variant: str, paid: w._Paid)
         if billed is not None:
             paid.calls.append(billed)
         log.warning("the AI could not read page %s (%s); Tesseract reads it", page + 1, exc)
-        return _tesseract(png, page, variant, after=f"the AI failed ({type(exc).__name__})")
+        after = f"the AI failed ({type(exc).__name__})"
+        return _tesseract(png, page, variant, after=after), _fallback_reason(exc)
     paid.calls.append(w.Billed(usage, cfg.model, cfg.provider))
     if not result.blocks:
-        return _tesseract(png, page, variant, after="the AI found nothing on the page")
+        return _tesseract(png, page, variant, after="the AI found nothing on the page"), "empty"
+    return result, None
+
+
+def _as_jpeg(data: bytes) -> bytes:
+    """A picture as an RGB JPEG whose long side is at most PICTURE_PX; transparency on white.
+    Bytes Pillow cannot read are kept as they are."""
+    from PIL import Image
+
+    try:
+        with Image.open(io.BytesIO(data)) as image:
+            if image.mode in ("RGBA", "LA", "P", "PA"):
+                rgba = image.convert("RGBA")
+                picture = Image.new("RGB", rgba.size, "white")
+                picture.paste(rgba, mask=rgba.getchannel("A"))
+            else:
+                picture = image.convert("RGB")
+    except (OSError, ValueError, Image.DecompressionBombError):
+        return data
+    picture.thumbnail((PICTURE_PX, PICTURE_PX), Image.Resampling.LANCZOS)  # never enlarges
+    out = io.BytesIO()
+    picture.save(out, "JPEG", quality=PICTURE_QUALITY)
+    return out.getvalue()
+
+
+def _compact(result: PageResult) -> PageResult:
+    """The result with every picture re-encoded by _as_jpeg, so the build holds no
+    full-page PNGs."""
+    for block in result.blocks:
+        if block.kind == "image" and block.image is not None:
+            jpeg = _as_jpeg(block.image)
+            if jpeg is not block.image:
+                block.image, block.image_type = jpeg, "image/jpeg"
     return result
 
 
@@ -350,17 +441,23 @@ def _save(
     paid: w._Paid,
     storage: Storage,
     result: PageResult,
+    fallback: str | None,
 ) -> bool:
-    """Keep one page's result with the spend of its model calls. False: stop the task (the
-    job was cancelled or failed; the task goes back to the queue for a resume)."""
+    """Keep one page's result with the spend of its model calls, and why the AI did not read
+    it (``fallback``). False: stop the task (the job was cancelled or failed; the task goes
+    back to the queue for a resume)."""
     configured = configured_ocr_model((paid.deps or deps).registry)
+    result = _compact(result)
     with sf() as s:
         job, task = w._lock_job_task(s, plan.job_id, task_id)
         for billed in paid.calls:
             w._usage_row(s, job, billed, (paid.deps or deps).registry, configured, OCR_PASS)
-        if storage.read_page(plan.book_id, result.page) is None:
+        if not storage.has_page(plan.book_id, result.page):
             storage.save_page(plan.book_id, result.page, to_json(result))
             job.stats = w._bump(job.stats, pages_done=1)
+            if fallback is not None:
+                counts = w._bump(job.stats.get("ai_fallbacks") or {}, **{fallback: 1})
+                job.stats = {**job.stats, "ai_fallbacks": counts}
         go = job.status in ACTIVE_JOB_STATUSES  # a pause does not stop free pages
         if not go and task.status != "done":
             task.status = "queued"
@@ -407,6 +504,7 @@ def _build(
         count = int(job.stats.get("pages") or len(job.stats.get("kinds") or []))
         variant = job.stats["variant"]
         target = job.stats.get("target_variant")
+        fallbacks = dict(job.stats.get("ai_fallbacks") or {})
         title = s.get(Book, plan.book_id).title
     pages: list[PageResult] = []
     for page in range(count):
@@ -414,7 +512,7 @@ def _build(
         if saved is None:
             raise RuntimeError(f"page {page + 1} of the PDF was never read")
         pages.append(from_json(saved))
-    summary = report(pages)
+    summary = {**report(pages), "ai_fallbacks": fallbacks}
     docx = build_docx(assemble(pages), title=title, language=variant)
     del pages
     note = None
@@ -438,6 +536,8 @@ def _build(
             s.flush()
             populate_from_docx(s, storage, source, docx, variant)
             make_translation(s, storage, source=source, book=book, target_variant=target)
+            book = s.get(Book, plan.book_id)
+            book.title = book.translated_title or book.title  # as import_for_translation
         else:
             populate_from_docx(s, storage, book, docx, variant)
         book = s.get(Book, plan.book_id)

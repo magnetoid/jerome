@@ -32,7 +32,7 @@ class PageBlock:
 @dataclass
 class PageResult:
     page: int
-    source: Literal["text", "tesseract", "ai", "image", "failed"]
+    source: Literal["text", "tesseract", "ai", "image", "blank", "failed"]
     blocks: list[PageBlock] = field(default_factory=list)
     error: str | None = None
 
