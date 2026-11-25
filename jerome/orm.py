@@ -439,6 +439,26 @@ class TransferLink(Base):
     used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class LearnedWord(Base):
+    """A word LanguageTool must not mark again, in any book of its language: saved from a
+    mark the AI rated not_an_error. ``rule`` is "*" for any spelling rule, else one rule id."""
+
+    __tablename__ = "learned_words"
+    __table_args__ = (
+        CheckConstraint(_in("language", ("en", "de")), name="ck_learned_words_language"),
+        Index("uq_learned_words", "language", "word", "rule", unique=True),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    language: Mapped[str] = mapped_column(String)
+    word: Mapped[str] = mapped_column(String)
+    rule: Mapped[str] = mapped_column(String)
+    reason: Mapped[str | None] = mapped_column(Text)
+    book_id: Mapped[int | None] = mapped_column(ForeignKey("books.id", ondelete="SET NULL"))
+    created_by: Mapped[str] = mapped_column(String)
+    created_at: Mapped[datetime] = _ts()
+
+
 SETTINGS_AUDIT_ACTIONS = ("set", "replaced", "cleared", "reset", "key_created", "key_revoked")
 
 
