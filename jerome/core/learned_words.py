@@ -13,17 +13,17 @@ from jerome.core.style_sheets import get_style_sheet
 from jerome.core.suggestions import Channel, decide
 from jerome.errors import Conflict, NotFound
 from jerome.orm import LearnedWord, Suggestion
+from jerome.proofread.languagetool import ANY_SPELLING, LearnedRules, covers
 
-ANY_SPELLING = "*"
-
-LearnedRules = frozenset[tuple[str, str]]  # (word, rule) pairs for one language
-
-
-def covers(rules: LearnedRules, word: str, rule_id: str | None, *, misspelling: bool) -> bool:
-    """True if a LanguageTool match of ``word`` under ``rule_id`` is a learned word."""
-    if misspelling and (word, ANY_SPELLING) in rules:
-        return True
-    return rule_id is not None and (word, rule_id) in rules
+__all__ = [
+    "ANY_SPELLING",
+    "LearnedRules",
+    "covers",
+    "delete_word",
+    "list_words",
+    "remember",
+    "rules_for",
+]
 
 
 def rules_for(session: Session, language: str) -> LearnedRules:
