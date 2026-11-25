@@ -66,3 +66,27 @@ def test_a_picture_only_page_becomes_an_image_block():
     assert [b.kind for b in result.blocks] == ["image"]
     assert result.blocks[0].image == png
     assert result.blocks[0].image_type == "image/png"
+
+
+def test_blocks_keep_tesseracts_order_headings_and_clamped_bottom():
+    header = "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth"
+    header += "\theight\tconf\ttext"
+
+    def row(block, line, word, top, height, text):
+        return f"5\t1\t{block}\t1\t{line}\t{word}\t0\t{top}\t50\t{height}\t90\t{text}"
+
+    tsv = "\n".join(
+        [
+            header,
+            "1\t1\t0\t0\t0\t0\t0\t0\t10\t10\t-1\t",  # a page row, not a word
+            row(1, 1, 1, 500, 20, "first"),
+            row(1, 1, 2, 500, 20, "block"),
+            row(1, 2, 1, 990, 20, "low"),
+            row(2, 1, 1, 100, 40, "Title"),
+        ]
+    )
+    blocks = ocr_tesseract._blocks(ocr_tesseract._words(tsv), 1000)
+    assert [b.runs[0].text for b in blocks] == ["first block low", "Title"]  # block order
+    assert [b.kind for b in blocks] == ["paragraph", "heading"]
+    assert blocks[0].bottom == 1.0
+    assert blocks[1].top == 0.1

@@ -93,5 +93,4 @@ def _blocks(words: list[dict], height: int) -> list[PageBlock]:
                 size=statistics.fmean(w["height"] for w in group),
             )
         )
-    blocks.sort(key=lambda b: b.top)
     return blocks
