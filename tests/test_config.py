@@ -14,6 +14,7 @@ def test_defaults(monkeypatch):
     assert s.models == {
         "ai": {"provider": "anthropic", "model": "claude-opus-5-5", "effort": "high"},
         "translate": {"provider": "anthropic", "model": "claude-opus-5-5", "effort": "high"},
+        "ocr": {"provider": "anthropic", "model": "claude-opus-5-5", "effort": "high"},
     }
     assert s.prices == {}
     assert s.webhook_secret is None

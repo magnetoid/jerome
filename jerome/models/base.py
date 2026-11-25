@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -64,6 +65,7 @@ class Provider(Protocol):
         schema: dict,
         max_tokens: int = 16000,
         effort: str | None = None,
+        images: Sequence[tuple[bytes, str]] = (),
     ) -> CompletionResult: ...
 
     def count_tokens(self, *, model: str, system: list[SystemPart], user: str) -> int | None: ...

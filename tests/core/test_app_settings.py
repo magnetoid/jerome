@@ -31,6 +31,7 @@ def test_key_lists():
     assert RUNTIME_KEYS == (
         "models.ai",
         "models.translate",
+        "models.ocr",
         "prices",
         "text_daily_cost_cap",
         "text_rpm",

@@ -19,6 +19,7 @@ from jerome.orm import AppSetting
 RUNTIME_KEYS: tuple[str, ...] = (
     "models.ai",
     "models.translate",
+    "models.ocr",
     "prices",
     "text_daily_cost_cap",
     "text_rpm",
@@ -45,7 +46,7 @@ _EFFORTS = ("low", "medium", "high", "xhigh", "max")
 _PRESETS = ("openai", "gemini", "mistral", "openrouter", "xai")  # jerome.models.registry
 _PROVIDERS = ("anthropic", *_PRESETS, "openai_compat", "deepl")
 _PRICE_FIELDS = ("input", "output", "cache_read", "cache_write")
-_MODEL_KEYS = ("models.ai", "models.translate")
+_MODEL_KEYS = ("models.ai", "models.translate", "models.ocr")
 _LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1")
 
 
@@ -217,6 +218,7 @@ def _public_base_url(value: Any) -> str | None:
 _VALIDATORS: dict[str, Callable[[Any], Any]] = {
     "models.ai": _models_pass("ai"),
     "models.translate": _models_pass("translate"),
+    "models.ocr": _models_pass("ocr"),
     "prices": _prices,
     "text_daily_cost_cap": _cost_cap,
     "text_rpm": _integer(1, 10000),
@@ -298,7 +300,7 @@ def overlay(base: Settings, rows: Sequence[AppSetting], box: SecretBox | None) -
         ),
     }
     # A provider key in the environment comes inside JEROME_MODELS, beside its provider
-    for pass_name in ("ai", "translate"):
+    for pass_name in ("ai", "translate", "ocr"):
         config = base.models.get(pass_name)
         if isinstance(config, dict) and config.get("api_key"):
             key = f"{config.get('provider')}_api_key"
@@ -350,7 +352,7 @@ def overlay(base: Settings, rows: Sequence[AppSetting], box: SecretBox | None) -
         k: dict(v) if isinstance(v, dict) else v
         for k, v in update.get("models", base.models).items()
     }
-    for pass_name in ("ai", "translate"):
+    for pass_name in ("ai", "translate", "ocr"):
         config = models.get(pass_name)
         if isinstance(config, dict):
             config.pop("api_key", None)

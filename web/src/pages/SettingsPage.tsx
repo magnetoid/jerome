@@ -78,6 +78,13 @@ export default function SettingsPage() {
               allowDeepl
               keyed={keyed}
             />
+            <ModelSettings
+              key={stamp("models.ocr")}
+              row={row("models.ocr")!}
+              label="PDF page reading model"
+              idPrefix="ocr"
+              keyed={keyed}
+            />
           </section>
 
           <section className="space-y-3" aria-labelledby="h-limits">

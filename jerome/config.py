@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     models: dict[str, Any] = {
         "ai": {"provider": "anthropic", "model": "claude-opus-5-5", "effort": "high"},
         "translate": {"provider": "anthropic", "model": "claude-opus-5-5", "effort": "high"},
+        "ocr": {"provider": "anthropic", "model": "claude-opus-5-5", "effort": "high"},
     }
     prices: dict[str, Any] = {}
     webhook_secret: str | None = None

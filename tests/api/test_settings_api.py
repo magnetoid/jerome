@@ -34,6 +34,7 @@ def test_get_lists_keys_in_order(web_client, session):
     assert [s["key"] for s in body["settings"]] == [
         "models.ai",
         "models.translate",
+        "models.ocr",
         "prices",
         "text_daily_cost_cap",
         "text_rpm",
