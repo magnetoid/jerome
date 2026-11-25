@@ -10,6 +10,7 @@ from jerome.api.schemas import (
     ApiKeyCreatedOut,
     ApiKeyCreateIn,
     ApiKeyOut,
+    LearnedWordOut,
     ProviderModelsOut,
     SecretSettingOut,
     SettingOut,
@@ -19,7 +20,7 @@ from jerome.api.schemas import (
     SystemSettingsOut,
 )
 from jerome.config import Settings
-from jerome.core import keys, settings_changes
+from jerome.core import keys, learned_words, settings_changes
 from jerome.core.app_settings import (
     RUNTIME_KEYS,
     SECRET_KEYS,
@@ -172,3 +173,15 @@ def create_key(body: ApiKeyCreateIn, session: SessionDep, who: Admin):
 @router.delete("/api-keys/{key_id}", response_model=ApiKeyOut)
 def revoke_key(key_id: int, session: SessionDep, who: Admin):
     return keys.revoke_api_key(session, key_id, actor=who.actor)
+
+
+@router.get("/learned-words", response_model=list[LearnedWordOut])
+def list_learned_words(session: SessionDep):
+    return learned_words.list_words(session)
+
+
+@router.delete("/learned-words/{word_id}", status_code=204)
+def delete_learned_word(word_id: int, session: SessionDep):
+    """Forget a learned word; the marks it rejected stay rejected."""
+    learned_words.delete_word(session, word_id)
+    return Response(status_code=204)
