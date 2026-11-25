@@ -277,9 +277,12 @@ class Suggestion(Base):
     disputed: Mapped[bool] = mapped_column(Boolean, server_default=sql_text("false"))
     alternative: Mapped[str | None] = mapped_column(Text)
     rule: Mapped[str | None] = mapped_column(String)
+    # LanguageTool's replacements in its order (the first is ``replacement``); None before 0011
+    options: Mapped[list[str] | None] = mapped_column(JSONB)
+    lt_rule: Mapped[str | None] = mapped_column(String)  # LanguageTool's rule id
     # the AI's view of a LanguageTool-only mark, asked for in review (None until asked)
     ai_verdict: Mapped[str | None] = mapped_column(String)
-    ai_replacement: Mapped[str | None] = mapped_column(Text)  # only for "better"
+    ai_replacement: Mapped[str | None] = mapped_column(Text)  # the AI's fix; None if no error
     ai_reason: Mapped[str | None] = mapped_column(Text)
     ai_model: Mapped[str | None] = mapped_column(String)
     created_at: Mapped[datetime] = _ts()

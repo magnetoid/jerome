@@ -8,7 +8,9 @@ from urllib.parse import urlparse
 
 import httpx
 
+from jerome.documents.changes import check_replacement_text
 from jerome.documents.model import PLACEHOLDER
+from jerome.errors import InvalidChangeError
 from jerome.types import BlockText, Candidate, Category, Severity, Source, StyleSheet
 
 _ISSUE_MAP: dict[str, tuple[Category, Severity]] = {
@@ -105,6 +107,27 @@ def _utf16_to_index(text: str) -> list[int]:
     return table
 
 
+MAX_OPTIONS = 5  # of LanguageTool's replacements kept for a mark
+
+
+def _options(replacements: Sequence[dict], original: str) -> tuple[str, ...]:
+    """LanguageTool's usable replacements, in its order: none equal to the original or to
+    an earlier one, none with a character a replacement cannot have, at most MAX_OPTIONS."""
+    kept: list[str] = []
+    for r in replacements:
+        value = r.get("value")
+        if not isinstance(value, str) or value == original or value in kept:
+            continue
+        try:
+            check_replacement_text(value)
+        except InvalidChangeError:
+            continue
+        kept.append(value)
+        if len(kept) == MAX_OPTIONS:
+            break
+    return tuple(kept)
+
+
 def languagetool_candidates(
     blocks: Sequence[BlockText], style: StyleSheet, client: LanguageToolClient
 ) -> tuple[list[Candidate], int]:
@@ -123,15 +146,17 @@ def languagetool_candidates(
             start = table[m["offset"]]
             end = table[m["offset"] + m["length"]]
             original = text[start:end]
-            replacement = m["replacements"][0]["value"]
-            issue = m.get("rule", {}).get("issueType", "")
+            options = _options(m["replacements"], original)
+            rule = m.get("rule", {})
+            issue = rule.get("issueType", "")
             if (
                 (issue == "misspelling" and original in ignore)
                 or PLACEHOLDER in original
-                or replacement == original
+                or not options
             ):
                 dropped += 1
                 continue
+            replacement = options[0]
             category, severity = _ISSUE_MAP.get(issue, _FALLBACK)
             candidates.append(
                 Candidate(
@@ -144,6 +169,8 @@ def languagetool_candidates(
                     severity,
                     Source.LANGUAGETOOL,
                     m.get("message", ""),
+                    options=options,
+                    lt_rule=rule.get("id"),
                 )
             )
     return candidates, dropped

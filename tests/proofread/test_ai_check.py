@@ -51,7 +51,7 @@ def test_request_shows_each_mark_in_its_context():
     assert '<mark id="5">' in user and '<mark id="6">' in user
     assert "Katharina said ⟦teh⟧ cat sat on the mat, and nobody " in user
     assert "Possible spelling mistake found." in user
-    assert "LanguageTool's fix: the" in user
+    assert "LanguageTool's options:\n1. the\n" in user
     # a span near the start has no "…" before it; context is at most 40 characters a side
     assert "in context: ⟦Katharina⟧ said teh cat sat on the mat, and nobody…" in user
 
@@ -112,51 +112,65 @@ def test_pick_context_stays_within_the_character_limit():
     assert pick_context(["One.", "y" * 1600 + ".", "Three."], have=0) == ["One."]
 
 
-def test_schema_asks_for_the_three_verdicts():
+def test_schema_asks_for_the_three_ratings():
     entry = VERDICT_SCHEMA["properties"]["verdicts"]["items"]
-    assert entry["properties"]["verdict"]["enum"] == ["correct", "not_an_error", "better"]
+    assert entry["properties"]["verdict"]["enum"] == ["error", "maybe_error", "not_an_error"]
     assert set(entry["required"]) == {"id", "verdict", "replacement", "reason"}
 
 
-def test_parses_the_three_verdicts():
+def test_request_lists_languagetool_options():
+    teh = Mark(5, 15, 18, "teh", "the", "Spelling.", options=("the", "tea", "ten"))
+    _, user = build_request(STYLE_EN, TEXT, [teh], before=[], after=[], source=None)
+    assert "LanguageTool's options:\n1. the\n2. tea\n3. ten\n" in user
+    _, old = build_request(STYLE_EN, TEXT, [TEH], before=[], after=[], source=None)
+    assert "LanguageTool's options:\n1. the\n" in old  # a mark from before options
+
+
+def test_parses_the_three_ratings():
     marks = [TEH, NAME, Mark(7, 23, 26, "sat", "sits", "Tense.")]
     got = parse_verdicts(
         reply(
-            item(5, "better", "the", "Typo."),  # equal to LT's fix: see the next test
+            item(5, "error", "the", "Typo."),
             item(6, "not_an_error", "ignored", "A name."),
-            item(7, "better", "was sitting", "Keeps the past tense."),
+            item(7, "maybe_error", "was sitting", "Keeps the past tense."),
         ),
         marks,
     )
     assert got == [
-        Verdict(5, "correct", None, "Typo."),
+        Verdict(5, "error", "the", "Typo."),
         Verdict(6, "not_an_error", None, "A name."),
-        Verdict(7, "better", "was sitting", "Keeps the past tense."),
-    ]
-    assert parse_verdicts(reply(item(5, "correct", "x", "Right.")), [TEH]) == [
-        Verdict(5, "correct", None, "Right.")
+        Verdict(7, "maybe_error", "was sitting", "Keeps the past tense."),
     ]
 
 
-def test_better_equal_to_lt_fix_is_correct():
-    assert parse_verdicts(reply(item(5, "better", "the", "Typo.")), [TEH]) == [
-        Verdict(5, "correct", None, "Typo.")
+@pytest.mark.parametrize("rating", ["error", "maybe_error"])
+def test_an_empty_fix_takes_languagetools_first_option(rating):
+    teh = Mark(5, 15, 18, "teh", "the", "Spelling.", options=("the", "tea"))
+    assert parse_verdicts(reply(item(5, rating, "", "Typo.")), [teh]) == [
+        Verdict(5, rating, "the", "Typo.")
     ]
+
+
+def test_a_fix_can_be_another_option_or_the_ais_own():
+    teh = Mark(5, 15, 18, "teh", "the", "Spelling.", options=("the", "tea"))
+    assert parse_verdicts(reply(item(5, "error", "tea", "Tea.")), [teh])[0].replacement == "tea"
+    assert parse_verdicts(reply(item(5, "error", "The", "Own.")), [teh])[0].replacement == "The"
 
 
 @pytest.mark.parametrize(
     "raw",
     [
-        item(99, "correct"),
-        item(5, "maybe"),
-        item(5, "correct", reason="  "),
-        item(5, "better", ""),
-        item(5, "better", "teh"),
-        item(5, "better", "th￼e"),
-        item(5, "better", "th\x07e"),
+        item(99, "error"),
+        item(5, "correct"),
+        item(5, "better", "the"),
+        item(5, "error", reason="  "),
+        item(5, "error", "teh"),
+        item(5, "maybe_error", "teh"),
+        item(5, "error", "th￼e"),
+        item(5, "error", "th\x07e"),
         "not a dict",
-        {"id": 5, "verdict": "correct"},
-        {"id": "5", "verdict": "correct", "replacement": "", "reason": "x"},
+        {"id": 5, "verdict": "error"},
+        {"id": "5", "verdict": "error", "replacement": "", "reason": "x"},
     ],
 )
 def test_unusable_items(raw):
@@ -164,7 +178,7 @@ def test_unusable_items(raw):
 
 
 def test_a_repeated_id_keeps_the_first():
-    got = parse_verdicts(reply(item(5, "not_an_error"), item(5, "correct")), [TEH])
+    got = parse_verdicts(reply(item(5, "not_an_error"), item(5, "error")), [TEH])
     assert [v.verdict for v in got] == ["not_an_error"]
 
 

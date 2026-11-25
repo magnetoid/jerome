@@ -63,17 +63,19 @@ super admin signed in to the web interface.
 
 **Asking the AI about a LanguageTool mark.** LanguageTool often marks text that is fine
 (names, dialogue, the author's style). On the review card of a mark LanguageTool made alone,
-**Ask AI** asks the proofreading AI model (`models.ai`) whether the mark is right. The AI reads the mark's
-paragraph with at least three sentences before and after it, taken from the neighbouring
-paragraphs of the same chapter when the paragraph is short. The card then shows its verdict
-and reason. "LanguageTool is right" keeps the fix. "Not an error"
-makes Reject the main button. "A better fix" offers **Use AI fix**, which accepts the mark
-with the AI's text. Nothing is accepted or rejected by the check itself, and the verdict is
-kept with the suggestion. **Check LT marks in this chapter**, in the review toolbar, asks
-about up to 40 unchecked marks per click, one call per paragraph; it stops starting new
-paragraphs after about 40 seconds and says how many are left. Each check is a paid model
-call, billed to the proofreading job and counted against the per-minute text rate limit. The
-check is refused while a job runs on the book.
+**Ask AI** asks the proofreading AI model (`models.ai`) whether the mark is right. The AI
+reads the mark's paragraph with at least three sentences before and after it, taken from the
+neighbouring paragraphs of the same chapter when the paragraph is short, and it weighs every
+option LanguageTool offered (up to five, listed on the card; clicking one accepts the mark
+with it). It answers with one of three ratings, shown in colour with its reason: "definitely
+an error" with its fix (one of LanguageTool's options or its own text), which becomes the
+main button; "maybe an error" with the fix it would pick, and no main button; or "definitely
+not an error", which makes Reject the main button. Nothing is accepted or rejected by the
+check itself, and the rating is kept with the suggestion. **Check LT marks in this
+chapter**, in the review toolbar, asks about up to 40 unchecked marks per click, one call
+per paragraph; it stops starting new paragraphs after about 40 seconds and says how many are
+left. Each check is a paid model call, billed to the proofreading job and counted against
+the per-minute text rate limit. The check is refused while a job runs on the book.
 Over MCP the same check is the `ai_check_suggestion` tool.
 
 **First login.** There is no sign-up. Create each member once, inside the API container:

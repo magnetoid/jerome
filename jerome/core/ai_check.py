@@ -145,7 +145,10 @@ def _ask(
 
     provider, cfg = chosen
     job_id = _job_for(session, book.id, marks)
-    asked = [Mark(s.id, s.start, s.end, s.original, s.replacement, s.explanation) for s in marks]
+    asked = [
+        Mark(s.id, s.start, s.end, s.original, s.replacement, s.explanation, tuple(s.options or ()))
+        for s in marks
+    ]
     have_before, have_after = room_around(block.text, asked)
     before = pick_context(_neighbours(session, block, earlier=True), have_before)
     after = pick_context(_neighbours(session, block, earlier=False), have_after)

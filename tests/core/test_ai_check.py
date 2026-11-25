@@ -88,14 +88,14 @@ def test_single_check_saves_the_verdict_and_bills_the_job(
     sf = session_factory
     book_id, (b1, _), job_id = book(sf, tmp_storage)
     sid = mark(sf, b1, 15, 18, "tea", job_id=job_id)
-    provider = FakeProvider([answer("better", "the")])
+    provider = FakeProvider([answer("error", "the")])
     with sf() as s:
         got = check_suggestion(s, registry(test_settings, provider), sid, actor="a")
         s.commit()
         assert got.id == sid
     r = row(sf, sid)
     assert (r.ai_verdict, r.ai_replacement, r.ai_reason, r.ai_model) == (
-        "better", "the", "Because.", "claude-opus-5-5",
+        "error", "the", "Because.", "claude-opus-5-5",
     )  # fmt: skip
     assert r.status == "open"
     rows = usage(sf, job_id)
@@ -128,14 +128,14 @@ def test_request_has_the_neighbouring_paragraphs(session_factory, tmp_storage, t
     sf = session_factory
     _, (b1, b2), job_id = book(sf, tmp_storage)
     sid = mark(sf, b2, 8, 13, "barked", job_id=job_id)
-    provider = FakeProvider([answer("correct")])
+    provider = FakeProvider([answer("error")])
     with sf() as s:
         check_suggestion(s, registry(test_settings, provider), sid, actor="a")
         s.commit()
     user = provider.calls[0]["user"]
     assert _context_of(user, "previous_paragraphs") == "Katharina said teh cat sat."
     assert _context_of(user, "following_paragraphs") is None  # the last paragraph
-    assert row(sf, sid).ai_verdict == "correct"
+    assert row(sf, sid).ai_verdict == "error"
 
 
 DIALOGUE = (
@@ -188,7 +188,7 @@ def test_chapter_check_gives_each_paragraph_its_own_context(
         ({"status": "accepted"}, "not open"),
         ({"source": "model"}, "LanguageTool alone"),
         ({"agreed": True}, "LanguageTool alone"),
-        ({"ai_verdict": "correct", "ai_reason": "r"}, "already"),
+        ({"ai_verdict": "error", "ai_reason": "r"}, "already"),
     ],
 )
 def test_not_eligible_conflicts(session_factory, tmp_storage, test_settings, kw, why):
@@ -260,7 +260,7 @@ def test_mark_decided_during_the_call_keeps_its_status(session_factory, tmp_stor
     sf = session_factory
     _, (b1, _), job_id = book(sf, tmp_storage)
     sid = mark(sf, b1, 15, 18, "the", job_id=job_id)
-    reply = answer("correct")
+    reply = answer("error")
 
     def accepted_meanwhile(kwargs):
         with sf() as other:  # a teammate accepts the mark while the model thinks
@@ -275,7 +275,7 @@ def test_mark_decided_during_the_call_keeps_its_status(session_factory, tmp_stor
         s.commit()
         assert got.status == "accepted"
     r = row(sf, sid)
-    assert (r.status, r.ai_verdict) == ("accepted", "correct")
+    assert (r.status, r.ai_verdict) == ("accepted", "error")
 
 
 def test_chapter_groups_by_paragraph(session_factory, tmp_storage, test_settings):
@@ -327,14 +327,14 @@ def test_chapter_counts_failed_marks(session_factory, tmp_storage, test_settings
     book_id, (b1, b2), job_id = book(sf, tmp_storage)
     bad = mark(sf, b1, 15, 18, "tea", job_id=job_id)
     good = mark(sf, b2, 8, 13, "barked", job_id=job_id)
-    provider = FakeProvider([{"verdicts": []}, answer("correct")])
+    provider = FakeProvider([{"verdicts": []}, answer("error")])
     with sf() as s:
         got = check_chapter(s, registry(test_settings, provider), book_id, b1.chapter_id, actor="a")
         s.commit()
         checked = [r.id for r in got.checked]
     assert checked == [good]
     assert (got.remaining, got.failed) == (0, 1)
-    assert row(sf, bad).ai_verdict is None and row(sf, good).ai_verdict == "correct"
+    assert row(sf, bad).ai_verdict is None and row(sf, good).ai_verdict == "error"
     assert len(usage(sf, job_id)) == 2
 
 

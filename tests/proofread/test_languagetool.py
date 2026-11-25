@@ -108,6 +108,37 @@ def test_first_replacement_used(respx_mock):
     assert cands[0].replacement == "the"
 
 
+def _with_options(offset, length, *values, rule_id="MORFOLOGIK_RULE_EN_US"):
+    m = lt_match(offset, length, repl=values[0])
+    m["replacements"] = [{"value": v} for v in values]
+    m["rule"]["id"] = rule_id
+    return m
+
+
+def test_options_kept_in_order_without_repeats_or_the_original(respx_mock):
+    m = _with_options(0, 3, "the", "teh", "tea", "the", "ten", "tech", "Ted", "toe")
+    cands, _ = run(respx_mock, "teh", [m])
+    c = cands[0]
+    assert c.replacement == "the"
+    assert c.options == ("the", "tea", "ten", "tech", "Ted")  # at most 5
+    assert c.lt_rule == "MORFOLOGIK_RULE_EN_US"
+
+
+def test_first_option_equal_to_the_original_is_skipped(respx_mock):
+    cands, dropped = run(respx_mock, "teh", [_with_options(0, 3, "teh", "the")])
+    assert (dropped, cands[0].replacement, cands[0].options) == (0, "the", ("the",))
+
+
+def test_option_with_a_control_character_is_dropped(respx_mock):
+    cands, _ = run(respx_mock, "teh", [_with_options(0, 3, "the", "t\x07e", "tea")])
+    assert cands[0].options == ("the", "tea")
+
+
+def test_no_rule_id_keeps_none(respx_mock):
+    cands, _ = run(respx_mock, "a teh b", [lt_match(2, 3, repl="the")])
+    assert (cands[0].options, cands[0].lt_rule) == (("the",), None)
+
+
 def test_ignore_words_filter_spelling(respx_mock):
     # "Katharina" flagged misspelling, in ignore_words -> dropped
     text = "Katharina teh"

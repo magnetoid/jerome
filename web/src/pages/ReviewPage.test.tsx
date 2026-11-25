@@ -317,7 +317,7 @@ describe("focus card placement (S2)", () => {
     const summary = SUMMARY.map((c) => (c.chapter_id === 11 ? { ...c, open: 1 } : c));
     const { fetchMock } = reviewServer([block(100, 1, "𝔄 teh cat sat.", [mark])], summary, {
       "POST /v1/suggestions/1/ai-check": () =>
-        json(200, { ...mark, ai_verdict: "better", ai_replacement: "the", ai_reason: "A typo of the.", ai_model: "m-1" }),
+        json(200, { ...mark, ai_verdict: "error", ai_replacement: "the", ai_reason: "A typo of the.", ai_model: "m-1" }),
     });
     renderReview();
     await screen.findByText("1 left");
@@ -328,6 +328,38 @@ describe("focus card placement (S2)", () => {
     await userEvent.click(within(card()).getByRole("button", { name: "Use AI fix" }));
     await waitFor(() => expect(posts(fetchMock, "/v1/suggestions/1/edit")).toHaveLength(1));
     expect(bodyOf(posts(fetchMock, "/v1/suggestions/1/edit")[0])).toEqual({ replacement: "the" });
+  });
+
+  it("another LanguageTool option is used with an edit", async () => {
+    const mark = sug({
+      id: 1, block_id: 100, start: 2, end: 5, original: "teh", replacement: "the", source: "languagetool",
+      options: ["the", "tea"],
+    });
+    const summary = SUMMARY.map((c) => (c.chapter_id === 11 ? { ...c, open: 1 } : c));
+    const { fetchMock } = reviewServer([block(100, 1, "𝔄 teh cat sat.", [mark])], summary);
+    renderReview();
+    await screen.findByText("1 left");
+    await userEvent.keyboard("j");
+    const list = within(card()).getByRole("group", { name: "LanguageTool options" });
+    await userEvent.click(within(list).getByRole("button", { name: "2. tea" }));
+    await waitFor(() => expect(posts(fetchMock, "/v1/suggestions/1/edit")).toHaveLength(1));
+    expect(bodyOf(posts(fetchMock, "/v1/suggestions/1/edit")[0])).toEqual({ replacement: "tea" });
+  });
+
+  it("LanguageTool's first option accepts the mark", async () => {
+    const mark = sug({
+      id: 1, block_id: 100, start: 2, end: 5, original: "teh", replacement: "the", source: "languagetool",
+      options: ["the", "tea"],
+    });
+    const summary = SUMMARY.map((c) => (c.chapter_id === 11 ? { ...c, open: 1 } : c));
+    const { fetchMock } = reviewServer([block(100, 1, "𝔄 teh cat sat.", [mark])], summary);
+    renderReview();
+    await screen.findByText("1 left");
+    await userEvent.keyboard("j");
+    const list = within(card()).getByRole("group", { name: "LanguageTool options" });
+    await userEvent.click(within(list).getByRole("button", { name: "1. the" }));
+    await waitFor(() => expect(posts(fetchMock, "/v1/suggestions/1/accept")).toHaveLength(1));
+    expect(posts(fetchMock, "/v1/suggestions/1/edit")).toHaveLength(0);
   });
 
   it("Check LT marks posts the chapter and reports what is left", async () => {

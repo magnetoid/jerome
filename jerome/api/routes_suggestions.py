@@ -30,7 +30,7 @@ _PLAIN_FIELDS = (
     "id", "book_id", "block_id", "start", "end", "original", "replacement", "category",
     "severity", "source", "explanation", "status", "final_text", "job_id", "model",
     "created_at", "agreed", "disputed", "alternative", "rule", "ai_verdict", "ai_replacement",
-    "ai_reason", "ai_model",
+    "ai_reason", "ai_model", "options", "lt_rule",
 )  # fmt: skip
 
 PrincipalDep = Annotated[Principal, Depends(current_principal)]

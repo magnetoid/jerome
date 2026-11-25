@@ -1,7 +1,8 @@
 """Ask the AI about LanguageTool's marks in one paragraph: the request and the reply.
 
-Each mark gets one verdict: ``correct`` (LanguageTool's fix stands), ``not_an_error``, or
-``better`` (a better text for the same span). Items that cannot be used are dropped."""
+Each mark gets one rating: ``error`` (definitely an error), ``maybe_error`` or
+``not_an_error`` (definitely fine). With either error rating comes the AI's fix: one of
+LanguageTool's options, or its own text. Items that cannot be used are dropped."""
 
 import re
 from collections.abc import Sequence
@@ -30,13 +31,18 @@ class Mark:
     original: str
     replacement: str  # LanguageTool's fix
     message: str  # LanguageTool's explanation
+    options: tuple[str, ...] = ()  # all of LanguageTool's replacements; () for an older mark
+
+    @property
+    def choices(self) -> tuple[str, ...]:
+        return self.options or (self.replacement,)
 
 
 @dataclass(frozen=True)
 class Verdict:
     id: int
     verdict: str
-    replacement: str | None  # only for "better"
+    replacement: str | None  # the AI's fix; None for not_an_error
     reason: str
 
 
@@ -45,7 +51,10 @@ _ITEM = {
     "verdict": {"type": "string", "enum": list(AI_VERDICTS)},
     "replacement": {
         "type": "string",
-        "description": "The better text for the mark's span; empty unless verdict is better.",
+        "description": (
+            "Your fix for the mark's span: one of LanguageTool's options word for word, or "
+            "your own text. Empty for not_an_error."
+        ),
     },
     "reason": {"type": "string", "description": "One short sentence, in English."},
 }
@@ -165,8 +174,9 @@ def build_request(
             f'<mark id="{m.id}">\n'
             f"marked text: {m.original}\n"
             f"in context: {_in_context(text, m)}\n"
-            f"LanguageTool's fix: {m.replacement}\n"
-            f"LanguageTool's message: {m.message}\n"
+            "LanguageTool's options:\n"
+            + "".join(f"{i}. {option}\n" for i, option in enumerate(m.choices, 1))
+            + f"LanguageTool's message: {m.message}\n"
             "</mark>"
         )
     parts.append("Give one verdict for each <mark> above, by its id.")
@@ -198,14 +208,15 @@ def _parse_item(raw: object, marks: dict[int, Mark]) -> Verdict | None:
     if not isinstance(reason, str) or not reason.strip():
         return None
     mark = marks[mark_id]
-    if verdict != "better":
+    if verdict == "not_an_error":
         return Verdict(mark_id, verdict, None, reason.strip())
-    if not isinstance(replacement, str) or not replacement or replacement == mark.original:
+    if not isinstance(replacement, str):
+        return None
+    fix = replacement or mark.choices[0]  # no fix named: LanguageTool's first option
+    if fix == mark.original:
         return None
     try:
-        check_replacement_text(replacement)
+        check_replacement_text(fix)
     except InvalidChangeError:
         return None
-    if replacement == mark.replacement:  # the same fix LanguageTool proposed
-        return Verdict(mark_id, "correct", None, reason.strip())
-    return Verdict(mark_id, "better", replacement, reason.strip())
+    return Verdict(mark_id, verdict, fix, reason.strip())

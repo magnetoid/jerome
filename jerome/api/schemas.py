@@ -102,6 +102,8 @@ class SuggestionOut(BaseModel):
     disputed: bool
     alternative: str | None
     rule: str | None
+    options: list[str] | None  # LanguageTool's replacements, first = replacement
+    lt_rule: str | None
     auto_applied: bool
     decided_by: str | None
     decided_channel: str | None
