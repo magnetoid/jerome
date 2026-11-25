@@ -107,6 +107,7 @@ class SuggestionOut(BaseModel):
     auto_applied: bool
     decided_by: str | None
     decided_channel: str | None
+    decided_at: datetime | None = None  # when the latest decision was made
     job_id: int | None
     model: str | None
     created_at: datetime
