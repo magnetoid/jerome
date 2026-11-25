@@ -48,10 +48,16 @@ def count_pages(pdf: bytes) -> int:
 
 
 def _layout(pdf: bytes, page: int):
-    """pdfminer's layout of one page (0-based)."""
+    """pdfminer's layout of one page (0-based). Raises PageReadError if there is no such
+    page."""
     from pdfminer.high_level import extract_pages
 
-    return next(iter(extract_pages(io.BytesIO(pdf), page_numbers=[page])))
+    if page < 0:
+        raise PageReadError(f"There is no page {page}")
+    layout = next(iter(extract_pages(io.BytesIO(pdf), page_numbers=[page])), None)
+    if layout is None:
+        raise PageReadError(f"There is no page {page}")
+    return layout
 
 
 def _walk(item):
@@ -65,8 +71,12 @@ def _walk(item):
 
 
 def classify_pages(pdf: bytes) -> list[PageKind]:
-    """What each page is: text, scan, scan_with_layer, image or blank."""
-    return [_classify(_layout(pdf, i)) for i in range(count_pages(pdf))]
+    """What each page is: text, scan, scan_with_layer, image or blank. The document is
+    parsed once. Runs in the caller's process; call it through ``run_isolated``."""
+    from pdfminer.high_level import extract_pages
+
+    count_pages(pdf)  # refuses an unreadable, encrypted or over-long PDF
+    return [_classify(layout) for layout in extract_pages(io.BytesIO(pdf))]
 
 
 def _classify(layout) -> PageKind:
@@ -90,7 +100,8 @@ def _classify(layout) -> PageKind:
 
 def read_text_page(pdf: bytes, page: int) -> PageResult:
     """The blocks of a text page (0-based ``page``): headings and paragraphs, with italic
-    and bold runs."""
+    and bold runs. Raises PageReadError for a page the PDF does not have. Runs in the
+    caller's process; call it through ``run_isolated``."""
     from pdfminer.layout import LTTextLine
 
     layout = _layout(pdf, page)
@@ -104,7 +115,7 @@ def read_text_page(pdf: bytes, page: int) -> PageResult:
     if not lines:
         return PageResult(page, "text", [])
     body = _body_size(lines)
-    blocks = [_block(group, body, width, height) for group in _paragraphs(lines, body, width)]
+    blocks = [_block(group, body, width, height) for group in _paragraphs(lines)]
     return PageResult(page, "text", blocks)
 
 
@@ -129,7 +140,7 @@ def _body_size(lines: list[_Line]) -> float:
     return weight.most_common(1)[0][0]
 
 
-def _paragraphs(lines: list[_Line], body: float, page_width: float) -> list[list[_Line]]:
+def _paragraphs(lines: list[_Line]) -> list[list[_Line]]:
     """Group lines into paragraphs by line gap, indent and change of size."""
     left = min(line.item.x0 for line in lines)
     groups: list[list[_Line]] = [[lines[0]]]
@@ -139,8 +150,7 @@ def _paragraphs(lines: list[_Line], body: float, page_width: float) -> list[list
         new = (
             gap > 0.8 * size
             or abs(previous.size - line.size) > 0.5
-            or line.item.x0 - left > 1.0 * size
-            and previous.item.x0 - left <= 1.0 * size
+            or (line.item.x0 - left > 1.0 * size and previous.item.x0 - left <= 1.0 * size)
         )
         if new:
             groups.append([line])

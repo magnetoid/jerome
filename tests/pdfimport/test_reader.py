@@ -60,3 +60,9 @@ def test_a_page_that_kills_the_reader_fails_alone():
     with pytest.raises(PageReadError):
         run_isolated(_die)
     assert run_isolated(_double, 21) == 42
+
+
+def test_a_page_the_pdf_does_not_have_is_a_page_read_error():
+    pdf = text_pdf(_PAGE)
+    with pytest.raises(PageReadError):
+        read_text_page(pdf, 5)
