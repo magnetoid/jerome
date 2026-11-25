@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import FocusCard from "./FocusCard";
 import { aiSug, sug } from "./fixtures";
 import type { Suggestion } from "@/lib/review";
+import { formatDateTime } from "@/lib/format";
 
 function renderCard(hiddenBy: Suggestion | null, source?: string | null) {
   const noop = vi.fn();
@@ -30,12 +31,14 @@ function cardFor(
     onUseAiFix?: () => void;
     onUseOption?: (text: string) => void;
     onRemember?: () => void;
+    reverts?: boolean;
   } = {},
 ) {
   const noop = vi.fn();
   return render(
     <FocusCard
       s={s} hiddenBy={null} editing={false} busy={false} canUndo={false} asking={over.asking ?? false}
+      reverts={over.reverts}
       onAccept={noop} onReject={noop} onEdit={noop} onUndo={noop} onSave={noop} onCancelEdit={noop}
       onAskAi={over.onAskAi ?? noop} onUseAiFix={over.onUseAiFix ?? noop} onUseOption={over.onUseOption ?? noop}
       onRemember={over.onRemember ?? noop}
@@ -217,5 +220,21 @@ describe("FocusCard Remember for all books", () => {
       expect(screen.queryByRole("button", { name: "Remember for all books" })).toBeNull();
       card.unmount();
     }
+  });
+});
+
+describe("FocusCard decided mark", () => {
+  it("says who decided it and when, and offers Revert", () => {
+    const at = "2026-11-25T10:42:00Z";
+    cardFor(sug({ status: "accepted", decided_by: "bob@example.com", decided_at: at }), { reverts: true });
+    expect(screen.getByText(`Accepted by bob@example.com · ${formatDateTime(at)}`)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Revert (u)" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Undo (u)" })).not.toBeInTheDocument();
+  });
+
+  it("an open mark offers Undo", () => {
+    cardFor(sug());
+    expect(screen.getByRole("button", { name: "Undo (u)" })).toBeInTheDocument();
+    expect(screen.getByText("Needs you")).toBeInTheDocument();
   });
 });

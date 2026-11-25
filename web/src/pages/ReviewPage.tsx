@@ -67,7 +67,12 @@ function ChapterReview({ bookId, chapterId, chapters }: {
 
   const { query, blocks } = useChapterReview(bookId, chapterId);
   const items = useMemo(() => viewItems(blocks, view, filters), [blocks, view, filters]);
-  const { current: item, focus, next, prev } = useReviewFocus(items);
+  // Decided marks outside the view stay clickable, to see who decided them and revert.
+  const pickable = useMemo(
+    () => viewItems(blocks, "all", { category: "", severity: "" }).filter((it) => isDecided(it.s)),
+    [blocks],
+  );
+  const { current: item, focus, pick, next, prev } = useReviewFocus(items, pickable);
   const current = item?.s ?? null;
 
   const [shownChapter, setShownChapter] = useState(chapterId);
@@ -160,15 +165,17 @@ function ChapterReview({ bookId, chapterId, chapters }: {
     followKeys.current = false;
   }, [currentId]);
 
-  const isActive = useCallback((s: Suggestion) => inView(s, view, filters), [view, filters]);
+  const isActive = useCallback((s: Suggestion) => inView(s, view, filters) || isDecided(s), [view, filters]);
   const select = useCallback(
     (id: number) => {
       const it = items.find((x) => x.s.id === id);
+      const other = it ? undefined : pickable.find((x) => x.s.id === id);
       if (it) focus(it);
+      else if (other) pick(other);
       setEditing(null);
       setMovedOn(false);
     },
-    [items, focus],
+    [items, pickable, focus, pick],
   );
   const loadMore = useOnVisible(() => void query.fetchNextPage(), canLoadMore);
 
@@ -227,6 +234,7 @@ function ChapterReview({ bookId, chapterId, chapters }: {
                 editing={editing === current.id}
                 busy={decide.isPending || remember.isPending}
                 canUndo={canUndo}
+                reverts={undoId === current.id}
                 onAccept={actions.accept}
                 onReject={actions.reject}
                 onEdit={actions.edit}

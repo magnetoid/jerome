@@ -5,9 +5,10 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
   AI_VERDICT_COLOURS, AI_VERDICT_LABELS, categoryLabel, canAccept, canAskAi, canEdit, canReject, canRemember, canUseAiFix,
-  optionsOf, resultText,
+  isDecided, optionsOf, resultText,
   RULE_LABELS, SOURCE_LABELS, stateLabel, type Suggestion,
 } from "@/lib/review";
+import { formatDateTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -19,6 +20,8 @@ interface Props {
   editing: boolean;
   busy: boolean;
   canUndo: boolean;
+  /** `u` puts this very mark back to open (the button reads Revert), not the last decision. */
+  reverts?: boolean;
   onAccept: () => void;
   onReject: () => void;
   onEdit: () => void;
@@ -199,7 +202,9 @@ export default function FocusCard(p: Props) {
       {s.rule && <p className="text-sm">{RULE_LABELS[s.rule] ?? s.rule}</p>}
       <AiVerdict s={s} />
       <Options s={s} busy={p.busy} onUse={p.onUseOption} />
-      <p className={cn("text-sm text-muted-foreground", s.auto_applied && "text-ai")}>{stateLabel(s)}</p>
+      <p className={cn("text-sm text-muted-foreground", s.auto_applied && "text-ai")}>
+        {isDecided(s) && s.decided_at ? `${stateLabel(s)} · ${formatDateTime(s.decided_at)}` : stateLabel(s)}
+      </p>
       {p.hiddenBy && <p className="text-sm text-muted-foreground">{hiddenNote(p.hiddenBy)}</p>}
       {p.editing ? (
         <EditField initial={resultText(s)} busy={p.busy} onSave={p.onSave} onCancel={p.onCancelEdit} />
@@ -225,8 +230,14 @@ export default function FocusCard(p: Props) {
           <Button size="sm" variant="outline" onClick={p.onEdit} disabled={p.busy || !canEdit(s)}>
             Edit <Key k="e" />
           </Button>
-          <Button size="sm" variant="ghost" onClick={p.onUndo} disabled={p.busy || !p.canUndo}>
-            Undo <Key k="u" />
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={p.onUndo}
+            disabled={p.busy || !p.canUndo}
+            title={p.reverts ? "Puts this mark back to open" : "Undoes your last decision in this chapter"}
+          >
+            {p.reverts ? "Revert" : "Undo"} <Key k="u" />
           </Button>
           {canUseAiFix(s) && (
             <Button
