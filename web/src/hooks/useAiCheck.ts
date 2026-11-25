@@ -51,14 +51,21 @@ export interface Remembered {
   rejected: number;
 }
 
-/** Learn a mark's word for all books; the marks it rejected show after a refresh. */
-export function useRemember(bookId: string) {
+/** Learn a mark's word for all books; the marks it rejected show after a refresh.
+ * `onDone` gets the remembered mark's id, a decision the page can undo. */
+export function useRemember(bookId: string, { onDone }: { onDone?: (id: number) => void } = {}) {
+  const client = useQueryClient();
   const refresh = useRefreshReview(bookId);
   return useMutation({
     mutationFn: (id: number) => apiFetch<Remembered>(`/v1/suggestions/${id}/remember`, { method: "POST" }),
-    onSuccess: ({ word, rejected }) =>
-      toast.success(`Remembered “${word.word}” for all books; rejected ${rejected} mark${rejected === 1 ? "" : "s"}`),
+    onSuccess: ({ word, rejected }, id) => {
+      toast.success(`Remembered “${word.word}” for all books; rejected ${rejected} mark${rejected === 1 ? "" : "s"}`);
+      onDone?.(id);
+    },
     onError: (err) => toast.error(detailOf(err)),
-    onSettled: () => refresh(),
+    onSettled: () => {
+      refresh();
+      client.invalidateQueries({ queryKey: ["learned-words"] });
+    },
   });
 }

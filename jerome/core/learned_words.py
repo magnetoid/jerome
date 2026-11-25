@@ -10,7 +10,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from jerome.core.style_sheets import get_style_sheet
-from jerome.core.suggestions import Channel, decide
+from jerome.core.suggestions import Channel, decide, lock_blocks
 from jerome.errors import Conflict, NotFound
 from jerome.orm import LearnedWord, Suggestion
 from jerome.proofread.languagetool import ANY_SPELLING, LearnedRules, covers
@@ -54,6 +54,15 @@ def remember(
     s = session.get(Suggestion, suggestion_id)
     if s is None:
         raise NotFound(f"suggestion {suggestion_id} not found")
+    # Lock every block with a LanguageTool mark of the word, in one id-ordered statement, so
+    # the checks below see the marks as they are and two remembers cannot deadlock.
+    same_word = select(Suggestion.block_id).where(
+        Suggestion.book_id == s.book_id,
+        Suggestion.source == "languagetool",
+        Suggestion.original == s.original,
+    )
+    lock_blocks(session, [s.block_id, *session.scalars(same_word)])
+    session.refresh(s)
     rule = _rule_of(s)
     language = get_style_sheet(session, s.book_id).language
     session.execute(
@@ -84,13 +93,14 @@ def remember(
         Suggestion.id != s.id,
     )
     rules = frozenset({(s.original, rule)})
-    targets = [s] + [
+    covered = [
         o
         for o in session.scalars(others.order_by(Suggestion.id))
         if covers(rules, o.original, o.lt_rule, misspelling=o.category == "typo")
     ]
-    rejected: list[int] = []
-    for t in targets:
+    decide(session, s.id, "reject", actor=actor, channel=channel)
+    rejected = [s.id]
+    for t in covered:
         try:
             with session.begin_nested():
                 decide(session, t.id, "reject", actor=actor, channel=channel)

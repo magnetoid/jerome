@@ -99,7 +99,13 @@ function ChapterReview({ bookId, chapterId, chapters }: {
   });
 
   const aiCheck = useAiCheck(bookId);
-  const remember = useRemember(bookId);
+  const remember = useRemember(bookId, {
+    onDone: (id) => {
+      setHistory((h) => [...h.filter((x) => x.id !== id), { id, chapterId }].slice(-UNDO_DEPTH));
+      setDecidedIn(chapterId);
+      setMovedOn(true);
+    },
+  });
 
   // A failed next page waits for "Try again" rather than being asked for again on its own.
   const canLoadMore = query.hasNextPage && !query.isFetchingNextPage && !query.isFetchNextPageError;
@@ -216,7 +222,7 @@ function ChapterReview({ bookId, chapterId, chapters }: {
                 source={b.source}
                 hiddenBy={hiddenBy(b.suggestions, current)}
                 editing={editing === current.id}
-                busy={decide.isPending}
+                busy={decide.isPending || remember.isPending}
                 canUndo={canUndo}
                 onAccept={actions.accept}
                 onReject={actions.reject}

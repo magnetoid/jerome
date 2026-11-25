@@ -245,7 +245,7 @@ export default function FocusCard(p: Props) {
               variant="outline"
               onClick={p.onRemember}
               disabled={p.busy || p.remembering}
-              title={`LanguageTool stops marking “${s.original}” in every book in this language. Rejects this mark and its other open marks in this book.`}
+              title={`LanguageTool stops marking “${s.original}” in every book in this language. Rejects this mark and its other open marks in this book (for a rule other than spelling, under the same rule).`}
             >
               Remember for all books
             </Button>
