@@ -57,3 +57,16 @@ def test_learned_words_are_for_the_super_admin(web_client, session, auth):
     web_client.post("/v1/auth/login", json={"email": "bo@x.org", "password": PASSWORD})
     assert web_client.get("/v1/learned-words").status_code == 403
     assert web_client.delete("/v1/learned-words/1", headers=WEB).status_code == 403
+
+
+def test_remember_returns_every_mark_it_rejected(client, auth, session, block):
+    s = insert_raw_open(session, block, 0, 3, "Teh", "The", **NAME)
+    other = insert_raw_open(session, block, 0, 3, "Teh", "Tea", **NAME)
+    r = client.post(f"/v1/suggestions/{s.id}/remember", headers=auth)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["rejected"] == 2
+    assert body["marks"] == [
+        {"id": s.id, "chapter_id": block.chapter_id},
+        {"id": other.id, "chapter_id": block.chapter_id},
+    ]

@@ -46,21 +46,28 @@ export function useChapterAiCheck(bookId: string, chapterId: string) {
   });
 }
 
+export interface RejectedMark {
+  id: number;
+  chapter_id: number;
+}
+
 export interface Remembered {
   word: { id: number; word: string };
   rejected: number;
+  /** Every mark it rejected, the remembered one first. */
+  marks: RejectedMark[];
 }
 
 /** Learn a mark's word for all books; the marks it rejected show after a refresh.
- * `onDone` gets the remembered mark's id, a decision the page can undo. */
-export function useRemember(bookId: string, { onDone }: { onDone?: (id: number) => void } = {}) {
+ * `onDone` gets every mark it rejected, the remembered one first: decisions the page can undo. */
+export function useRemember(bookId: string, { onDone }: { onDone?: (marks: RejectedMark[]) => void } = {}) {
   const client = useQueryClient();
   const refresh = useRefreshReview(bookId);
   return useMutation({
     mutationFn: (id: number) => apiFetch<Remembered>(`/v1/suggestions/${id}/remember`, { method: "POST" }),
-    onSuccess: ({ word, rejected }, id) => {
+    onSuccess: ({ word, rejected, marks }) => {
       toast.success(`Remembered “${word.word}” for all books; rejected ${rejected} mark${rejected === 1 ? "" : "s"}`);
-      onDone?.(id);
+      onDone?.(marks);
     },
     onError: (err) => toast.error(detailOf(err)),
     onSettled: () => {

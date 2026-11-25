@@ -206,7 +206,18 @@ def remember(suggestion_id: int, session: SessionDep, principal: PrincipalDep):
     word, rejected = learned_words.remember(
         session, suggestion_id, actor=principal.actor, channel=principal.channel
     )
-    return {"word": LearnedWordOut.model_validate(word), "rejected": len(rejected)}
+    chapters = dict(
+        session.execute(
+            select(Suggestion.id, Block.chapter_id)
+            .join(Block, Block.id == Suggestion.block_id)
+            .where(Suggestion.id.in_(rejected))
+        ).all()
+    )
+    return {
+        "word": LearnedWordOut.model_validate(word),
+        "rejected": len(rejected),
+        "marks": [{"id": i, "chapter_id": chapters[i]} for i in rejected],
+    }
 
 
 @router.post("/suggestions/{suggestion_id}/{action}", response_model=SuggestionOut)

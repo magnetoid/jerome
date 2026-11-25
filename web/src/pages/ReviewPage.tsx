@@ -100,8 +100,11 @@ function ChapterReview({ bookId, chapterId, chapters }: {
 
   const aiCheck = useAiCheck(bookId);
   const remember = useRemember(bookId, {
-    onDone: (id) => {
-      setHistory((h) => [...h.filter((x) => x.id !== id), { id, chapterId }].slice(-UNDO_DEPTH));
+    onDone: (marks) => {
+      // Newest last: `u` undoes the remembered mark first, then the others it rejected.
+      const done = [...marks].reverse().map((m) => ({ id: m.id, chapterId: String(m.chapter_id) }));
+      const ids = new Set(done.map((x) => x.id));
+      setHistory((h) => [...h.filter((x) => !ids.has(x.id)), ...done].slice(-UNDO_DEPTH));
       setDecidedIn(chapterId);
       setMovedOn(true);
     },

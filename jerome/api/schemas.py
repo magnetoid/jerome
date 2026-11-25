@@ -327,9 +327,15 @@ class LearnedWordOut(BaseModel):
     created_at: datetime
 
 
+class RejectedMarkOut(BaseModel):
+    id: int
+    chapter_id: int
+
+
 class RememberOut(BaseModel):
     word: LearnedWordOut
     rejected: int  # marks rejected: this one and the book's other open marks the word covers
+    marks: list[RejectedMarkOut]  # those marks, this one first, so the page can undo each
 
 
 class ApiKeyCreateIn(BaseModel):
