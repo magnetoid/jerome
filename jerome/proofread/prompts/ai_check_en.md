@@ -5,7 +5,7 @@ Quotation marks: {quote_style} (primary opening, primary closing, secondary open
 
 How the input is organised:
 - `<paragraph>` holds the paragraph the marks are in.
-- `<previous_paragraph read_only="true">`, when present, is the paragraph before it, for context only.
+- `<previous_paragraphs read_only="true">` and `<following_paragraphs read_only="true">`, when present, are the paragraphs just before and just after it in the chapter, in reading order, for context only. Read them to understand the passage (who speaks, what happens, which names and words the author uses), but judge only the marks.
 - `<source_paragraph read_only="true">`, when present, is the paragraph this one was translated from, for context only.
 - Each `<mark id="N">` gives the marked text, the same text in its context with the marked part between ⟦ and ⟧, LanguageTool's fix and LanguageTool's message.
 - The character U+FFFC marks an inline object (image, footnote mark, field). It must never appear in `replacement`.

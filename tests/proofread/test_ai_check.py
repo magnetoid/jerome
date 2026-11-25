@@ -3,7 +3,16 @@
 import pytest
 
 from jerome.models.base import ModelOutputError
-from jerome.proofread.ai_check import VERDICT_SCHEMA, Mark, Verdict, build_request, parse_verdicts
+from jerome.proofread.ai_check import (
+    VERDICT_SCHEMA,
+    Mark,
+    Verdict,
+    build_request,
+    count_sentences,
+    parse_verdicts,
+    pick_context,
+    room_around,
+)
 from jerome.types import StyleSheet
 
 STYLE_EN = StyleSheet("en-US", "“”‘’", {"colour": ["color"]}, ["Katharina"])
@@ -22,11 +31,22 @@ def item(id_, verdict, replacement="", reason="Fine."):
 
 
 def test_request_shows_each_mark_in_its_context():
-    system, user = build_request(STYLE_EN, TEXT, [TEH, NAME], previous="Before.", source="Vorher.")
+    system, user = build_request(
+        STYLE_EN, TEXT, [TEH, NAME], before=["First.", "Before."], after=["After."],
+        source="Vorher.",
+    )  # fmt: skip
     assert "LanguageTool" in system[0].text and system[0].cache
     assert '"colour"' in system[1].text and "Katharina" in system[1].text
     assert f"<paragraph>\n{TEXT}\n</paragraph>" in user
-    assert '<previous_paragraph read_only="true">\nBefore.\n</previous_paragraph>' in user
+    assert (
+        '<previous_paragraphs read_only="true">\nFirst.\n\nBefore.\n</previous_paragraphs>' in user
+    )
+    assert '<following_paragraphs read_only="true">\nAfter.\n</following_paragraphs>' in user
+    assert (
+        user.index("<previous_paragraphs")
+        < user.index("<paragraph>")
+        < user.index("<following_paragraphs")
+    )
     assert '<source_paragraph read_only="true">\nVorher.\n</source_paragraph>' in user
     assert '<mark id="5">' in user and '<mark id="6">' in user
     assert "Katharina said ⟦teh⟧ cat sat on the mat, and nobody " in user
@@ -37,9 +57,59 @@ def test_request_shows_each_mark_in_its_context():
 
 
 def test_request_without_previous_or_source():
-    system, user = build_request(STYLE_DE, TEXT, [TEH], previous=None, source=None)
+    system, user = build_request(STYLE_DE, TEXT, [TEH], before=[], after=[], source=None)
     assert "LanguageTool" in system[0].text and "Stilblatt" in system[1].text
-    assert "previous_paragraph" not in user and "source_paragraph" not in user
+    assert "previous_paragraphs" not in user and "following_paragraphs" not in user
+    assert "source_paragraph" not in user
+
+
+@pytest.mark.parametrize("language", ["en", "de"])
+def test_prompts_explain_the_surrounding_paragraphs(language):
+    style = STYLE_EN if language == "en" else STYLE_DE
+    system, _ = build_request(style, TEXT, [TEH], before=[], after=[], source=None)
+    assert "<previous_paragraphs" in system[0].text and "<following_paragraphs" in system[0].text
+
+
+@pytest.mark.parametrize(
+    ("text", "n"),
+    [
+        ("", 0),
+        ("   ", 0),
+        ("No end", 1),
+        ("One. Two! Three? Four", 4),
+        ("“Go,” she said. “Now.” Then she left…", 3),
+        ("Wait... what?! Fine.", 2),  # a lowercase word goes on with the sentence
+        ("„Komm!“ rief er. «Jetzt.»", 2),
+        ("It cost 3.50 today, e.g. bread. Then", 2),
+    ],
+)
+def test_count_sentences(text, n):
+    assert count_sentences(text) == n
+
+
+def test_room_around_counts_the_whole_sentences_beside_the_marks():
+    text = "A one. B two. C teh three, D dogg. E five. F six"
+    teh = Mark(1, 16, 19, "teh", "the", "")
+    dogg = Mark(2, 29, 33, "dogg", "dog", "")
+    assert room_around(text, [teh]) == (2, 2)
+    assert room_around(text, [dogg, teh]) == (2, 2)  # same sentence, either order
+    assert room_around(text, [Mark(3, 0, 1, "A", "a", "")]) == (0, 4)
+    assert room_around(text, [Mark(4, 45, 48, "six", "6", "")]) == (4, 0)
+    assert room_around(TEXT, [TEH]) == (0, 0)
+
+
+def test_pick_context_takes_neighbours_until_three_sentences():
+    near_first = ["One.", "Two. Three.", "Four.", "Five."]
+    assert pick_context(near_first, have=0) == ["One.", "Two. Three."]
+    assert pick_context(near_first, have=2) == ["One."]
+    assert pick_context(near_first, have=5) == ["One."]  # the nearest always comes
+    assert pick_context([], have=0) == []
+
+
+def test_pick_context_stays_within_the_character_limit():
+    long = "x" * 2000 + "."
+    assert pick_context([long, "Two."], have=0) == [long]  # the nearest always comes
+    assert pick_context(["One.", "y" * 1600 + ".", "Three."], have=0) == ["One."]
 
 
 def test_schema_asks_for_the_three_verdicts():

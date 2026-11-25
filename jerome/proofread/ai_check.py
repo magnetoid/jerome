@@ -3,6 +3,8 @@
 Each mark gets one verdict: ``correct`` (LanguageTool's fix stands), ``not_an_error``, or
 ``better`` (a better text for the same span). Items that cannot be used are dropped."""
 
+import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from importlib import resources
 
@@ -13,6 +15,11 @@ from jerome.proofread.ai_pass import _style_text
 from jerome.types import AI_VERDICTS, StyleSheet
 
 CONTEXT_CHARS = 40  # of the paragraph on each side of a mark
+CONTEXT_SENTENCES = 3  # whole sentences the AI reads on each side of the marks, at least
+CONTEXT_LIMIT = 1500  # characters of neighbouring paragraphs on each side, at most
+
+# A run of sentence-ending marks with any closing quotes or brackets after it
+_END = re.compile(r"[.!?…]+[\"'”’»«“‘›‹)\]]*")
 
 
 @dataclass(frozen=True)
@@ -69,6 +76,59 @@ def _instructions(style: StyleSheet) -> str:
     return template.replace("{variant}", style.variant).replace("{quote_style}", style.quote_style)
 
 
+def _sentences(text: str) -> list[tuple[int, int]]:
+    """The (start, end) span of each sentence. A sentence ends at an end mark followed by a
+    space (or the text's end) and a word that is not lowercase, so "e.g. this", "3.50" and
+    "„Komm!“ rief er" do not end one."""
+    spans: list[tuple[int, int]] = []
+    start = 0
+    for m in _END.finditer(text):
+        rest = text[m.end() :]
+        if rest and not rest[0].isspace():
+            continue
+        following = rest.lstrip()
+        if following and following[0].islower():
+            continue
+        if text[start : m.end()].strip():
+            spans.append((start, m.end()))
+        start = m.end()
+    if text[start:].strip():
+        spans.append((start, len(text)))
+    return spans
+
+
+def count_sentences(text: str) -> int:
+    return len(_sentences(text))
+
+
+def room_around(text: str, marks: Sequence[Mark]) -> tuple[int, int]:
+    """The whole sentences of the paragraph before the first mark's sentence and after the
+    last mark's sentence."""
+    spans = _sentences(text)
+    if not spans or not marks:
+        return 0, 0
+    first = min(m.start for m in marks)
+    last = max(max(m.end, m.start + 1) for m in marks) - 1
+    i0 = next((i for i, (_, end) in enumerate(spans) if first < end), len(spans) - 1)
+    i1 = next((i for i, (_, end) in enumerate(spans) if last < end), len(spans) - 1)
+    return i0, len(spans) - 1 - i1
+
+
+def pick_context(near_first: Sequence[str], have: int) -> list[str]:
+    """The neighbouring paragraphs (nearest first) to show on one side: always the nearest,
+    then more until ``CONTEXT_SENTENCES`` whole sentences are there, within
+    ``CONTEXT_LIMIT`` characters."""
+    picked: list[str] = []
+    chars = 0
+    for text in near_first:
+        if picked and (have >= CONTEXT_SENTENCES or chars + len(text) > CONTEXT_LIMIT):
+            break
+        picked.append(text)
+        chars += len(text)
+        have += count_sentences(text)
+    return picked
+
+
 def _in_context(text: str, mark: Mark) -> str:
     lo, hi = max(0, mark.start - CONTEXT_CHARS), min(len(text), mark.end + CONTEXT_CHARS)
     before = ("…" if lo else "") + text[lo : mark.start]
@@ -81,19 +141,25 @@ def build_request(
     text: str,
     marks: list[Mark],
     *,
-    previous: str | None,
+    before: Sequence[str],
+    after: Sequence[str],
     source: str | None,
 ) -> tuple[list[SystemPart], str]:
+    """``before`` and ``after`` are the neighbouring paragraphs, in reading order."""
     system = [
         SystemPart(_instructions(style), cache=True),
         SystemPart(_style_text(style), cache=True),
     ]
     parts: list[str] = []
-    if previous is not None:
-        parts.append(f'<previous_paragraph read_only="true">\n{previous}\n</previous_paragraph>')
+    if before:
+        joined = "\n\n".join(before)
+        parts.append(f'<previous_paragraphs read_only="true">\n{joined}\n</previous_paragraphs>')
     if source is not None:
         parts.append(f'<source_paragraph read_only="true">\n{source}\n</source_paragraph>')
     parts.append(f"<paragraph>\n{text}\n</paragraph>")
+    if after:
+        joined = "\n\n".join(after)
+        parts.append(f'<following_paragraphs read_only="true">\n{joined}\n</following_paragraphs>')
     for m in marks:
         parts.append(
             f'<mark id="{m.id}">\n'

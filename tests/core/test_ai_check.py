@@ -119,17 +119,67 @@ def test_mark_without_job_bills_the_latest_proofreading_job(
     assert row(sf, sid).ai_verdict == "not_an_error"
 
 
-def test_request_has_the_previous_paragraph(session_factory, tmp_storage, test_settings):
+def _context_of(user: str, tag: str) -> str | None:
+    m = re.search(f'<{tag} read_only="true">\\n(.*?)\\n</{tag}>', user, re.S)
+    return m.group(1) if m else None
+
+
+def test_request_has_the_neighbouring_paragraphs(session_factory, tmp_storage, test_settings):
     sf = session_factory
-    _, (_, b2), job_id = book(sf, tmp_storage)
+    _, (b1, b2), job_id = book(sf, tmp_storage)
     sid = mark(sf, b2, 8, 13, "barked", job_id=job_id)
     provider = FakeProvider([answer("correct")])
     with sf() as s:
         check_suggestion(s, registry(test_settings, provider), sid, actor="a")
         s.commit()
-    assert "<previous_paragraph" in provider.calls[0]["user"]
-    assert "Katharina said teh cat sat." in provider.calls[0]["user"]
+    user = provider.calls[0]["user"]
+    assert _context_of(user, "previous_paragraphs") == "Katharina said teh cat sat."
+    assert _context_of(user, "following_paragraphs") is None  # the last paragraph
     assert row(sf, sid).ai_verdict == "correct"
+
+
+DIALOGUE = (
+    "# One", "Far away.", "# Two", "“Hello.”", "“Hi.”", "“Tea?”", "“Yes, teh tea.”",
+    "“Sure.”", "“Thanks.”", "“Hot.”", "“Bye.”",
+)  # fmt: skip
+
+
+def test_short_paragraphs_give_three_sentences_each_side_within_the_chapter(
+    session_factory, tmp_storage, test_settings
+):
+    sf = session_factory
+    _, blocks, job_id = book(sf, tmp_storage, DIALOGUE)
+    target = next(b for b in blocks if "teh" in b.text)
+    sid = mark(sf, target, 7, 10, "the", job_id=job_id)
+    provider = FakeProvider([answer()])
+    with sf() as s:
+        check_suggestion(s, registry(test_settings, provider), sid, actor="a")
+        s.commit()
+    user = provider.calls[0]["user"]
+    before = _context_of(user, "previous_paragraphs")
+    after = _context_of(user, "following_paragraphs")
+    assert before == "“Hello.”\n\n“Hi.”\n\n“Tea?”"  # reading order; not the heading "Two"
+    assert after == "“Sure.”\n\n“Thanks.”\n\n“Hot.”"
+    assert "Far away." not in user  # another chapter
+
+
+def test_chapter_check_gives_each_paragraph_its_own_context(
+    session_factory, tmp_storage, test_settings
+):
+    sf = session_factory
+    book_id, blocks, job_id = book(sf, tmp_storage, DIALOGUE)
+    first = next(b for b in blocks if b.text == "“Hi.”")
+    second = next(b for b in blocks if "teh" in b.text)
+    mark(sf, first, 1, 3, "Hey", job_id=job_id)
+    mark(sf, second, 7, 10, "the", job_id=job_id)
+    provider = FakeProvider([answer(), answer()])
+    with sf() as s:
+        check_chapter(s, registry(test_settings, provider), book_id, first.chapter_id, actor="a")
+        s.commit()
+    one, two = (c["user"] for c in provider.calls)
+    assert _context_of(one, "previous_paragraphs") == "Two\n\n“Hello.”"
+    assert _context_of(one, "following_paragraphs") == "“Tea?”\n\n“Yes, teh tea.”\n\n“Sure.”"
+    assert _context_of(two, "previous_paragraphs") == "“Hello.”\n\n“Hi.”\n\n“Tea?”"
 
 
 @pytest.mark.parametrize(

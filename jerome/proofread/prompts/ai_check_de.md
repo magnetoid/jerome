@@ -5,7 +5,7 @@ Anführungszeichen: {quote_style} (primär öffnend, primär schliessend, sekund
 
 Aufbau der Eingabe:
 - `<paragraph>` enthält den Absatz mit den Markierungen.
-- `<previous_paragraph read_only="true">` ist, falls vorhanden, der vorangehende Absatz, nur als Kontext.
+- `<previous_paragraphs read_only="true">` und `<following_paragraphs read_only="true">` sind, falls vorhanden, die Absätze direkt davor und danach im Kapitel, in Lesereihenfolge, nur als Kontext. Lies sie, um die Stelle zu verstehen (wer spricht, was geschieht, welche Namen und Wörter der Autor verwendet), aber beurteile nur die Markierungen.
 - `<source_paragraph read_only="true">` ist, falls vorhanden, der Absatz, aus dem dieser übersetzt wurde, nur als Kontext.
 - Jedes `<mark id="N">` nennt den markierten Text, denselben Text im Zusammenhang mit dem markierten Teil zwischen ⟦ und ⟧, die Korrektur von LanguageTool und die Meldung von LanguageTool.
 - Das Zeichen U+FFFC steht für ein eingebettetes Objekt (Bild, Fussnotenzeichen, Feld). Es darf nie in `replacement` vorkommen.

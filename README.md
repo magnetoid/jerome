@@ -63,8 +63,10 @@ super admin signed in to the web interface.
 
 **Asking the AI about a LanguageTool mark.** LanguageTool often marks text that is fine
 (names, dialogue, the author's style). On the review card of a mark LanguageTool made alone,
-**Ask AI** asks the proofreading AI model (`models.ai`) whether the mark is right. The card
-then shows its verdict and reason. "LanguageTool is right" keeps the fix. "Not an error"
+**Ask AI** asks the proofreading AI model (`models.ai`) whether the mark is right. The AI reads the mark's
+paragraph with at least three sentences before and after it, taken from the neighbouring
+paragraphs of the same chapter when the paragraph is short. The card then shows its verdict
+and reason. "LanguageTool is right" keeps the fix. "Not an error"
 makes Reject the main button. "A better fix" offers **Use AI fix**, which accepts the mark
 with the AI's text. Nothing is accepted or rejected by the check itself, and the verdict is
 kept with the suggestion. **Check LT marks in this chapter**, in the review toolbar, asks
