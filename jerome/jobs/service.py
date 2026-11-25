@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from jerome.core.books import get_book
+from jerome.core.books import ensure_imported, get_book
 from jerome.core.translation import ensure_not_source
 from jerome.errors import Conflict, NotFound
 from jerome.jobs.estimate import (
@@ -74,7 +74,9 @@ def create_job(
     actor: str,
 ) -> Job:
     ensure_not_source(session, book_id)
-    if get_book(session, book_id).work == "translate" and _has_pending(session, book_id):
+    book = get_book(session, book_id)
+    ensure_imported(book)
+    if book.work == "translate" and _has_pending(session, book_id):
         raise Conflict("translate the book before proofreading it")
     if (conflict := _active_conflict(session, book_id)) is not None:
         raise conflict
@@ -127,7 +129,9 @@ def create_translation_job(
 ) -> Job:
     """A job that translates every pending block, one task per chapter that has any."""
     ensure_not_source(session, book_id)
-    if get_book(session, book_id).work != "translate":
+    book = get_book(session, book_id)
+    ensure_imported(book)
+    if book.work != "translate":
         raise Conflict(f"book {book_id} is not a translation project")
     chapters = pending_chapter_ids(session, book_id)
     if not chapters:

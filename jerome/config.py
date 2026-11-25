@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     text_daily_cost_cap: Decimal = Decimal(5)
     text_rpm: int = 30
     max_upload_mb: int = 50
+    max_pdf_upload_mb: int = 200
     trusted_proxies: list[str] = []  # direct peers whose X-Forwarded-For is believed (JSON list)
     session_days: int = 30
     cookie_secure: bool = True

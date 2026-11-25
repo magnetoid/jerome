@@ -2,7 +2,9 @@ import io
 import zipfile
 from collections import Counter
 from collections.abc import Iterable
+from decimal import Decimal
 from pathlib import Path
+from typing import Literal
 
 from sqlalchemy import insert, or_, select
 from sqlalchemy.orm import Session
@@ -13,12 +15,13 @@ from jerome.documents.docx_reader import read_docx
 from jerome.documents.epub_reader import read_epub
 from jerome.documents.model import ParsedBook
 from jerome.documents.segments import block_spans
-from jerome.errors import NotFound, UnsupportedDocumentError
-from jerome.orm import Block, Book, Chapter, Segment, StyleSheetRow
+from jerome.errors import Conflict, NotFound, UnsupportedDocumentError, UnsupportedLanguagePair
+from jerome.orm import Block, Book, Chapter, Job, JobTask, Segment, StyleSheetRow
 from jerome.storage import Storage
 from jerome.types import DEFAULT_QUOTES, BlockText, StyleSheet, Variant
 
 _UNSUPPORTED = "Only DOCX and EPUB are supported"
+Work = Literal["proofread", "translate"]
 
 
 def _detect_format(filename: str, data: bytes) -> str:
@@ -97,22 +100,129 @@ def import_book(
         local_only=local_only,
         original_filename=filename,
         auto_apply=policy_to_json(auto_apply),
-        authors=prefill_authors(parsed.authors),
-        publisher=parsed.publisher,
-        rights=(parsed.rights or "")[:500] or None,
-        year=parsed.year if parsed.year and 1000 <= parsed.year <= 2999 else None,
     )
+    _fill(session, storage, book, parsed, variant, data)
+    return book
+
+
+def populate_from_docx(
+    session: Session, storage: Storage, book: Book, data: bytes, variant: Variant
+) -> None:
+    """Fill a Book that exists already (its title, ``original_filename`` and options set)
+    from DOCX bytes: publication details, style sheet, chapters, blocks, and the original."""
+    _fill(session, storage, book, read_docx(data), variant, data)
+
+
+def _fill(
+    session: Session,
+    storage: Storage,
+    book: Book,
+    parsed: ParsedBook,
+    variant: Variant,
+    data: bytes,
+) -> None:
+    book.authors = prefill_authors(parsed.authors)
+    book.publisher = parsed.publisher
+    book.rights = (parsed.rights or "")[:500] or None
+    book.year = parsed.year if parsed.year and 1000 <= parsed.year <= 2999 else None
     quotes = detect_quote_style((b.text for c in parsed.chapters for b in c.blocks), variant)
     style = StyleSheet(variant, quotes, {}, [])
-    book.style_sheet = StyleSheetRow(
-        variant=variant, quote_style=quotes, house_spellings={}, ignore_words=[]
-    )
+    if book.style_sheet is None:
+        book.style_sheet = StyleSheetRow(
+            variant=variant, quote_style=quotes, house_spellings={}, ignore_words=[]
+        )
+    else:
+        book.style_sheet.variant = variant
+        book.style_sheet.quote_style = quotes
     session.add(book)
     session.flush()
 
     chapter_ids = _insert_chapters(session, book.id, parsed)
     _insert_blocks(session, book.id, parsed, chapter_ids, style)
-    storage.save_original(book.id, filename, data)
+    storage.save_original(book.id, book.original_filename or "original.docx", data)
+    session.expire(book)
+
+
+def ensure_imported(book: Book) -> None:
+    """Refuse a book whose PDF import has not finished: nothing can run on it yet."""
+    if book.import_status == "importing":
+        raise Conflict("the book is still importing")
+    if book.import_status == "failed":
+        raise Conflict(f"the book's import failed: {book.import_error or 'unknown error'}")
+
+
+def start_pdf_import(
+    session: Session,
+    storage: Storage,
+    *,
+    filename: str,
+    data: bytes,
+    variant: Variant,
+    title: str | None,
+    local_only: bool,
+    auto_apply: AutoApplyPolicy,
+    engine: Literal["ai", "tesseract"],
+    reocr: bool,
+    work: Work,
+    target_variant: Variant | None,
+    translated_title: str | None,
+    actor: str,
+) -> Book:
+    """Make the visible, still empty Book of a PDF and the import job that fills it.
+
+    The job (Task 7's runner) reads the pages and builds the DOCX; until it is done the
+    book is ``importing``. For a translation the book is the translated one: its style
+    sheet is the target variant, ``variant`` (the PDF's language) is in the job's stats."""
+    if engine == "ai" and local_only:
+        raise ValueError("a local-only book cannot be read with AI; use the tesseract engine")
+    if work == "translate":
+        if target_variant is None:
+            raise ValueError("a translation needs a target variant")
+        if variant[:2] == target_variant[:2]:
+            raise UnsupportedLanguagePair(
+                f"cannot translate {variant} to {target_variant}: "
+                "source and target must be different languages"
+            )
+    from jerome.pdfimport.reader import count_pages  # pypdfium2 loads only when it is needed
+
+    pages = count_pages(data)  # UnsupportedDocumentError: encrypted, damaged, too long
+    stem = Path(filename).stem
+    shown = variant if work != "translate" or target_variant is None else target_variant
+    book = Book(
+        title=title or stem,
+        format="docx",
+        local_only=local_only,
+        original_filename=f"{stem}.docx",
+        auto_apply=policy_to_json(auto_apply),
+        work=work,
+        translated_title=translated_title,
+        import_status="importing",
+    )
+    book.style_sheet = StyleSheetRow(
+        variant=shown, quote_style=DEFAULT_QUOTES[shown], house_spellings={}, ignore_words=[]
+    )
+    session.add(book)
+    session.flush()
+    storage.save_source_pdf(book.id, data)
+    job = Job(
+        book_id=book.id,
+        type="import",
+        status="queued",
+        passes=[engine],
+        chapter_ids=None,
+        max_cost=Decimal(0),
+        stats={
+            "pages": pages,
+            "pages_done": 0,
+            "reocr": reocr,
+            "variant": variant,
+            "target_variant": target_variant,
+        },
+        created_by=actor,
+    )
+    job.tasks.append(JobTask(kind="import_scan"))
+    session.add(job)
+    session.flush()
     session.expire(book)
     return book
 

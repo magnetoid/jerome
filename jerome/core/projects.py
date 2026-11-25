@@ -6,6 +6,7 @@ from sqlalchemy.dialects.postgresql import distinct_on
 from sqlalchemy.orm import Session
 
 from jerome.api.routes_suggestions import suggestion_out
+from jerome.core.books import ensure_imported
 from jerome.core.suggestions import text_with_changes
 from jerome.core.translation import source_texts
 from jerome.errors import NotFound
@@ -22,7 +23,14 @@ from jerome.orm import (
 )
 
 Stage = Literal[
-    "set_up", "translating", "translated", "proofreading", "needs_attention", "to_review", "done"
+    "importing",
+    "set_up",
+    "translating",
+    "translated",
+    "proofreading",
+    "needs_attention",
+    "to_review",
+    "done",
 ]
 _DECIDED_BY_TEAM = ("accepted", "rejected", "edited")
 
@@ -36,6 +44,7 @@ def derive_stage(
     work: str = "proofread",
     latest_job_type: str | None = None,
     pending_blocks: int = 0,
+    import_status: str | None = None,
 ) -> Stage:
     """The book's stage, from the first row that applies. A job paused at its cost cap is in
     ACTIVE_JOB_STATUSES (it holds the book's one active slot) but nothing is running.
@@ -44,8 +53,15 @@ def derive_stage(
     ``needs_attention`` when it failed or paused, ``set_up`` while blocks are still waiting
     for it, and ``translated`` once it completed, until a proofread job runs or completes.
 
+    A book still being imported from a PDF is ``importing``; one whose import failed is
+    ``needs_attention``, whatever its jobs say.
+
     ``completed_jobs`` counts completed proofread jobs only: a completed translation is not
     proofreading done."""
+    if import_status == "importing":
+        return "importing"
+    if import_status == "failed":
+        return "needs_attention"
     translate_job = work == "translate" and latest_job_type == "translate"
     if translate_job and active_job:
         return "translating"
@@ -98,7 +114,10 @@ def list_projects(session: Session) -> list[dict]:
     """Every book with its stage and progress, newest activity first, in a fixed number of
     queries however many books there are."""
     books = session.execute(
-        select(Book.id, Book.title, Book.format, Book.work, StyleSheetRow.variant, Book.created_at)
+        select(
+            Book.id, Book.title, Book.format, Book.work, Book.import_status,
+            StyleSheetRow.variant, Book.created_at,
+        )
         .outerjoin(StyleSheetRow, StyleSheetRow.book_id == Book.id)
         .where(Book.is_source.is_(False))
     ).all()  # fmt: skip
@@ -209,6 +228,7 @@ def list_projects(session: Session) -> list[dict]:
                     work=b.work,
                     latest_job_type=job.type if job else None,
                     pending_blocks=(counts_by_status or {}).get("pending", 0),
+                    import_status=b.import_status,
                 ),
                 "open_count": open_n,
                 "auto_applied_count": auto_n,
@@ -269,6 +289,7 @@ def chapter_review(session: Session, chapter_id: int, offset: int, limit: int) -
     chapter = session.get(Chapter, chapter_id)
     if chapter is None:
         raise NotFound(f"chapter {chapter_id}")
+    ensure_imported(chapter.book)
     total = session.scalar(select(func.count()).where(Block.chapter_id == chapter_id)) or 0
     blocks = list(
         session.scalars(

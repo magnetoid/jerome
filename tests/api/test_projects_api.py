@@ -33,3 +33,14 @@ def test_chapter_review_route(client, auth, session, book_factory):
         assert client.get(url, headers=auth, params=bad).status_code == 422
     assert client.get(url, headers=auth, params={"limit": 200}).status_code == 200
     assert client.get(url).status_code == 401
+
+
+def test_chapter_review_route_is_409_for_an_importing_book(client, auth, session, book_factory):
+    from jerome.orm import Chapter
+
+    book = _book(session, book_factory, "A", blocks=1)
+    book.import_status = "importing"
+    session.flush()
+    ch = session.query(Chapter).filter_by(book_id=book.id).one()
+    r = client.get(f"/v1/chapters/{ch.id}/review", headers=auth)
+    assert r.status_code == 409 and "still importing" in r.text

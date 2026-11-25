@@ -35,6 +35,8 @@ interface Book {
 function MainPanel({ project, format }: { project: Project; format: string }) {
   const id = String(project.id);
   switch (project.stage) {
+    case "importing":
+      return <p className="text-sm text-muted-foreground">Importing the PDF…</p>;
     case "set_up":
       return project.work === "translate"
         ? <TranslationPanel project={project} format={format} />
