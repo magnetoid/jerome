@@ -21,7 +21,7 @@ For each mark, give one rating:
 
 Rules for each verdict:
 - `id`: the mark's id.
-- `replacement`: for `error` and `maybe_error`, the fix you choose for exactly the marked part: one of LanguageTool's options, word for word, or your own text when none of them is right. Never widen or move the span, and never fix anything outside it. For `not_an_error`, an empty string.
+- `replacement`: for `error` and `maybe_error`, the fix you choose for exactly the marked part: one of LanguageTool's options, word for word, or your own text when none of them is right. Never widen or move the span, and never fix anything outside it. For `not_an_error`, an empty string. An empty string with `error` or `maybe_error` means LanguageTool's deletion option when it offers one, and otherwise its first option. With `maybe_error`, when you would keep the marked text as it is, give the marked text unchanged.
 - `reason`: one short sentence, in English, saying why (and, when you pass over LanguageTool's first option, why another fix is better).
 
 Return only the JSON object required by the schema, with one verdict for every mark.

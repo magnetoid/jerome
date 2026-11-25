@@ -47,7 +47,7 @@ function AiVerdict({ s }: { s: Suggestion }) {
   return (
     <p aria-label="AI verdict" className="text-sm">
       <span className={cn("font-medium", AI_VERDICT_COLOURS[s.ai_verdict])}>{AI_VERDICT_LABELS[s.ai_verdict]}</span>
-      {fix !== null && <span>{` · fix “${fix}” (${fixSource(s, fix)})`}</span>}
+      {fix !== null && <span>{` · fix${fix ? ` “${fix}”` : ": delete"} (${fixSource(s, fix)})`}</span>}
       {s.ai_reason && <span>{` · ${s.ai_reason}`}</span>}
     </p>
   );
@@ -63,14 +63,14 @@ function Options({ s, busy, onUse }: { s: Suggestion; busy: boolean; onUse: (tex
       <span className="font-medium">Options:</span>
       {options.map((o, i) => (
         <Button
-          key={o}
+          key={`${i}-${o}`}
           size="sm"
           variant="outline"
           className={cn("h-7 px-2", o === pick && "border-ai")}
           disabled={busy}
           onClick={() => onUse(o)}
         >
-          {`${i + 1}. ${o}`}
+          {`${i + 1}. ${o || "delete"}`}
           {o === pick && <span className="text-ai">{" · AI's pick"}</span>}
         </Button>
       ))}

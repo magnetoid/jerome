@@ -102,7 +102,7 @@ def test_single_check_saves_the_verdict_and_bills_the_job(
     assert [(u.pass_name, u.job_id) for u in rows] == [("ai", job_id)]
     assert cost(sf, job_id) == CALL_COST
     call = provider.calls[0]
-    assert "⟦teh⟧" in call["user"] and "LanguageTool's fix: tea" in call["user"]
+    assert "⟦teh⟧" in call["user"] and "LanguageTool's options:\n1. tea\n" in call["user"]
     assert call["model"] == "claude-opus-5-5"
 
 

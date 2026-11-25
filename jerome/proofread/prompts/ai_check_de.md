@@ -21,7 +21,7 @@ Gib für jede Markierung eine Bewertung:
 
 Regeln für jedes Urteil:
 - `id`: die id der Markierung.
-- `replacement`: bei `error` und `maybe_error` die Korrektur, die du für genau den markierten Teil wählst: einer der Vorschläge von LanguageTool, Wort für Wort, oder dein eigener Text, wenn keiner richtig ist. Erweitere oder verschiebe die Stelle nie und korrigiere nichts ausserhalb. Bei `not_an_error` eine leere Zeichenkette.
+- `replacement`: bei `error` und `maybe_error` die Korrektur, die du für genau den markierten Teil wählst: einer der Vorschläge von LanguageTool, Wort für Wort, oder dein eigener Text, wenn keiner richtig ist. Erweitere oder verschiebe die Stelle nie und korrigiere nichts ausserhalb. Bei `not_an_error` eine leere Zeichenkette. Eine leere Zeichenkette bei `error` oder `maybe_error` bedeutet den Löschvorschlag von LanguageTool, wenn es einen gibt, und sonst seinen ersten Vorschlag. Bei `maybe_error`, wenn du den markierten Text so lassen würdest, gib ihn unverändert an.
 - `reason`: ein kurzer Satz, auf Englisch, der den Grund nennt (und, wenn du den ersten Vorschlag von LanguageTool übergehst, warum eine andere Korrektur besser ist).
 
 Gib nur das vom Schema verlangte JSON-Objekt zurück, mit einem Urteil für jede Markierung.

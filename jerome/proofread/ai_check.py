@@ -21,6 +21,24 @@ CONTEXT_LIMIT = 1500  # characters of neighbouring paragraphs on each side, at m
 
 # A run of sentence-ending marks with any closing quotes or brackets after it
 _END = re.compile(r"[.!?…]+[\"'”’»«“‘›‹)\]]*")
+_LAST_WORD = re.compile(r"(\w+)$")
+# Words a full stop follows without ending a sentence (an initial or a number does too)
+_ABBREVIATIONS = frozenset(
+    "Mr Mrs Ms Dr Prof St Jr Sr vs cf ca Nr Kap Abb Hr Fr bzw usw vgl Bd Jh Tel".split()
+)
+
+
+def _abbreviated(text: str, end_mark: re.Match[str]) -> bool:
+    """A lone full stop after an abbreviation, an initial or a number."""
+    if end_mark.group().rstrip("\"'”’»«“‘›‹)]") != ".":
+        return False
+    before = text[: end_mark.start()]
+    word = _LAST_WORD.search(before)
+    if word is None:
+        return False
+    w = word.group(1)
+    dotted = before[: word.start()].endswith(".") and len(w) <= 2  # "e.g", "i.e"
+    return len(w) == 1 or w.isdigit() or w in _ABBREVIATIONS or dotted
 
 
 @dataclass(frozen=True)
@@ -96,7 +114,7 @@ def _sentences(text: str) -> list[tuple[int, int]]:
         if rest and not rest[0].isspace():
             continue
         following = rest.lstrip()
-        if following and following[0].islower():
+        if (following and following[0].islower()) or (following and _abbreviated(text, m)):
             continue
         if text[start : m.end()].strip():
             spans.append((start, m.end()))
@@ -212,9 +230,10 @@ def _parse_item(raw: object, marks: dict[int, Mark]) -> Verdict | None:
         return Verdict(mark_id, verdict, None, reason.strip())
     if not isinstance(replacement, str):
         return None
-    fix = replacement or mark.choices[0]  # no fix named: LanguageTool's first option
-    if fix == mark.original:
-        return None
+    # An empty fix is LanguageTool's deletion when it offers one, else its first option
+    fix = replacement or ("" if "" in mark.choices else mark.choices[0])
+    if fix == mark.original:  # keeping the text: a maybe without a fix, a contradiction else
+        return Verdict(mark_id, verdict, None, reason.strip()) if verdict == "maybe_error" else None
     try:
         check_replacement_text(fix)
     except InvalidChangeError:

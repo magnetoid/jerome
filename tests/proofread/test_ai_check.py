@@ -81,6 +81,10 @@ def test_prompts_explain_the_surrounding_paragraphs(language):
         ("Wait... what?! Fine.", 2),  # a lowercase word goes on with the sentence
         ("„Komm!“ rief er. «Jetzt.»", 2),
         ("It cost 3.50 today, e.g. bread. Then", 2),
+        ("Dr. Müller kam am 3. Mai. Er blieb.", 2),
+        ("Mr. Smith met Mrs. Jones at St. Paul's, cf. J. R. Tolkien. Then they left.", 2),
+        # a number's full stop never ends one (German ordinals), erring toward more context
+        ("Siehe S. 12 und z. B. Kap. 3. Fertig.", 1),
     ],
 )
 def test_count_sentences(text, n):
@@ -151,6 +155,20 @@ def test_an_empty_fix_takes_languagetools_first_option(rating):
     ]
 
 
+@pytest.mark.parametrize("rating", ["error", "maybe_error"])
+def test_an_empty_fix_is_a_deletion_when_languagetool_offers_one(rating):
+    mark = Mark(5, 15, 18, "teh", "foo", "Doubled.", options=("foo", ""))
+    assert parse_verdicts(reply(item(5, rating, "", "Doubled word.")), [mark]) == [
+        Verdict(5, rating, "", "Doubled word.")
+    ]
+
+
+def test_maybe_an_error_keeping_the_text_has_no_fix():
+    assert parse_verdicts(reply(item(5, "maybe_error", "teh", "Could be dialect.")), [TEH]) == [
+        Verdict(5, "maybe_error", None, "Could be dialect.")
+    ]
+
+
 def test_a_fix_can_be_another_option_or_the_ais_own():
     teh = Mark(5, 15, 18, "teh", "the", "Spelling.", options=("the", "tea"))
     assert parse_verdicts(reply(item(5, "error", "tea", "Tea.")), [teh])[0].replacement == "tea"
@@ -165,7 +183,6 @@ def test_a_fix_can_be_another_option_or_the_ais_own():
         item(5, "better", "the"),
         item(5, "error", reason="  "),
         item(5, "error", "teh"),
-        item(5, "maybe_error", "teh"),
         item(5, "error", "th￼e"),
         item(5, "error", "th\x07e"),
         "not a dict",

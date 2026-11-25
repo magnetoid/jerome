@@ -163,6 +163,19 @@ describe("FocusCard LanguageTool options", () => {
     expect(onUseOption).toHaveBeenCalledWith("ten");
   });
 
+  it("names a deletion option and fix as delete", () => {
+    cardFor(lt({ replacement: "the", options: ["the", ""], ai_verdict: "error", ai_replacement: "", ai_reason: "Doubled." }));
+    const list = screen.getByRole("group", { name: "LanguageTool options" });
+    expect(within(list).getAllByRole("button").map((b) => b.textContent)).toEqual(["1. the", "2. delete · AI's pick"]);
+    expect(screen.getByLabelText("AI verdict")).toHaveTextContent("fix: delete (LanguageTool option 2)");
+  });
+
+  it("a maybe without a fix names none", () => {
+    cardFor(lt({ ai_verdict: "maybe_error", ai_replacement: null, ai_reason: "Could be dialect." }));
+    expect(screen.getByLabelText("AI verdict")).toHaveTextContent("AI: maybe an error · Could be dialect.");
+    expect(screen.queryByRole("button", { name: "Use AI fix" })).toBeNull();
+  });
+
   it("shows no list for one option, an old mark, or a decided mark", () => {
     for (const s of [lt({ options: ["the"] }), lt({ options: null }), lt({ options: ["the", "tea"], status: "accepted" })]) {
       const card = cardFor(s);
