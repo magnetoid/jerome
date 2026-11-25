@@ -7,8 +7,8 @@ import { compareItems, type Item } from "@/lib/review";
  * next one in document order (or the last one, at the end of the chapter).
  *
  * `pickable` holds suggestions outside the view that a person may still click (decided
- * marks in Needs you). One that is picked stays focused while it is pickable; j/k then
- * move to the view's next or previous suggestion in document order.
+ * marks in Needs you). One that is picked stays focused while the decision it was picked
+ * with stands; j/k then move to the view's next or previous suggestion in document order.
  */
 export function useReviewFocus(items: Item[], pickable: Item[] = []) {
   const [anchor, setAnchor] = useState<{ item: Item; picked: boolean } | null>(null);
@@ -19,7 +19,12 @@ export function useReviewFocus(items: Item[], pickable: Item[] = []) {
     const inView = items.find((it) => it.s.id === id);
     if (inView) return inView;
     if (anchor.picked) {
-      const picked = pickable.find((it) => it.s.id === id);
+      // Only while the decision it was picked with stands: once it is reverted and decided
+      // again (here or by someone else), it is an ordinary mark the focus moves on from.
+      const was = anchor.item.s;
+      const picked = pickable.find(
+        (it) => it.s.id === id && it.s.status === was.status && it.s.decided_at === was.decided_at,
+      );
       if (picked) return picked;
     }
     if (items.length === 0) return null;

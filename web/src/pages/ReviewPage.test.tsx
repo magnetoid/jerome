@@ -442,6 +442,43 @@ describe("decided marks stay reachable in Needs you", () => {
     await waitFor(() => expect(within(card()).getByText("dgo")).toBeInTheDocument());
   });
 
+  it("u on a clicked decided mark reverts it, not the person's last decision", async () => {
+    const { fetchMock } = reviewServer(BLOCKS, SUMMARY);
+    renderReview();
+    await screen.findByText("2 left");
+    await userEvent.keyboard("j");
+    await userEvent.keyboard("a");
+    await waitFor(() => expect(within(card()).getByText("dgo")).toBeInTheDocument());
+    await userEvent.click(screen.getByRole("button", { name: /^Accepted by bob@example.com: “said”/ }));
+    await userEvent.keyboard("u");
+    await waitFor(() => expect(posts(fetchMock, "/v1/suggestions/4/undo")).toHaveLength(1));
+    expect(posts(fetchMock, "/v1/suggestions/1/undo")).toHaveLength(0);
+  });
+
+  it("a reverted mark needs you again, and deciding it moves the card on", async () => {
+    const { fetchMock } = reviewServer(BLOCKS, SUMMARY);
+    renderReview();
+    await screen.findByText("2 left");
+    await userEvent.click(screen.getByRole("button", { name: /^Accepted by bob@example.com: “said”/ }));
+    await userEvent.keyboard("u");
+    expect(await screen.findByRole("button", { name: /^Needs you: “said”/ })).toBeInTheDocument();
+    expect(await screen.findByText("3 left")).toBeInTheDocument();
+    await userEvent.keyboard("a");
+    await waitFor(() => expect(posts(fetchMock, "/v1/suggestions/4/accept")).toHaveLength(1));
+    await waitFor(() => expect(within(card()).getByText("dgo")).toBeInTheDocument());
+  });
+
+  it("on an open mark the button reads Undo and undoes the last decision", async () => {
+    const { fetchMock } = reviewServer(BLOCKS, SUMMARY);
+    renderReview();
+    await screen.findByText("2 left");
+    await userEvent.keyboard("j");
+    await userEvent.keyboard("a");
+    await waitFor(() => expect(within(card()).getByText("dgo")).toBeInTheDocument());
+    await userEvent.click(within(card()).getByRole("button", { name: "Undo (u)" }));
+    await waitFor(() => expect(posts(fetchMock, "/v1/suggestions/1/undo")).toHaveLength(1));
+  });
+
   it("a decision on an open mark still moves the card on", async () => {
     const { fetchMock } = reviewServer(BLOCKS, SUMMARY);
     renderReview();

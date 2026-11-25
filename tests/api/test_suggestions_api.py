@@ -156,6 +156,13 @@ def test_decided_at_is_the_latest_decisions_time(client, auth, session, block):
     r = client.post(f"/v1/suggestions/{s.id}/accept", headers=auth)
     made = session.query(Decision).filter_by(suggestion_id=s.id).one().created_at
     assert datetime.fromisoformat(r.json()["decided_at"]) == made
+    client.post(f"/v1/suggestions/{s.id}/undo", headers=auth)
+    r = client.post(f"/v1/suggestions/{s.id}/accept", headers=auth)
+    latest = session.query(Decision).filter_by(suggestion_id=s.id).order_by(Decision.id.desc())
+    assert datetime.fromisoformat(r.json()["decided_at"]) == latest.first().created_at
+    decide(session, s.id, "undo", actor="x", channel="system")  # bookkeeping is ignored
+    rows = client.get(f"/v1/books/{block.book_id}/suggestions", headers=auth).json()
+    assert datetime.fromisoformat(rows[0]["decided_at"]) == latest.offset(1).first().created_at
 
 
 def test_decided_by_is_the_latest_person_or_ai(client, auth, session, block):
