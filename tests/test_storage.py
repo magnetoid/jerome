@@ -34,5 +34,9 @@ def test_source_pdf_and_pages_round_trip(tmp_path):
     assert storage.read_page(7, 0) is None
     storage.save_page(7, 0, {"page": 0, "text": "Grüße"})
     assert storage.read_page(7, 0) == {"page": 0, "text": "Grüße"}
+    assert (tmp_path / "books" / "7" / "import" / "page-0000.json").is_file()
+    storage.save_page(7, 123, {"page": 123})
+    assert (tmp_path / "books" / "7" / "import" / "page-0123.json").is_file()
+    assert storage.read_page(7, 123) == {"page": 123}
     with pytest.raises(NotFound):
         storage.read_source_pdf(8)
