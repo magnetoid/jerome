@@ -41,10 +41,10 @@ class Storage:
     def save_page(self, book_id: int, page: int, d: dict) -> Path:
         """The result of reading one page (0-based), kept so a resumed import skips it."""
         raw = json.dumps(d, ensure_ascii=False).encode()
-        return _write_atomic(self._book_dir(book_id) / "pages" / f"{page}.json", raw)
+        return _write_atomic(self._book_dir(book_id) / "import" / f"page-{page:04d}.json", raw)
 
     def read_page(self, book_id: int, page: int) -> dict | None:
-        path = self._book_dir(book_id) / "pages" / f"{page}.json"
+        path = self._book_dir(book_id) / "import" / f"page-{page:04d}.json"
         return json.loads(path.read_bytes()) if path.is_file() else None
 
     def save_export(self, book_id: int, name: str, data: bytes) -> Path:
