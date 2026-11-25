@@ -232,3 +232,45 @@ def resume_job(session: Session, job_id: int, *, max_cost: Decimal | None = None
         raise _already_active(job.book_id) from exc
     session.refresh(job)
     return job
+
+
+def _import_job(session: Session, book_id: int) -> Job:
+    """The book's latest import job, locked."""
+    job_id = session.scalar(
+        select(Job.id)
+        .where(Job.book_id == book_id, Job.type == "import")
+        .order_by(Job.id.desc())
+        .limit(1)
+    )
+    if job_id is None:
+        raise NotFound(f"import job of book {book_id}")
+    return _lock_job(session, job_id)
+
+
+def _answer_estimate(session: Session, book_id: int, **changes) -> Job:
+    """Clear the import's ``awaiting_estimate`` with ``changes`` made to the job; a job
+    paused at its cost cap is resumed, one still reading its free pages runs on."""
+    job = _import_job(session, book_id)
+    if not (job.stats or {}).get("awaiting_estimate"):
+        raise Conflict(f"the import of book {book_id} is not waiting for a cost confirmation")
+    job.stats = {**job.stats, "awaiting_estimate": False}
+    max_cost = changes.pop("max_cost", None)
+    for name, value in changes.items():
+        setattr(job, name, value)
+    if job.status in ("queued", "running"):
+        if max_cost is not None:
+            job.max_cost = max_cost
+        session.flush()
+        return job
+    session.flush()  # resume_job reloads the job row
+    return resume_job(session, job.id, max_cost=max_cost)
+
+
+def confirm_import(session: Session, book_id: int, max_cost: Decimal) -> Job:
+    """The owner accepts the AI OCR estimate: pages are read by the AI up to ``max_cost``."""
+    return _answer_estimate(session, book_id, max_cost=max_cost)
+
+
+def use_tesseract(session: Session, book_id: int) -> Job:
+    """The owner turns the AI OCR estimate down: Tesseract reads the scanned pages."""
+    return _answer_estimate(session, book_id, passes=["tesseract"])

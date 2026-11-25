@@ -184,10 +184,12 @@ def _runs(text: str) -> list[Run]:
     return runs
 
 
-def estimate_ocr(registry: Registry, pages: int) -> Decimal:
-    """What reading ``pages`` pages with the ocr model costs, or 0 when its price is unknown."""
-    config = registry.settings.models.get("ocr")
-    model = config.get("model") if isinstance(config, dict) else None
+def estimate_ocr(registry: Registry, pages: int, model: str | None = None) -> Decimal:
+    """What reading ``pages`` pages with the ocr model (or ``model``, when given) costs, or 0
+    when its price is unknown."""
+    if model is None:
+        config = registry.settings.models.get("ocr")
+        model = config.get("model") if isinstance(config, dict) else None
     if not model:
         return Decimal(0)
     try:

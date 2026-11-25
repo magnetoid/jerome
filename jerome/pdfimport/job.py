@@ -1,0 +1,449 @@
+"""Running a PDF import job (``Job.type == "import"``): a scan task, page tasks, a build task.
+
+``import_scan`` sorts the pages (free) and makes one ``import_pages`` task per 25 pages. With
+the AI engine and pages to OCR it also puts an estimate on the job and marks it
+``awaiting_estimate``: the job's ``max_cost`` is 0, so the first AI page pauses it at the cost
+cap until the owner confirms a ``max_cost`` (``confirm_import``) or turns AI down
+(``use_tesseract``).
+
+An ``import_pages`` task reads the pages of its range that have no saved result, one page at a
+time: rendered, read and saved before the next one, so no more than one page image is held.
+The free pages come first (text layers, pictures, blank pages, and scans when Tesseract is the
+engine), then the AI pages. Text pages are never held back by the cost cap: a task that meets
+the cap at its first AI page while another queued page task has not read its free pages trades
+ranges with that task and reads those free pages; the job pauses only when no free page is
+left unread. Within a task, an AI page the model cannot read (a refusal, an unusable or empty
+reply, an error) or one met after the cap was reached is read by Tesseract instead. A page that
+cannot be read at all is saved as ``failed``. The last page task makes ``import_build``.
+
+``import_build`` assembles the saved pages into a DOCX and fills the book from it (for a
+translation: a hidden source book, and the translated book made from it), then completes the
+job. A task that keeps failing fails the import (see ``jerome.jobs.worker._record_failure``).
+"""
+
+import logging
+import threading
+from typing import Literal
+
+from sqlalchemy import func, select, update
+from sqlalchemy.orm import Session
+
+from jerome.core.books import populate_from_docx
+from jerome.core.translation import make_translation
+from jerome.jobs import worker as w
+from jerome.models import Provider, Registry
+from jerome.models.registry import PassConfig
+from jerome.orm import ACTIVE_JOB_STATUSES, Book, Job, JobTask
+from jerome.pdfimport.assemble import assemble, report
+from jerome.pdfimport.docx_build import build_docx
+from jerome.pdfimport.model import PageBlock, PageKind, PageResult, from_json, to_json
+from jerome.pdfimport.ocr_ai import ai_page, estimate_ocr
+from jerome.pdfimport.ocr_tesseract import TesseractMissing, tesseract_page
+from jerome.pdfimport.reader import PageReadError, classify_pages, read_text_page, run_isolated
+from jerome.pdfimport.render import render_page
+from jerome.storage import Storage
+
+log = logging.getLogger(__name__)
+
+PAGES_PER_TASK = 25
+OCR_PASS = "ocr"
+Chosen = tuple[Provider, PassConfig]
+
+
+def ocr_model(registry: Registry, local_only: bool) -> Chosen | None:
+    """The model that reads scanned pages: the ocr pass's, else the ai pass's. None for a
+    local-only book, which never uses the AI engine."""
+    if local_only:
+        return None
+    return registry.for_pass("ocr", local_only=False) or registry.for_pass("ai", local_only=False)
+
+
+def configured_ocr_model(registry: Registry) -> str:
+    """The configured name of the model that reads pages, to price a billed call by."""
+    for pass_name in ("ocr", "ai"):
+        model = (registry.settings.models.get(pass_name) or {}).get("model")
+        if model:
+            return model
+    return ""
+
+
+def needs_ocr(kind: PageKind, reocr: bool) -> bool:
+    return kind == "scan" or (kind == "scan_with_layer" and reocr)
+
+
+def _engine(job: Job, registry: Registry, local_only: bool) -> Chosen | None:
+    """The AI model the job reads scans with now, or None when Tesseract reads them."""
+    if job.passes[:1] != ["ai"]:
+        return None
+    return ocr_model(registry, local_only)
+
+
+def run_import_task(
+    sf: w.SessionFactory,
+    task_id: int,
+    plan: w._Plan,
+    deps: w.WorkerDeps,
+    paid: w._Paid,
+    stop: threading.Event | None = None,
+) -> None:
+    storage = deps.storage
+    if storage is None:
+        raise RuntimeError("this worker has no storage, so it cannot run import jobs")
+    if plan.kind == "import_scan":
+        _scan(sf, task_id, plan, deps, storage)
+    elif plan.kind == "import_pages":
+        _pages(sf, task_id, plan, deps, paid, storage, stop)
+    else:
+        _build(sf, task_id, plan, deps, storage)
+
+
+def _requeue(s: Session, task_id: int) -> None:
+    s.execute(
+        update(JobTask)
+        .where(JobTask.id == task_id, JobTask.status != "done")
+        .values(status="queued", not_before=None)
+    )
+
+
+# --- scan -----------------------------------------------------------------------------
+
+
+def _scan(
+    sf: w.SessionFactory, task_id: int, plan: w._Plan, deps: w.WorkerDeps, storage: Storage
+) -> None:
+    pdf = storage.read_source_pdf(plan.book_id)
+    with sf() as s:
+        pages = int(s.get(Job, plan.job_id).stats.get("pages") or 0)
+    kinds: list[PageKind] = run_isolated(classify_pages, pdf, timeout=120 + pages)
+    del pdf
+    note = None
+    with sf() as s:
+        job, task = w._lock_job_task(s, plan.job_id, task_id)
+        if task.status == "done" or job.status not in w.ACTIVE:  # cancelled while it read
+            _requeue(s, task_id)
+            s.commit()
+            return
+        stats = dict(job.stats or {})
+        ocr_pages = sum(1 for kind in kinds if needs_ocr(kind, bool(stats.get("reocr"))))
+        stats.update(kinds=list(kinds), ocr_pages=ocr_pages)
+        chosen = _engine(job, deps.registry, plan.local_only)
+        if chosen is not None and ocr_pages:
+            amount = estimate_ocr(deps.registry, ocr_pages, model=chosen[1].model)
+            job.estimate = {"ocr_pages": ocr_pages, "cost": str(amount)}
+            stats["awaiting_estimate"] = True
+        job.stats = stats
+        for first in range(0, len(kinds), PAGES_PER_TASK):
+            last = min(first + PAGES_PER_TASK, len(kinds)) - 1
+            s.add(JobTask(job_id=job.id, kind="import_pages", pages=[first, last]))
+        if not kinds:
+            s.add(JobTask(job_id=job.id, kind="import_build"))
+        note = w._complete_task(s, job, task, deps)
+        s.commit()
+    w._send(note, deps)
+
+
+# --- pages ----------------------------------------------------------------------------
+
+
+def _pages(
+    sf: w.SessionFactory,
+    task_id: int,
+    plan: w._Plan,
+    deps: w.WorkerDeps,
+    paid: w._Paid,
+    storage: Storage,
+    stop: threading.Event | None,
+) -> None:
+    pdf = storage.read_source_pdf(plan.book_id)
+    while True:  # once per range: a task that trades ranges goes on with its new one
+        with sf() as s:
+            job = s.get(Job, plan.job_id)
+            first, last = s.get(JobTask, task_id).pages
+            kinds: list[PageKind] = list(job.stats["kinds"])
+            reocr = bool(job.stats.get("reocr"))
+            variant = job.stats["variant"]
+            ai = _engine(job, deps.registry, plan.local_only) is not None
+        todo = [p for p in range(first, last + 1) if storage.read_page(plan.book_id, p) is None]
+        free = [p for p in todo if not (ai and needs_ocr(kinds[p], reocr))]
+        paid_pages = [p for p in todo if p not in free]
+        for page in free:
+            if stop is not None and stop.is_set():
+                w._requeue_for_stop(sf, task_id, plan)
+                return
+            result = _read_free(pdf, page, kinds[page], reocr, variant)
+            if not _save(sf, task_id, plan, deps, paid, storage, result):
+                return
+        verdict = _read_paid(sf, task_id, plan, deps, paid, storage, stop, pdf, paid_pages)
+        if verdict == "stop":
+            return
+        if verdict == "done":
+            _finish_pages(sf, task_id, plan, deps)
+            return
+
+
+def _read_paid(
+    sf: w.SessionFactory,
+    task_id: int,
+    plan: w._Plan,
+    deps: w.WorkerDeps,
+    paid: w._Paid,
+    storage: Storage,
+    stop: threading.Event | None,
+    pdf: bytes,
+    pages: list[int],
+) -> Literal["done", "stop", "swapped"]:
+    """Read the pages that go to the AI engine; see the module docstring."""
+    first = True
+    for page in pages:
+        if stop is not None and stop.is_set():
+            w._requeue_for_stop(sf, task_id, plan)
+            return "stop"
+        deps = w.refreshed(deps)
+        paid.deps = deps
+        verdict, chosen, variant = _gate(sf, task_id, plan, deps, first)
+        if verdict in ("stop", "swapped"):
+            return verdict
+        first = False
+        if verdict == "ai":
+            result = _read_ai(pdf, page, chosen, variant, paid)
+        elif verdict == "capped":
+            result = _read_scan(pdf, page, variant, after="the job's cost cap was reached")
+        else:  # the engine became Tesseract while the job ran (use_tesseract)
+            result = _read_scan(pdf, page, variant)
+        if not _save(sf, task_id, plan, deps, paid, storage, result):
+            return "stop"
+    return "done"
+
+
+def _gate(
+    sf: w.SessionFactory, task_id: int, plan: w._Plan, deps: w.WorkerDeps, first: bool
+) -> tuple[str, Chosen | None, str]:
+    """May the next AI page be read? Returns (verdict, model, the PDF's variant):
+    ``ai``; ``tesseract`` (the job no longer uses AI); ``capped`` (the cost cap was reached
+    in this task: Tesseract reads the page); ``swapped`` (the cap met at the task's first AI
+    page, so the task took a range whose free pages are unread); ``stop`` (the job is not
+    running, or it paused at the cap: the task goes back to the queue)."""
+    note = None
+    with sf() as s:
+        job = w._lock_job(s, plan.job_id)
+        variant = job.stats["variant"]
+        if job.status not in w.ACTIVE:
+            _requeue(s, task_id)
+            s.commit()
+            return "stop", None, variant
+        chosen = _engine(job, deps.registry, plan.local_only)
+        if chosen is None:
+            s.commit()
+            return "tesseract", None, variant
+        if job.cost_actual < job.max_cost:
+            s.commit()
+            return "ai", chosen, variant
+        if not first:
+            s.commit()
+            return "capped", None, variant
+        unread = s.scalars(
+            select(JobTask)
+            .where(
+                JobTask.job_id == job.id,
+                JobTask.id != task_id,
+                JobTask.kind == "import_pages",
+                JobTask.status == "queued",
+                JobTask.chunks_done == 0,
+            )
+            .order_by(JobTask.id)
+            .limit(1)
+            .with_for_update(skip_locked=True)
+        ).first()
+        task = s.scalars(
+            select(JobTask)
+            .where(JobTask.id == task_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        ).one()
+        if unread is not None:  # chunks_done 1: the range's free pages are read
+            task.pages, unread.pages = list(unread.pages), list(task.pages)
+            task.chunks_done, unread.chunks_done = 0, 1
+            s.commit()
+            return "swapped", None, variant
+        task.chunks_done = 1
+        job.status = "paused_cost_cap"
+        note = w._notification(job, "job.paused")
+        _requeue(s, task_id)
+        s.commit()
+    w._send(note, deps)
+    return "stop", None, variant
+
+
+def _failed(page: int, error: str) -> PageResult:
+    return PageResult(page, "failed", [], error=error[:500])
+
+
+def _read_free(pdf: bytes, page: int, kind: PageKind, reocr: bool, variant: str) -> PageResult:
+    if kind == "blank":
+        return PageResult(page, "text", [])
+    if kind == "text" or (kind == "scan_with_layer" and not reocr):
+        try:
+            return run_isolated(read_text_page, pdf, page)
+        except PageReadError as exc:
+            return _failed(page, str(exc))
+    try:
+        png = render_page(pdf, page)
+    except PageReadError as exc:
+        return _failed(page, str(exc))
+    if kind == "image":
+        block = PageBlock("image", image=png, image_type="image/png", top=0.0, bottom=1.0)
+        return PageResult(page, "image", [block])
+    return _tesseract(png, page, variant)
+
+
+def _tesseract(png: bytes, page: int, variant: str, *, after: str | None = None) -> PageResult:
+    """Tesseract's reading of a page. ``after`` says why the AI did not read it; then
+    Tesseract is the safety net and a page it cannot read either is failed. As the engine, a
+    missing Tesseract fails the task (every page would fail)."""
+    language = "de" if variant.startswith("de") else "en"
+    try:
+        return tesseract_page(png, page, language)
+    except TesseractMissing as exc:
+        if after is None:
+            raise
+        return _failed(page, f"{after}; {exc}")
+    except Exception as exc:  # noqa: BLE001 - one page Tesseract cannot read fails alone
+        detail = f"{type(exc).__name__}: {exc}"
+        return _failed(page, detail if after is None else f"{after}; Tesseract: {detail}")
+
+
+def _read_scan(pdf: bytes, page: int, variant: str, *, after: str | None = None) -> PageResult:
+    try:
+        png = render_page(pdf, page)
+    except PageReadError as exc:
+        return _failed(page, str(exc))
+    return _tesseract(png, page, variant, after=after)
+
+
+def _read_ai(pdf: bytes, page: int, chosen: Chosen, variant: str, paid: w._Paid) -> PageResult:
+    """The AI's reading of a page, or Tesseract's when the AI gives nothing usable. Every
+    billed call goes to ``paid.calls`` before anything else can raise."""
+    try:
+        png = render_page(pdf, page)
+    except PageReadError as exc:
+        return _failed(page, str(exc))
+    provider, cfg = chosen
+    try:
+        result, usage = ai_page(provider, cfg, png, page, variant)
+    except Exception as exc:  # noqa: BLE001 - refused, unusable, or errors after retries
+        billed = w.billed_from(exc)
+        if billed is not None:
+            paid.calls.append(billed)
+        log.warning("the AI could not read page %s (%s); Tesseract reads it", page + 1, exc)
+        return _tesseract(png, page, variant, after=f"the AI failed ({type(exc).__name__})")
+    paid.calls.append(w.Billed(usage, cfg.model, cfg.provider))
+    if not result.blocks:
+        return _tesseract(png, page, variant, after="the AI found nothing on the page")
+    return result
+
+
+def _save(
+    sf: w.SessionFactory,
+    task_id: int,
+    plan: w._Plan,
+    deps: w.WorkerDeps,
+    paid: w._Paid,
+    storage: Storage,
+    result: PageResult,
+) -> bool:
+    """Keep one page's result with the spend of its model calls. False: stop the task (the
+    job was cancelled or failed; the task goes back to the queue for a resume)."""
+    configured = configured_ocr_model((paid.deps or deps).registry)
+    with sf() as s:
+        job, task = w._lock_job_task(s, plan.job_id, task_id)
+        for billed in paid.calls:
+            w._usage_row(s, job, billed, (paid.deps or deps).registry, configured, OCR_PASS)
+        if storage.read_page(plan.book_id, result.page) is None:
+            storage.save_page(plan.book_id, result.page, to_json(result))
+            job.stats = w._bump(job.stats, pages_done=1)
+        go = job.status in ACTIVE_JOB_STATUSES  # a pause does not stop free pages
+        if not go and task.status != "done":
+            task.status = "queued"
+            task.not_before = None
+        s.commit()
+    paid.clear()
+    return go
+
+
+def _finish_pages(sf: w.SessionFactory, task_id: int, plan: w._Plan, deps: w.WorkerDeps) -> None:
+    """Mark the page task done; the last one makes the build task."""
+    with sf() as s:
+        job, task = w._lock_job_task(s, plan.job_id, task_id)
+        if task.status == "done":
+            s.commit()
+            return
+        task.status = "done"
+        task.finished_at = deps.now()
+        task.error = None
+        task.chunks_done = 1
+        s.flush()
+        left = s.scalar(
+            select(func.count())
+            .select_from(JobTask)
+            .where(
+                JobTask.job_id == job.id,
+                (JobTask.kind == "import_build")
+                | ((JobTask.kind == "import_pages") & (JobTask.status != "done")),
+            )
+        )
+        if left == 0:
+            s.add(JobTask(job_id=job.id, kind="import_build"))
+        s.commit()
+
+
+# --- build ----------------------------------------------------------------------------
+
+
+def _build(
+    sf: w.SessionFactory, task_id: int, plan: w._Plan, deps: w.WorkerDeps, storage: Storage
+) -> None:
+    with sf() as s:
+        job = s.get(Job, plan.job_id)
+        count = int(job.stats.get("pages") or len(job.stats.get("kinds") or []))
+        variant = job.stats["variant"]
+        target = job.stats.get("target_variant")
+        title = s.get(Book, plan.book_id).title
+    pages: list[PageResult] = []
+    for page in range(count):
+        saved = storage.read_page(plan.book_id, page)
+        if saved is None:
+            raise RuntimeError(f"page {page + 1} of the PDF was never read")
+        pages.append(from_json(saved))
+    summary = report(pages)
+    docx = build_docx(assemble(pages), title=title, language=variant)
+    del pages
+    note = None
+    with sf() as s:
+        job, task = w._lock_job_task(s, plan.job_id, task_id)
+        if task.status == "done" or job.status not in w.ACTIVE:  # cancelled while it built
+            _requeue(s, task_id)
+            s.commit()
+            return
+        book = s.get(Book, plan.book_id)
+        if book.work == "translate" and target:
+            source = Book(
+                title=book.title,
+                format="docx",
+                local_only=book.local_only,
+                original_filename=book.original_filename,
+                auto_apply=dict(book.auto_apply or {}),
+                is_source=True,
+            )
+            s.add(source)
+            s.flush()
+            populate_from_docx(s, storage, source, docx, variant)
+            make_translation(s, storage, source=source, book=book, target_variant=target)
+        else:
+            populate_from_docx(s, storage, book, docx, variant)
+        book = s.get(Book, plan.book_id)
+        book.import_status = None
+        book.import_error = None
+        book.import_report = summary
+        note = w._complete_task(s, job, task, deps)
+        s.commit()
+    w._send(note, deps)

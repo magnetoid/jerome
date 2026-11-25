@@ -19,6 +19,9 @@ so its blocks end ``done`` or ``flagged``, never stuck ``pending``.
 A stop request (SIGTERM or SIGINT, via the ``stop`` event) is honoured between chunks: the
 chunk in flight is committed, then the task and its job go back to ``queued``.
 
+An import job (``Job.type == "import"``) runs its ``import_*`` tasks in
+``jerome.pdfimport.job``; its model calls are recorded with pass name ``ocr``.
+
 ``WorkerDeps.refresh``, when set, brings the deps up to date with the settings before each
 task and each chunk, so a change made in the app reaches a running worker.
 
@@ -242,6 +245,10 @@ def run_task(
             _run_consistency(session_factory, task_id, plan, deps)
         elif plan.kind == "publish":
             _run_publish(session_factory, task_id, plan, deps)
+        elif plan.kind.startswith("import_"):
+            from jerome.pdfimport.job import run_import_task  # it builds on this module
+
+            run_import_task(session_factory, task_id, plan, deps, paid, stop)
         else:
             _run_chapter(session_factory, task_id, plan, deps, paid, stop)
     except Exception as exc:
@@ -754,6 +761,9 @@ def _fail_at_once(sf: SessionFactory, task_id: int, plan: _Plan, message: str, d
     _send(note, deps)
 
 
+_PASS_OF_JOB = {"translate": "translate", "import": "ocr"}
+
+
 def _record_failure(
     sf: SessionFactory, task_id: int, exc: Exception, paid: _Paid, deps: WorkerDeps
 ) -> None:
@@ -764,8 +774,12 @@ def _record_failure(
         job_id = s.scalar(select(JobTask.job_id).where(JobTask.id == task_id))
         job, task = _lock_job_task(s, job_id, task_id)
         bills = paid.bills() or [b for b in (billed_from(exc),) if b is not None]
-        pass_name = "translate" if job.type == "translate" else "ai"
+        pass_name = _PASS_OF_JOB.get(job.type, "ai")
         configured = pricing.registry.settings.models.get(pass_name, {}).get("model", "")
+        if job.type == "import":
+            from jerome.pdfimport.job import configured_ocr_model
+
+            configured = configured_ocr_model(pricing.registry)
         for billed in bills:  # the model calls were billed: keep their spend on the books
             _usage_row(s, job, billed, pricing.registry, configured, pass_name)
         task.attempts += 1
@@ -777,6 +791,11 @@ def _record_failure(
                 job.status = "failed"
                 job.finished_at = deps.now()
                 note = _notification(job, "job.failed")
+            if job.type == "import":  # the book cannot become ready: say why
+                book = s.get(Book, job.book_id)
+                if book is not None and book.import_status == "importing":
+                    book.import_status = "failed"
+                    book.import_error = (str(exc) or type(exc).__name__)[:2000]
         else:
             task.status = "queued"
             task.not_before = deps.now() + timedelta(seconds=deps.sleep_base * 2**task.attempts)
