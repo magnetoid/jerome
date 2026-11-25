@@ -613,3 +613,77 @@ def test_cancelling_an_import_fails_the_book_until_it_is_resumed(
     assert book_of(session_factory, book_id).import_status == "importing"
     drain(session_factory, deps_for(test_settings, tmp_storage))
     assert book_of(session_factory, book_id).import_status is None
+
+
+def _page_png(draw=None, paper: int = 255, dust: int = 0) -> bytes:
+    """An A4 page at a true 300 dpi (2480 x 3508), with ``dust`` specks of 1 to 3 px."""
+    import random
+
+    from PIL import Image, ImageDraw
+
+    image = Image.new("L", (2480, 3508), paper)
+    pen = ImageDraw.Draw(image)
+    rnd = random.Random(3)
+    for _ in range(dust):
+        x, y, size = rnd.randrange(2480), rnd.randrange(3508), rnd.randint(0, 2)
+        pen.rectangle([x, y, x + size, y + size], fill=rnd.randint(60, 200))
+    if draw:
+        draw(pen)
+    out = io.BytesIO()
+    image.save(out, "PNG")
+    return out.getvalue()
+
+
+def _small_text(pen) -> None:
+    from PIL import ImageFont
+
+    font = ImageFont.load_default(size=42)  # 10 pt at 300 dpi
+    pen.text((300, 1700), "The end.", fill=90, font=font)  # grey ink, as scans give it
+
+
+def _hairlines(pen) -> None:
+    pen.rectangle([400, 400, 2000, 1400], outline=120, width=1)
+    pen.line([400, 400, 2000, 1400], fill=120, width=1)
+
+
+@pytest.mark.parametrize(
+    ("png", "blank"),
+    [
+        (_page_png(), True),
+        (_page_png(dust=3000), True),
+        (_page_png(paper=235, dust=3000), True),
+        (_page_png(_small_text), False),
+        (_page_png(_small_text, dust=3000), False),
+        (_page_png(_hairlines), False),
+    ],
+    ids=["white", "dust", "grey-paper-dust", "10pt-line", "10pt-line-dust", "hairline"],
+)
+def test_is_blank_ignores_dust_but_never_text_or_lines(png, blank):
+    assert import_job.is_blank(png) is blank
+
+
+def test_one_short_line_scanned_at_300_dpi_is_not_blank():
+    from jerome.pdfimport.render import render_page
+
+    pdf = scan_pdf(text_pdf('<p style="font-size: 10pt">The end.</p>'), dpi=300)
+    assert import_job.is_blank(render_page(pdf, 0)) is False
+
+
+def test_a_pale_picture_stays_a_picture(session_factory, tmp_storage, test_settings, tesseract):
+    import base64
+
+    from PIL import Image, ImageDraw
+
+    pale = Image.new("RGB", (600, 400), (235, 235, 230))
+    ImageDraw.Draw(pale).ellipse([100, 50, 500, 350], outline=(205, 210, 215), width=2)
+    out = io.BytesIO()
+    pale.save(out, "PNG")
+    data = base64.b64encode(out.getvalue()).decode()
+    pdf = text_pdf(f'<img src="data:image/png;base64,{data}" style="width: 120mm">')
+    book_id = start(session_factory, tmp_storage, pdf, engine="tesseract")
+    drain(session_factory, deps_for(test_settings, tmp_storage))
+    assert job_of(session_factory, book_id).stats["kinds"] == ["image"]
+    saved = tmp_storage.read_page(book_id, 0)
+    assert saved["source"] == "image" and len(saved["blocks"]) == 1
+    report = book_of(session_factory, book_id).import_report
+    assert report["image_pages"] == 1 and report["blank_pages"] == 0

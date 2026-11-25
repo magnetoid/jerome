@@ -14,8 +14,8 @@ the cap at its first AI page while another queued page task has not read its fre
 ranges with that task and reads those free pages; the job pauses only when no free page is
 left unread. Within a task, an AI page the model cannot read (a refusal, an unusable or empty
 reply, an error) or one met after the cap was reached is read by Tesseract instead. A page that
-cannot be read at all is saved as ``failed``; a rendered page that is all but white is saved
-as ``blank`` without asking either engine. Why the AI did not read a page is counted in
+cannot be read at all is saved as ``failed``; a scanned page with nothing on it but dust is
+saved as ``blank`` without asking either engine. Why the AI did not read a page is counted in
 ``stats["ai_fallbacks"]``. Pictures are kept as JPEGs of at most 1600 px. The last page task
 makes ``import_build``.
 
@@ -54,10 +54,14 @@ PAGES_PER_TASK = 25
 OCR_PASS = "ocr"
 PICTURE_PX = 1600  # the long side of a kept picture, at most
 PICTURE_QUALITY = 85
-# Blank page test (see is_blank): at 150 dpi, a pixel darker than this is ink...
-_INK = 160
-# ...and a page with more ink pixels than this, left after a 3 x 3 erosion, is not blank
-_INK_PIXELS = 2
+# Blank page test (see is_blank), at the 300 dpi render: ink is this much darker than the
+# paper; a mark of at most DUST_PX pixels within DUST_SIZE x DUST_SIZE (under 0.85 mm) is
+# dust. A 10 pt letter or hyphen has more pixels; a hairline is longer.
+_INK_STEP = 25
+DUST_PX = 24
+DUST_SIZE = 10
+_MAX_INK = 60_000  # more ink than this is never a blank page
+_CELL = 8
 Chosen = tuple[Provider, PassConfig]
 
 
@@ -299,31 +303,91 @@ def _failed(page: int, error: str) -> PageResult:
 
 
 def is_blank(png: bytes) -> bool:
-    """True for a page image with no ink: nothing darker than mid grey at 150 dpi survives
-    a 3 x 3 erosion, so specks of dust up to about 4 px at 300 dpi do not count, while one
-    short word does. Grey paper and show-through are lighter than ink, so they count as
-    blank too."""
-    from PIL import Image, ImageChops
+    """True for a scanned page with no ink but dust. It errs towards "not blank": a page kept
+    by mistake costs one white picture, a page dropped by mistake loses text.
+
+    At the render's own resolution, ink is any pixel clearly darker than the paper (the
+    median grey, so grey paper is paper too). Ink pixels are joined into 8-connected marks;
+    a mark of at most DUST_PX pixels within DUST_SIZE x DUST_SIZE is dust. The page is blank
+    only when every mark is dust. A 1 px hairline or one 10 pt letter is not dust; a page
+    with more than _MAX_INK ink pixels is not blank without looking further."""
+    from PIL import Image
 
     with Image.open(io.BytesIO(png)) as image:
         gray = image.convert("L")
-    half = gray.resize((max(gray.width // 2, 1), max(gray.height // 2, 1)), Image.Resampling.BOX)
-    ink = half.point(lambda v: 255 if v < _INK else 0)
-    eroded = ink
-    for dx in (-1, 0, 1):
-        for dy in (-1, 0, 1):
-            if dx or dy:
-                eroded = ImageChops.darker(eroded, ImageChops.offset(ink, dx, dy))
-    return eroded.histogram()[255] <= _INK_PIXELS
+    histogram = gray.histogram()
+    half, seen = sum(histogram) / 2, 0
+    paper = 255
+    for value, n in enumerate(histogram):
+        seen += n
+        if seen >= half:
+            paper = value
+            break
+    limit = max(paper - _INK_STEP, 0)
+    ink_pixels = sum(histogram[:limit])
+    if ink_pixels == 0:
+        return True
+    if ink_pixels > _MAX_INK:
+        return False
+    mask = gray.point(lambda v: 255 if v < limit else 0)
+    return all(_is_dust(mark) for mark in _marks(mask))
 
 
-def _render(pdf: bytes, page: int) -> tuple[bytes | None, PageResult | None]:
-    """The page's image, or instead the page's result when it is failed or blank."""
+def _ink_points(mask) -> set[tuple[int, int]]:
+    """The (x, y) of every ink pixel: cells of 8 x 8 with any ink are found in C, then only
+    those cells are read pixel by pixel."""
+    cells = mask.reduce(_CELL)  # any ink in a cell leaves at least 255 / 64, so 4
+    points: set[tuple[int, int]] = set()
+    width = cells.width
+    for i, value in enumerate(cells.tobytes()):  # mode L: one byte per pixel
+        if not value:
+            continue
+        cx, cy = (i % width) * _CELL, (i // width) * _CELL
+        box = (cx, cy, min(cx + _CELL, mask.width), min(cy + _CELL, mask.height))
+        cell = mask.crop(box)
+        for j, pixel in enumerate(cell.tobytes()):
+            if pixel:
+                points.add((cx + j % cell.width, cy + j // cell.width))
+    return points
+
+
+def _marks(mask):
+    """The 8-connected marks of ink, one set of points each; it stops early at the first
+    mark that is not dust, as the caller does."""
+    points = _ink_points(mask)
+    while points:
+        start = points.pop()
+        mark, todo = [start], [start]
+        while todo:
+            x, y = todo.pop()
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    near = (x + dx, y + dy)
+                    if near in points:
+                        points.remove(near)
+                        mark.append(near)
+                        todo.append(near)
+            if len(mark) > DUST_PX:
+                break
+        yield mark
+
+
+def _is_dust(mark: list[tuple[int, int]]) -> bool:
+    if len(mark) > DUST_PX:
+        return False
+    xs, ys = [x for x, _ in mark], [y for _, y in mark]
+    return max(xs) - min(xs) < DUST_SIZE and max(ys) - min(ys) < DUST_SIZE
+
+
+def _render(pdf: bytes, page: int, *, scan: bool = True) -> tuple[bytes | None, PageResult | None]:
+    """The page's image, or instead the page's result when it is failed, or (a ``scan``
+    only) blank. A picture page is never tested for blankness: pdfminer saw a picture there,
+    and a pale one must not be lost."""
     try:
         png = render_page(pdf, page)
     except PageReadError as exc:
         return None, _failed(page, str(exc))
-    if is_blank(png):
+    if scan and is_blank(png):
         return None, PageResult(page, "blank", [])
     return png, None
 
@@ -336,7 +400,7 @@ def _read_free(pdf: bytes, page: int, kind: PageKind, reocr: bool, variant: str)
             return run_isolated(read_text_page, pdf, page)
         except PageReadError as exc:
             return _failed(page, str(exc))
-    png, done = _render(pdf, page)
+    png, done = _render(pdf, page, scan=kind != "image")
     if done is not None:
         return done
     if kind == "image":

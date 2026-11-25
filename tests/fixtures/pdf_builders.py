@@ -24,10 +24,10 @@ def text_pdf(html_body: str, *, header: str | None = None, page_numbers: bool = 
     return weasyprint.HTML(string=html).write_pdf()
 
 
-def scan_pdf(text_pdf_bytes: bytes, *, with_layer: bool = False) -> bytes:
+def scan_pdf(text_pdf_bytes: bytes, *, with_layer: bool = False, dpi: float = 108) -> bytes:
     """What a scanner makes of ``text_pdf_bytes``: each page rendered to an image and the
     PDF rebuilt from full-page images. With ``with_layer``, the text is kept invisible
-    over each image, as OCR software leaves it."""
+    over each image, as OCR software leaves it. ``dpi`` is the scan's resolution."""
     import pypdfium2 as pdfium
     import weasyprint
 
@@ -35,11 +35,11 @@ def scan_pdf(text_pdf_bytes: bytes, *, with_layer: bool = False) -> bytes:
     pages = []
     texts = []
     for page in document:
-        pages.append(page.render(scale=1.5).to_pil().convert("RGB"))
+        pages.append(page.render(scale=dpi / 72).to_pil().convert("RGB"))
         texts.append(page.get_textpage().get_text_range())
     if not with_layer:
         out = io.BytesIO()
-        pages[0].save(out, "PDF", save_all=True, append_images=pages[1:], resolution=72 * 1.5)
+        pages[0].save(out, "PDF", save_all=True, append_images=pages[1:], resolution=dpi)
         return out.getvalue()
     sections = []
     for image, text in zip(pages, texts, strict=True):

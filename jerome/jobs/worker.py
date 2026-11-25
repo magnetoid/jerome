@@ -793,8 +793,9 @@ def _record_failure(
                 note = _notification(job, "job.failed")
                 if job.type == "import":  # the book cannot become ready: say why
                     book = s.get(Book, job.book_id)
-                    book.import_status = "failed"
-                    book.import_error = (str(exc) or type(exc).__name__)[:2000]
+                    if book is not None:
+                        book.import_status = "failed"
+                        book.import_error = (str(exc) or type(exc).__name__)[:2000]
         else:
             task.status = "queued"
             task.not_before = deps.now() + timedelta(seconds=deps.sleep_base * 2**task.attempts)
