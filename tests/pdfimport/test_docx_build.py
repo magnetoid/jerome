@@ -95,3 +95,36 @@ def test_images_survive_to_the_publish_model():
     sizes = [(int(x), int(y)) for x, y in re.findall(r'extent cx="(\d+)" cy="(\d+)"', doc)]
     assert sizes[0] == (4 * 9525, 3 * 9525)
     assert sizes[1][0] == 5731510 and abs(sizes[1][0] / sizes[1][1] - 2) < 0.01
+
+
+def test_control_characters_are_stripped():
+    dirty = "a\x00b\x0cc\x1bd"
+    data = build_docx(
+        [
+            PageBlock("heading", [Run("H\x00i")]),
+            PageBlock("paragraph", [Run(dirty)]),
+            PageBlock("paragraph", [Run("x", note=1)]),
+            PageBlock("footnote", [Run(dirty)], note=1),
+        ],
+        title=dirty,
+        language="en-US\x00",
+    )
+    book = read_docx(data)
+    assert book.title == "ab cd" and book.language == "en-US"
+    texts = [b.text for b in book.chapters[0].blocks]
+    assert "Hi" in texts and "ab cd" in texts
+
+
+def test_oversized_image_takes_the_size_fallback(monkeypatch):
+    def bomb(*args, **kwargs):
+        raise Image.DecompressionBombError("too big")
+
+    monkeypatch.setattr(Image, "open", bomb)
+    data = build_docx(
+        [PageBlock("image", image=make_png(4, 3), image_type="image/png")],
+        title="T",
+        language="en-US",
+    )
+    with zipfile.ZipFile(io.BytesIO(data)) as zf:
+        doc = zf.read("word/document.xml").decode()
+    assert f'cx="{400 * 9525}" cy="{300 * 9525}"' in doc

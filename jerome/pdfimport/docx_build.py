@@ -1,6 +1,7 @@
 """Write assembled PDF blocks as a DOCX, which then goes through the ordinary DOCX import."""
 
 import io
+import re
 import zipfile
 
 from lxml import etree
@@ -28,6 +29,15 @@ _FALLBACK_PX = (400, 300)
 _MEDIA_EXT = {"image/png": "png", "image/jpeg": "jpg"}
 
 
+_TO_SPACE = dict.fromkeys(map(ord, "\n\r\x0c"), " ")
+_INVALID_XML = re.compile("[\x00-\x08\x0b\x0e-\x1f\ud800-\udfff\ufffe\uffff]")
+
+
+def _clean(text: str) -> str:
+    """Text XML 1.0 can hold: line breaks and form feeds become spaces, other controls go."""
+    return _INVALID_XML.sub("", text.translate(_TO_SPACE))
+
+
 def _w(tag: str) -> str:
     return f"{{{_W}}}{tag}"
 
@@ -53,7 +63,7 @@ def _text_run(parent: etree._Element, run: Run) -> None:
             _sub(rpr, "i")
     t = _sub(r, "t")
     t.set(f"{{{_XML}}}space", "preserve")
-    t.text = run.text
+    t.text = _clean(run.text)
 
 
 def _add_runs(p: etree._Element, runs: list[Run]) -> None:
@@ -97,7 +107,7 @@ def _pixel_size(data: bytes) -> tuple[int, int]:
     try:
         with Image.open(io.BytesIO(data)) as image:
             width, height = image.size
-    except (OSError, ValueError):
+    except (OSError, ValueError, Image.DecompressionBombError):
         return _FALLBACK_PX
     return (width, height) if width > 0 and height > 0 else _FALLBACK_PX
 
@@ -135,15 +145,15 @@ def _content_types(extensions: set[str]) -> bytes:
 def _core(title: str, language: str) -> bytes:
     cp, dc = NS["cp"], NS["dc"]
     root = etree.Element(f"{{{cp}}}coreProperties", nsmap={"cp": cp, "dc": dc})
-    etree.SubElement(root, f"{{{dc}}}title").text = title
-    etree.SubElement(root, f"{{{dc}}}language").text = language
+    etree.SubElement(root, f"{{{dc}}}title").text = _clean(title)
+    etree.SubElement(root, f"{{{dc}}}language").text = _clean(language)
     return _xml(root)
 
 
 def _styles(language: str) -> bytes:
     root = etree.Element(_w("styles"), nsmap={"w": _W})
     defaults = _sub(root, "docDefaults")
-    _sub(_sub(_sub(defaults, "rPrDefault"), "rPr"), "lang", val=language)
+    _sub(_sub(_sub(defaults, "rPrDefault"), "rPr"), "lang", val=_clean(language))
     _sub(defaults, "pPrDefault")
 
     def style(kind: str, style_id: str, name: str, *, default: bool = False) -> etree._Element:
