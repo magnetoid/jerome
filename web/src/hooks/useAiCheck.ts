@@ -45,3 +45,20 @@ export function useChapterAiCheck(bookId: string, chapterId: string) {
     onSettled: () => refresh(),
   });
 }
+
+export interface Remembered {
+  word: { id: number; word: string };
+  rejected: number;
+}
+
+/** Learn a mark's word for all books; the marks it rejected show after a refresh. */
+export function useRemember(bookId: string) {
+  const refresh = useRefreshReview(bookId);
+  return useMutation({
+    mutationFn: (id: number) => apiFetch<Remembered>(`/v1/suggestions/${id}/remember`, { method: "POST" }),
+    onSuccess: ({ word, rejected }) =>
+      toast.success(`Remembered “${word.word}” for all books; rejected ${rejected} mark${rejected === 1 ? "" : "s"}`),
+    onError: (err) => toast.error(detailOf(err)),
+    onSettled: () => refresh(),
+  });
+}

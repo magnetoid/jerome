@@ -6,6 +6,7 @@ import PricesSettings from "@/components/settings/PricesSettings";
 import { NumberSetting, TextSetting, UrlSetting } from "@/components/settings/SimpleSettings";
 import SecretsSection from "@/components/settings/SecretsSection";
 import ApiKeysSection from "@/components/settings/ApiKeysSection";
+import LearnedWordsSection from "@/components/settings/LearnedWordsSection";
 import { AuditSection, SystemSection } from "@/components/settings/SystemAndAudit";
 import { SETTINGS_KEY, useForbiddenWatch, type SettingsBody } from "@/components/settings/shared";
 
@@ -101,6 +102,7 @@ export default function SettingsPage() {
           </section>
 
           <SecretsSection secrets={data.secrets} system={data.system} />
+          <LearnedWordsSection />
           <ApiKeysSection />
           <SystemSection system={data.system} />
           <AuditSection />
