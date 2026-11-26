@@ -245,6 +245,40 @@ so, because a live worker might still hold it. Cancel the job
 (`POST /v1/jobs/{id}/cancel`), then resume it (`POST /v1/jobs/{id}/resume`); committed chunks
 are kept and not paid for twice.
 
+## PDF import
+
+A PDF becomes a normal book: upload it on the New project page, with `POST /v1/books`, or with
+`jerome import book.pdf --variant en-GB`. The book appears at once with the status
+"importing" while a background job reads the pages and builds the manuscript; when it is done
+you proofread or translate it like any DOCX. PDFs are limited to 2000 pages and
+`max_pdf_upload_mb` (200 MB by default); DOCX and EPUB keep `max_upload_mb`.
+
+**Engines.** Pages with a text layer are read directly, at no cost. Scanned pages are read by
+one of two engines:
+
+- *AI model*: the model set for the `ocr` pass (or else the `ai` pass). It is the default
+  whenever such a model is set up and the book is not local-only.
+- *Tesseract*: a local reader, free and private. It is the default when no model is set up,
+  and the only engine for a local-only book (the API refuses `ocr_engine=ai` for one with
+  422). Choose it with the `ocr_engine` field, or `--ocr tesseract` on the command line.
+
+**Estimate and confirm.** Nothing is spent on AI reading before you confirm. When the scanned
+pages are known, the import pauses with an estimate of the AI cost; confirm it with a maximum
+cost (`POST /v1/books/{id}/import/confirm` with `max_cost`), or use Tesseract instead
+(`POST /v1/books/{id}/import/use-tesseract`). Reading stops at the maximum.
+
+**Re-OCR scanned pages** (`reocr`, on by default): a scanned page that already has a text
+layer is read again by the engine, because the layer of a scan is often poor. Turn it off to
+trust such a layer.
+
+**Import report.** When the import is done, the book carries a report (`import_report`): how
+many pages came from the text layer, from the AI model (`engine_pages.ai`) and from Tesseract
+(`engine_pages.tesseract`), which pages could not be read (`failed_pages`, 1-based), which were
+blank (`blank_pages`), and why the AI handed pages to Tesseract (`ai_fallbacks`). A failed
+import shows its reason in `import_error`.
+
+Through Janus (MCP) a PDF cannot be imported yet; upload it on the New project page.
+
 ## Word round trip
 
 1. Import the manuscript and run a proofreading job.

@@ -14,7 +14,8 @@ class _TooLarge(Exception):
 class BodyLimitMiddleware:
     """Pure-ASGI request-body limit, applied before the app reads or parses the body.
 
-    The limit is ``max_upload_mb`` MiB plus 1 MiB of slack for multipart framing. Read from
+    The limit is the larger of ``max_upload_mb`` and ``max_pdf_upload_mb`` MiB (a PDF's own
+    limit is checked by its route) plus 1 MiB of slack for multipart framing. Read from
     the effective settings, refreshed first when the cache is due (at most every few
     seconds, in a worker thread). Streamed bodies without Content-Length are counted.
     """
@@ -29,7 +30,8 @@ class BodyLimitMiddleware:
         app = scope["app"]
         if app.state.settings_store.due:  # a raised limit must not be refused against a stale one
             await run_in_threadpool(refresh_if_due, app)
-        limit = (cached_for_app(app).max_upload_mb + 1) * _MIB
+        settings = cached_for_app(app)
+        limit = (max(settings.max_upload_mb, settings.max_pdf_upload_mb) + 1) * _MIB
         for key, value in scope["headers"]:
             if key == b"content-length":
                 try:

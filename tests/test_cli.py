@@ -220,3 +220,25 @@ def test_cli_publish_default_name_never_overwrites_the_manuscript(
     assert out.exit_code == 0, out.output
     assert (cli_env / "m.epub").read_bytes() == b"the original manuscript"
     assert (cli_env / "m-book.epub").read_bytes()[:2] == b"PK"
+
+
+def test_cli_imports_a_pdf(cli_runner, cli_env, session_factory):
+    import io
+
+    import pypdfium2 as pdfium
+
+    doc = pdfium.PdfDocument.new()
+    doc.new_page(200, 200)
+    buf = io.BytesIO()
+    doc.save(buf)
+    path = cli_env / "scan.pdf"
+    path.write_bytes(buf.getvalue())
+    out = cli_runner.invoke(app, ["import", str(path), "--variant", "en-GB", "--ocr", "tesseract"])
+    assert out.exit_code == 0, out.output
+    lines = out.stdout.strip().splitlines()
+    with session_factory() as s:
+        book = s.get(Book, int(lines[0]))
+        job = s.scalar(select(Job).where(Job.book_id == book.id))
+        assert book.import_status == "importing"
+        assert (job.type, job.passes) == ("import", ["tesseract"])
+    assert lines[1] == f"importing in the background (job {job.id})"
