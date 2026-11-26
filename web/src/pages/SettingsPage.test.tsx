@@ -360,6 +360,16 @@ describe("SettingsPage", () => {
     expect(call(f, "PUT", "/v1/settings/models.ai")).toBeFalsy();
   });
 
+  it("shows the page reading model as the AI check's until it is set", async () => {
+    const settings = body().settings.map((r) =>
+      (r as { key: string }).key === "models.ocr" ? row("models.ocr", {}) : r,
+    );
+    setup({}, body({ settings }));
+    const group = await screen.findByRole("group", { name: "PDF page reading model" });
+    expect(within(group).getByText("Same as AI check")).toBeInTheDocument();
+    expect(within(group).getByLabelText("Model")).toHaveValue("");
+  });
+
   it("saves an empty service URL as null", async () => {
     const f = setup({ "PUT /v1/settings/languagetool_url": () => json(200, body()) }).f;
     const user = userEvent.setup();

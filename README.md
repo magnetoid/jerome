@@ -256,7 +256,8 @@ you proofread or translate it like any DOCX. PDFs are limited to 2000 pages and
 **Engines.** Pages with a text layer are read directly, at no cost. Scanned pages are read by
 one of two engines:
 
-- *AI model*: the model set for the `ocr` pass (or else the `ai` pass). It is the default
+- *AI model*: the model set for the `ocr` pass (Settings → Models, "PDF page reading
+  model"); until one is set, the `ai` pass's model ("Same as AI check"). It is the default
   whenever such a model is set up and the book is not local-only.
 - *Tesseract*: a local reader, free and private. It is the default when no model is set up,
   and the only engine for a local-only book (the API refuses `ocr_engine=ai` for one with

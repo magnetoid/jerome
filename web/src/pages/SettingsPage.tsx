@@ -84,6 +84,7 @@ export default function SettingsPage() {
               label="PDF page reading model"
               idPrefix="ocr"
               keyed={keyed}
+              unsetNote="Same as AI check"
             />
           </section>
 
