@@ -19,8 +19,8 @@ class BodyLimitMiddleware:
 
     The limit is ``max_upload_mb`` MiB (``max_pdf_upload_mb`` for a PDF upload to
     ``POST /v1/books``, found by peeking at the start of its body) plus 1 MiB of slack for
-    multipart framing. Read from the effective settings, refreshed first when the cache is due (at most every few
-    seconds, in a worker thread). Streamed bodies without Content-Length are counted.
+    multipart framing. Read from the effective settings, refreshed first when the cache is
+    due (at most every few seconds, in a worker thread). Streamed bodies without Content-Length are counted.
     """
 
     def __init__(self, app) -> None:
