@@ -1,6 +1,7 @@
 """Reading a rendered page with Tesseract (the fast, free engine for scanned pages)."""
 
 import io
+import re
 import shutil
 import statistics
 import subprocess
@@ -12,7 +13,11 @@ from jerome.pdfimport.model import PageBlock, PageResult, Run
 _LANGUAGES = {"en": "eng", "de": "deu"}
 _TIMEOUT = 120
 _HEADING_RATIO = 1.3  # mean word height against the page median
-_MIN_WORDS = 5  # fewer words than this and the page is a picture
+# A page is text when Tesseract is sure of some of it: one word of 2 or more letters at this
+# confidence, or 3 words with a letter at the lower one. Otherwise it is a picture.
+_SURE_WORD = 85
+_SURE_WORDS, _FEW_WORDS = 70, 3
+_LETTERS = re.compile(r"[^\W\d_]{2,}")
 
 
 class TesseractMissing(JeromeError):
@@ -20,9 +25,10 @@ class TesseractMissing(JeromeError):
 
 
 def tesseract_page(png: bytes, page: int, language: Literal["en", "de"]) -> PageResult:
-    """Read a page image (``page`` is 0-based). A page with fewer than 5 words of text is a
-    picture and comes back as one image block. Tesseract's TSV does not mark picture regions,
-    so a picture on a page that also has text is not kept (the AI engine crops those)."""
+    """Read a page image (``page`` is 0-based). A page where Tesseract is sure of no text
+    (see _confident) is a picture and comes back as one image block. Tesseract's TSV does
+    not mark picture regions, so a picture on a page that also has text is not kept (the AI
+    engine crops those)."""
     program = shutil.which("tesseract")
     if program is None:
         raise TesseractMissing("Tesseract is not installed")
@@ -40,7 +46,7 @@ def tesseract_page(png: bytes, page: int, language: Literal["en", "de"]) -> Page
         detail = done.stderr.decode("utf-8", "replace").strip()
         raise JeromeError(f"Tesseract failed: {detail}")
     words = _words(done.stdout.decode("utf-8", "replace"))
-    if len(words) < _MIN_WORDS:
+    if not _confident(words):
         block = PageBlock("image", image=png, image_type="image/png", top=0.0, bottom=1.0)
         return PageResult(page, "image", [block])
     return PageResult(page, "tesseract", _blocks(words, _page_height(png)))
@@ -61,10 +67,24 @@ def _words(tsv: str) -> list[dict]:
                 "line": int(cells[4]),
                 "top": int(cells[7]),
                 "height": int(cells[9]),
+                "conf": float(cells[10]),
                 "text": cells[11].strip(),
             }
         )
     return words
+
+
+def _confident(words: list[dict]) -> bool:
+    """Whether Tesseract found text it is sure of: a word of 2 or more letters at confidence
+    85, or 3 words with a letter at confidence 70. A short title ("PART ONE", "Fin.") is
+    text; noise in a photo, read as sure "=", "~" and "1", is not."""
+    lettered = [w for w in words if any(c.isalpha() for c in w["text"])]
+    if sum(1 for w in lettered if w["conf"] >= _SURE_WORDS) >= _FEW_WORDS:
+        return True
+    return any(
+        w["conf"] >= _SURE_WORD and _LETTERS.fullmatch(w["text"].strip(".,;:!?\"'()[]«»„“”‘’-"))
+        for w in words
+    )
 
 
 def _page_height(png: bytes) -> int:

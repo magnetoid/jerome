@@ -90,3 +90,59 @@ def test_blocks_keep_tesseracts_order_headings_and_clamped_bottom():
     assert [b.kind for b in blocks] == ["paragraph", "heading"]
     assert blocks[0].bottom == 1.0
     assert blocks[1].top == 0.1
+
+
+@pytest.mark.integration
+@needs_tesseract
+def test_a_page_with_only_a_short_title_is_text():
+    pdf = scan_pdf(text_pdf("<h1>PART ONE</h1>"), dpi=300)
+    result = tesseract_page(render_page(pdf, 0), 0, "en")
+    assert result.source == "tesseract"
+    assert [b.kind for b in result.blocks] in (["heading"], ["paragraph"])
+    assert "PART ONE" in "".join(r.text for r in result.blocks[0].runs)
+
+
+@pytest.mark.integration
+@needs_tesseract
+def test_a_noisy_photo_stays_a_picture():
+    import random
+
+    rnd = random.Random(4)
+
+    def draw(d, size):
+        w, h = size
+        for _ in range(4000):
+            x, y = rnd.randrange(w), rnd.randrange(h)
+            d.rectangle(
+                [x, y, x + rnd.randint(1, 6), y + rnd.randint(1, 6)], fill=rnd.randint(0, 200)
+            )
+
+    result = tesseract_page(render_page(_png_pdf(6, 9, draw), 0), 0, "en")
+    assert result.source == "image"
+
+
+def _tsv(*words: tuple[str, float]) -> str:
+    header = "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth"
+    header += "\theight\tconf\ttext"
+    rows = [
+        f"5\t1\t1\t1\t1\t{i}\t0\t100\t50\t20\t{conf}\t{text}"
+        for i, (text, conf) in enumerate(words, 1)
+    ]
+    return "\n".join([header, *rows])
+
+
+@pytest.mark.parametrize(
+    ("words", "text"),
+    [
+        ((("PART", 91.0), ("ONE", 88.0)), True),
+        ((("Fin.", 86.0),), True),
+        ((("a", 95.0), ("b", 72.0), ("c", 71.0)), True),
+        ((("a", 95.0),), False),
+        ((("~~", 90.0),), False),
+        ((("ab", 80.0), ("cd", 60.0)), False),
+        ((("=", 94.0), ("1", 82.0), ("~", 79.0), ("a", 71.0)), False),
+    ],
+    ids=["title", "one-word", "three-words", "one-letter", "no-letters", "unsure", "noise"],
+)
+def test_a_page_is_text_only_when_tesseract_is_confident(words, text):
+    assert ocr_tesseract._confident(ocr_tesseract._words(_tsv(*words))) is text
