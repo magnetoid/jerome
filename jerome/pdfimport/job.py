@@ -672,4 +672,5 @@ def _build(
         book.import_report = summary
         note = w._complete_task(s, job, task, deps)
         s.commit()
+    storage.delete_pages(plan.book_id)  # the book is built; a retry never needs them again
     w._send(note, deps)

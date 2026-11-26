@@ -50,6 +50,10 @@ class Storage:
         path = self._book_dir(book_id) / "import" / f"page-{page:04d}.json"
         return json.loads(path.read_bytes()) if path.is_file() else None
 
+    def delete_pages(self, book_id: int) -> None:
+        """Remove the saved page results of a finished import (``source.pdf`` stays)."""
+        shutil.rmtree(self._book_dir(book_id) / "import", ignore_errors=True)
+
     def save_export(self, book_id: int, name: str, data: bytes) -> Path:
         return _write_atomic(self._book_dir(book_id) / "exports" / Path(name).name, data)
 

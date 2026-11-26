@@ -130,6 +130,12 @@ def tesseract(monkeypatch):
     return read
 
 
+@pytest.fixture
+def kept_pages(monkeypatch, tmp_storage):
+    """The saved page results stay after the build, for the test to look at."""
+    monkeypatch.setattr(tmp_storage, "delete_pages", lambda book_id: None)
+
+
 def _fails_on_page_1(pdf: bytes, page: int) -> PageResult:
     """read_text_page, except that page 1 (the second) cannot be read. Module level, so the
     isolated reader can run it."""
@@ -280,7 +286,7 @@ def test_reocr_off_uses_the_existing_layer(session_factory, tmp_storage, test_se
 
 
 def test_failed_page_is_reported_and_the_book_is_ready(
-    session_factory, tmp_storage, test_settings, monkeypatch
+    kept_pages, session_factory, tmp_storage, test_settings, monkeypatch
 ):
     monkeypatch.setattr(import_job, "read_text_page", _fails_on_page_1)
     pdf = text_pdf(ONE + BREAK + TWO + BREAK + THREE)
@@ -460,7 +466,7 @@ def _picture_png(width: int, height: int) -> bytes:
 
 
 def test_a_saved_picture_is_a_jpeg_of_at_most_1600_px(
-    session_factory, tmp_storage, test_settings, tesseract
+    kept_pages, session_factory, tmp_storage, test_settings, tesseract
 ):
     import base64
 
@@ -498,7 +504,7 @@ def _near_white_pdf() -> bytes:
 
 @pytest.mark.parametrize("ocr_engine", ["ai", "tesseract"])
 def test_a_blank_scanned_page_is_blank_for_both_engines(
-    session_factory, tmp_storage, test_settings, tesseract, ocr_engine
+    kept_pages, session_factory, tmp_storage, test_settings, tesseract, ocr_engine
 ):
     provider = FakeProvider([])
     deps = deps_for(test_settings, tmp_storage, provider)
@@ -690,7 +696,9 @@ def test_one_short_line_scanned_at_300_dpi_is_not_blank():
     assert import_job.is_blank(render_page(pdf, 0)) is False
 
 
-def test_a_pale_picture_stays_a_picture(session_factory, tmp_storage, test_settings, tesseract):
+def test_a_pale_picture_stays_a_picture(
+    kept_pages, session_factory, tmp_storage, test_settings, tesseract
+):
     import base64
 
     from PIL import Image, ImageDraw
@@ -880,7 +888,7 @@ def test_a_reply_that_breaks_the_parser_is_still_on_the_books(
 
 
 def test_a_page_image_that_cannot_be_opened_fails_that_page_only(
-    session_factory, tmp_storage, test_settings, tesseract, monkeypatch
+    kept_pages, session_factory, tmp_storage, test_settings, tesseract, monkeypatch
 ):
     from PIL import Image
 
@@ -897,3 +905,36 @@ def test_a_page_image_that_cannot_be_opened_fails_that_page_only(
     saved = tmp_storage.read_page(book_id, 1)
     assert saved["source"] == "failed" and "too many pixels" in saved["error"]
     assert any("harbour was quiet" in t for t in texts(session_factory, book_id))
+
+
+def test_a_finished_import_keeps_the_pdf_but_not_its_page_files(
+    session_factory, tmp_storage, test_settings
+):
+    book_id = start(session_factory, tmp_storage, text_pdf(ONE + BREAK + TWO), engine="tesseract")
+    drain(session_factory, deps_for(test_settings, tmp_storage))
+    assert book_of(session_factory, book_id).import_status is None
+    folder = tmp_storage.root / "books" / str(book_id)
+    assert (folder / "source.pdf").is_file()
+    assert not list(folder.glob("import/page-*.json"))
+
+
+def test_a_book_deleted_while_it_imports_stops_the_worker_cleanly(
+    session_factory, tmp_storage, test_settings, monkeypatch
+):
+    from jerome.core.books import delete_book
+
+    book_id = start(session_factory, tmp_storage, text_pdf(ONE + BREAK + TWO), engine="tesseract")
+    real = import_job._read_free
+
+    def deleted_meanwhile(pdf, page, *args):
+        result = real(pdf, page, *args)
+        with session_factory() as s:
+            delete_book(s, tmp_storage, book_id)
+            s.commit()
+        return result
+
+    monkeypatch.setattr(import_job, "_read_free", deleted_meanwhile)
+    drain(session_factory, deps_for(test_settings, tmp_storage))  # nothing escapes the worker
+    assert not (tmp_storage.root / "books" / str(book_id)).exists()
+    with session_factory() as s:
+        assert s.get(Book, book_id) is None and s.scalars(select(Job)).all() == []

@@ -252,8 +252,16 @@ def run_task(
         else:
             _run_chapter(session_factory, task_id, plan, deps, paid, stop)
     except Exception as exc:
+        if _task_gone(session_factory, task_id):  # its book was deleted while it ran
+            log.info("task %s stopped: its job no longer exists", task_id)
+            return
         log.exception("task %s failed", task_id)
         _record_failure(session_factory, task_id, exc, paid, deps)
+
+
+def _task_gone(sf: SessionFactory, task_id: int) -> bool:
+    with sf() as s:
+        return s.scalar(select(JobTask.id).where(JobTask.id == task_id)) is None
 
 
 def _start(sf: SessionFactory, task_id: int, deps: WorkerDeps) -> _Plan | None:
