@@ -32,15 +32,19 @@ export interface Suggestion {
   decided_by: string | null;
   /** Where the decision came from: "web", "api", "auto" or "mcp" (Janus). */
   decided_channel: string | null;
-  /** The AI's view of a LanguageTool mark, once asked for in review; null until then. */
+  /** The AI's rating of a LanguageTool mark, once asked for in review; null until then. */
   ai_verdict: AiVerdict | null;
-  /** The AI's text for the same span; only with "better". */
+  /** The AI's fix for the span (one of `options` or its own); null for "not_an_error". */
   ai_replacement: string | null;
   ai_reason: string | null;
   ai_model: string | null;
+  /** LanguageTool's replacements in its order, the first being `replacement`; null on older marks. */
+  options: string[] | null;
+  /** LanguageTool's rule id. */
+  lt_rule: string | null;
 }
 
-export type AiVerdict = "correct" | "not_an_error" | "better";
+export type AiVerdict = "error" | "maybe_error" | "not_an_error";
 
 export interface ReviewBlock {
   id: number;
@@ -199,14 +203,26 @@ export const canEdit = (s: Suggestion) => s.status === "open" || s.auto_applied;
 /** An open mark LanguageTool made alone, not yet checked by the AI. */
 export const canAskAi = (s: Suggestion) =>
   s.status === "open" && s.source === "languagetool" && !s.agreed && s.ai_verdict === null;
-/** The AI's own fix can be used: it found a better text and the mark is still open. */
+/** The fixes on offer for a mark: LanguageTool's options, or its one replacement on an older mark. */
+export const optionsOf = (s: Suggestion) => s.options ?? [s.replacement];
+
+/** The AI's fix differs from the mark's own replacement and the mark is still open. */
 export const canUseAiFix = (s: Suggestion) =>
-  s.status === "open" && s.ai_verdict === "better" && s.ai_replacement !== null;
+  s.status === "open" &&
+  (s.ai_verdict === "error" || s.ai_verdict === "maybe_error") &&
+  s.ai_replacement !== null &&
+  s.ai_replacement !== s.replacement;
 
 export const AI_VERDICT_LABELS: Record<AiVerdict, string> = {
-  correct: "AI: LanguageTool is right",
-  not_an_error: "AI: not an error",
-  better: "AI suggests a better fix",
+  error: "AI: definitely an error",
+  maybe_error: "AI: maybe an error",
+  not_an_error: "AI: definitely not an error",
+};
+
+export const AI_VERDICT_COLOURS: Record<AiVerdict, string> = {
+  error: "text-red-700 dark:text-red-400",
+  maybe_error: "text-amber-800 dark:text-amber-300",
+  not_an_error: "text-green-700 dark:text-green-400",
 };
 
 /** The chapter to open without one in the URL: the first with open items, else the first. */

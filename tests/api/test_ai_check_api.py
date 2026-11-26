@@ -31,12 +31,12 @@ def test_ai_check_route_returns_the_suggestion(api):
     client, auth, provider, sf, storage = api
     _, (b1, _), job_id = book(sf, storage)
     sid = mark(sf, b1, 15, 18, "tea", job_id=job_id)
-    provider.responses = [answer("better", "the")]
+    provider.responses = [answer("error", "the")]
     r = client.post(f"/v1/suggestions/{sid}/ai-check", headers=auth)
     assert r.status_code == 200, r.text
     out = r.json()
     assert (out["id"], out["status"], out["ai_verdict"], out["ai_replacement"]) == (
-        sid, "open", "better", "the",
+        sid, "open", "error", "the",
     )  # fmt: skip
     assert out["ai_reason"] == "Because." and out["ai_model"] == "claude-opus-5-5"
     again = client.post(f"/v1/suggestions/{sid}/ai-check", headers=auth)
@@ -88,14 +88,14 @@ def test_chapter_ai_check_route(api):
     book_id, (b1, b2), job_id = book(sf, storage)
     first = mark(sf, b1, 15, 18, "tea", job_id=job_id)
     second = mark(sf, b2, 8, 13, "barked", job_id=job_id)
-    provider.responses = [answer(), answer("correct")]
+    provider.responses = [answer(), answer("error")]
     path = f"/v1/books/{book_id}/chapters/{b1.chapter_id}/ai-check"
     r = client.post(path, headers=auth)
     assert r.status_code == 200, r.text
     out = r.json()
     assert (out["checked"], out["remaining"], out["failed"]) == (2, 0, 0)
     assert [(s["id"], s["ai_verdict"]) for s in out["suggestions"]] == [
-        (first, "not_an_error"), (second, "correct"),
+        (first, "not_an_error"), (second, "error"),
     ]  # fmt: skip
     again = client.post(path, headers=auth).json()
     assert (again["checked"], again["remaining"], again["suggestions"]) == (0, 0, [])

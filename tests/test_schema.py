@@ -212,7 +212,7 @@ def test_check_constraints_reject_bad_vocabulary(session, book_factory):
         session.flush()
     sp.rollback()
 
-    s = Suggestion(**good, ai_verdict="better", ai_replacement="h", ai_reason="r", ai_model="m")
+    s = Suggestion(**good, ai_verdict="error", ai_replacement="h", ai_reason="r", ai_model="m")
     session.add(s)
     session.flush()
     for field in ("previous_status", "new_status"):
@@ -352,6 +352,64 @@ def test_migration_0005_makes_existing_users_super_admins(engine):
         command.upgrade(cfg, "head")
         with engine.begin() as c:
             c.execute(text("DELETE FROM users WHERE email IN ('old@x.org', 'new@x.org')"))
+
+
+def test_migration_0011_renames_the_ai_ratings(engine, session_factory):
+    from alembic import command
+
+    from tests.conftest import alembic_config
+
+    cfg = alembic_config()
+    right, better = _committed_suggestion(session_factory), _committed_suggestion(session_factory)
+    try:
+        command.downgrade(cfg, "0010")
+        with engine.begin() as c:
+            c.execute(
+                text(
+                    "UPDATE suggestions SET ai_verdict = 'correct', ai_reason = 'r' WHERE id = :id"
+                ),
+                {"id": right},
+            )
+            c.execute(
+                text(
+                    "UPDATE suggestions SET ai_verdict = 'better', ai_replacement = 'own', "
+                    "ai_reason = 'r' WHERE id = :id"
+                ),
+                {"id": better},
+            )
+        command.upgrade(cfg, "head")
+        with engine.begin() as c:
+            rows = c.execute(
+                text(
+                    "SELECT id, ai_verdict, ai_replacement, replacement, options, lt_rule "
+                    "FROM suggestions WHERE id IN (:a, :b) ORDER BY id"
+                ),
+                {"a": right, "b": better},
+            ).all()
+        (r1, v1, a1, rep1, o1, l1), (r2, v2, a2, _, o2, l2) = rows
+        assert (v1, a1, o1, l1) == ("error", rep1, None, None)
+        assert (v2, a2, o2, l2) == ("error", "own", None, None)
+        with pytest.raises(IntegrityError), engine.begin() as c:
+            c.execute(
+                text("UPDATE suggestions SET ai_verdict = 'better' WHERE id = :id"), {"id": r1}
+            )
+        command.downgrade(cfg, "0010")
+        with engine.begin() as c:
+            back = c.execute(
+                text("SELECT ai_verdict FROM suggestions WHERE id IN (:a, :b) ORDER BY id"),
+                {"a": r1, "b": r2},
+            ).scalars()
+            assert list(back) == ["correct", "better"]
+    finally:
+        command.upgrade(cfg, "head")
+        with engine.begin() as c:
+            c.execute(
+                text(
+                    "DELETE FROM books WHERE id IN "
+                    "(SELECT book_id FROM suggestions WHERE id IN (:a, :b))"
+                ),
+                {"a": right, "b": better},
+            )
 
 
 def _committed_suggestion(session_factory) -> int:

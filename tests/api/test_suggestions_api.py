@@ -7,7 +7,8 @@ from tests.fixtures.suggestions import add_one
 
 KEYS = {
     "chapter_id", "agreed", "disputed", "alternative", "rule", "auto_applied", "decided_by",
-    "decided_channel", "ai_verdict", "ai_replacement", "ai_reason", "ai_model",
+    "decided_channel", "ai_verdict", "ai_replacement", "ai_reason", "ai_model", "options",
+    "lt_rule",
     "id", "book_id", "block_id", "start", "end", "original", "replacement", "category",
     "severity", "source", "explanation", "status", "final_text", "job_id", "model", "created_at",
 }  # fmt: skip

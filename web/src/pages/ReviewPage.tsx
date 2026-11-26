@@ -229,6 +229,10 @@ function ChapterReview({ bookId, chapterId, chapters }: {
                 onUseAiFix={() => {
                   if (current.ai_replacement !== null) run(current.id, "edit", current.ai_replacement);
                 }}
+                onUseOption={(text) => {
+                  if (text === current.replacement) actions.accept();
+                  else run(current.id, "edit", text);
+                }}
                 onCancelEdit={() => {
                   setEditing(null);
                   focusMark(current.id);

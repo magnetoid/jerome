@@ -11,7 +11,7 @@ export function sug(over: Partial<Suggestion> = {}): Suggestion {
     source: "model", explanation: "Misspelling of the.", status: "open", final_text: null,
     job_id: 9, model: "m-1", created_at: "2026-11-02T09:00:00Z", agreed: false,
     disputed: false, alternative: null, rule: null, auto_applied: false, decided_by: null, decided_channel: null,
-    ai_verdict: null, ai_replacement: null, ai_reason: null, ai_model: null,
+    ai_verdict: null, ai_replacement: null, ai_reason: null, ai_model: null, options: null, lt_rule: null,
     ...over,
   };
 }

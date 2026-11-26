@@ -164,6 +164,8 @@ def add_candidates(
                 disputed=c.disputed,
                 alternative=c.alternative,
                 rule=c.rule,
+                options=list(c.options) or None,
+                lt_rule=c.lt_rule,
             )
             session.add(row)
             known.append(row)

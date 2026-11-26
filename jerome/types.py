@@ -25,7 +25,7 @@ class Severity(StrEnum):
         return {"high": 3, "medium": 2, "low": 1}[self.value]
 
 
-AI_VERDICTS = ("correct", "not_an_error", "better")  # the AI's view of a LanguageTool mark
+AI_VERDICTS = ("error", "maybe_error", "not_an_error")  # the AI's rating of a LanguageTool mark
 
 
 class Source(StrEnum):
@@ -74,6 +74,8 @@ class Candidate:
     disputed: bool = False  # another checker proposed a different fix for this span
     alternative: str | None = None  # that other fix's replacement
     rule: str | None = None  # which house-style rule a consistency candidate came from
+    options: tuple[str, ...] = ()  # LanguageTool's replacements, in its order (first = replacement)
+    lt_rule: str | None = None  # LanguageTool's rule id
 
 
 @dataclass(frozen=True)

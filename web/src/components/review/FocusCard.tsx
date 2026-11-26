@@ -4,7 +4,8 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  AI_VERDICT_LABELS, categoryLabel, canAccept, canAskAi, canEdit, canReject, canUseAiFix, resultText,
+  AI_VERDICT_COLOURS, AI_VERDICT_LABELS, categoryLabel, canAccept, canAskAi, canEdit, canReject, canUseAiFix,
+  optionsOf, resultText,
   RULE_LABELS, SOURCE_LABELS, stateLabel, type Suggestion,
 } from "@/lib/review";
 import { cn } from "@/lib/utils";
@@ -27,21 +28,53 @@ interface Props {
   /** Asking the AI about this LanguageTool mark is under way. */
   asking: boolean;
   onAskAi: () => void;
-  /** Accept the mark with the AI's own text. */
+  /** Accept the mark with the AI's fix. */
   onUseAiFix: () => void;
+  /** Accept the mark with one of LanguageTool's options. */
+  onUseOption: (text: string) => void;
 }
 
-/** The AI's verdict on a LanguageTool mark, once asked for. */
+/** Where the AI's fix comes from: which of LanguageTool's options, or the AI itself. */
+function fixSource(s: Suggestion, fix: string) {
+  const n = optionsOf(s).indexOf(fix);
+  return n >= 0 ? `LanguageTool option ${n + 1}` : "the AI's own";
+}
+
+/** The AI's rating of a LanguageTool mark, once asked for: how sure, its fix, and why. */
 function AiVerdict({ s }: { s: Suggestion }) {
   if (s.ai_verdict === null) return null;
+  const fix = s.ai_verdict !== "not_an_error" ? s.ai_replacement : null;
   return (
     <p aria-label="AI verdict" className="text-sm">
-      <span className="font-medium text-ai">
-        {AI_VERDICT_LABELS[s.ai_verdict]}
-        {s.ai_verdict === "better" && s.ai_replacement !== null ? `: “${s.ai_replacement}”` : ""}
-      </span>
+      <span className={cn("font-medium", AI_VERDICT_COLOURS[s.ai_verdict])}>{AI_VERDICT_LABELS[s.ai_verdict]}</span>
+      {fix !== null && <span>{` · fix${fix ? ` “${fix}”` : ": delete"} (${fixSource(s, fix)})`}</span>}
       {s.ai_reason && <span>{` · ${s.ai_reason}`}</span>}
     </p>
+  );
+}
+
+/** LanguageTool's options for an open mark, when it offered more than one. */
+function Options({ s, busy, onUse }: { s: Suggestion; busy: boolean; onUse: (text: string) => void }) {
+  const options = optionsOf(s);
+  if (s.status !== "open" || options.length < 2) return null;
+  const pick = s.ai_verdict !== "not_an_error" ? s.ai_replacement : null;
+  return (
+    <div role="group" aria-label="LanguageTool options" className="flex flex-wrap items-center gap-1.5 text-sm">
+      <span className="font-medium">Options:</span>
+      {options.map((o, i) => (
+        <Button
+          key={`${i}-${o}`}
+          size="sm"
+          variant="outline"
+          className={cn("h-7 px-2", o === pick && "border-ai")}
+          disabled={busy}
+          onClick={() => onUse(o)}
+        >
+          {`${i + 1}. ${o || "delete"}`}
+          {o === pick && <span className="text-ai">{" · AI's pick"}</span>}
+        </Button>
+      ))}
+    </div>
   );
 }
 
@@ -122,8 +155,12 @@ function Key({ k }: { k: string }) {
  */
 export default function FocusCard(p: Props) {
   const { s } = p;
-  // When the AI says the mark is not an error, rejecting it is the likely next step.
-  const rejectFirst = s.ai_verdict === "not_an_error" && s.status === "open";
+  // The main button follows the AI's rating: Reject when it is certainly fine, the AI's fix
+  // when it is certainly an error with another fix, and none when it may be an error.
+  const open = s.status === "open";
+  const rejectFirst = open && s.ai_verdict === "not_an_error";
+  const fixFirst = open && s.ai_verdict === "error" && canUseAiFix(s);
+  const acceptFirst = !rejectFirst && !fixFirst && !(open && s.ai_verdict === "maybe_error");
   return (
     <section
       aria-label="Focused suggestion"
@@ -158,6 +195,7 @@ export default function FocusCard(p: Props) {
       )}
       {s.rule && <p className="text-sm">{RULE_LABELS[s.rule] ?? s.rule}</p>}
       <AiVerdict s={s} />
+      <Options s={s} busy={p.busy} onUse={p.onUseOption} />
       <p className={cn("text-sm text-muted-foreground", s.auto_applied && "text-ai")}>{stateLabel(s)}</p>
       {p.hiddenBy && <p className="text-sm text-muted-foreground">{hiddenNote(p.hiddenBy)}</p>}
       {p.editing ? (
@@ -166,7 +204,7 @@ export default function FocusCard(p: Props) {
         <div className="flex flex-wrap gap-2">
           <Button
             size="sm"
-            variant={rejectFirst ? "outline" : "default"}
+            variant={acceptFirst ? "default" : "outline"}
             onClick={p.onAccept}
             disabled={p.busy || !canAccept(s)}
           >
@@ -188,7 +226,13 @@ export default function FocusCard(p: Props) {
             Undo <Key k="u" />
           </Button>
           {canUseAiFix(s) && (
-            <Button size="sm" variant="outline" className="border-ai text-ai" onClick={p.onUseAiFix} disabled={p.busy}>
+            <Button
+              size="sm"
+              variant={fixFirst ? "default" : "outline"}
+              className={cn(!fixFirst && "border-ai text-ai")}
+              onClick={p.onUseAiFix}
+              disabled={p.busy}
+            >
               Use AI fix
             </Button>
           )}

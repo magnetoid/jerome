@@ -457,6 +457,14 @@ def test_add_candidates_stores_flags_and_returns_rows(session, block):
     )
 
 
+def test_add_candidates_stores_languagetool_options_and_rule(session, block):
+    lt = cand(block, 0, 3, "teh", "the", options=("the", "tea"), lt_rule="MORFOLOGIK")
+    plain = cand(block, 4, 7, "cat", "cats")
+    first, second = add_candidates(session, block.book_id, None, [lt, plain]).rows
+    assert (first.options, first.lt_rule) == (["the", "tea"], "MORFOLOGIK")
+    assert (second.options, second.lt_rule) == (None, None)  # no options: nothing stored
+
+
 def _auto_applied(session, block, start=0, end=3, original="teh", replacement="the"):
     s = add_one(session, block, start, end, original, replacement, source="model")
     decide(session, s.id, "accept", actor="ai", channel="auto")

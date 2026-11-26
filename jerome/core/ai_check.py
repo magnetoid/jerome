@@ -26,7 +26,16 @@ from jerome.models import ModelOutputError, ModelRefusal, Registry
 from jerome.models.base import Provider
 from jerome.models.registry import PassConfig
 from jerome.orm import Block, Book, Chapter, Job, Suggestion
-from jerome.proofread.ai_check import VERDICT_SCHEMA, Mark, Verdict, build_request, parse_verdicts
+from jerome.proofread.ai_check import (
+    CONTEXT_SENTENCES,
+    VERDICT_SCHEMA,
+    Mark,
+    Verdict,
+    build_request,
+    parse_verdicts,
+    pick_context,
+    room_around,
+)
 
 log = logging.getLogger(__name__)
 
@@ -107,6 +116,21 @@ def _job_for(session: Session, book_id: int, marks: list[Suggestion]) -> int:
     return job_id
 
 
+def _neighbours(session: Session, block: Block, *, earlier: bool) -> list[str]:
+    """The texts of the paragraphs before (or after) ``block`` in its chapter, nearest first:
+    no more than could be shown, since each gives at least one sentence."""
+    side = Block.ordinal < block.ordinal if earlier else Block.ordinal > block.ordinal
+    order = Block.ordinal.desc() if earlier else Block.ordinal
+    return list(
+        session.scalars(
+            select(Block.text)
+            .where(Block.chapter_id == block.chapter_id, side)
+            .order_by(order)
+            .limit(CONTEXT_SENTENCES)
+        )
+    )
+
+
 def _ask(
     session: Session,
     registry: Registry,
@@ -121,18 +145,19 @@ def _ask(
 
     provider, cfg = chosen
     job_id = _job_for(session, book.id, marks)
-    previous = session.scalar(
-        select(Block.text)
-        .where(Block.chapter_id == block.chapter_id, Block.ordinal < block.ordinal)
-        .order_by(Block.ordinal.desc())
-        .limit(1)
-    )
-    asked = [Mark(s.id, s.start, s.end, s.original, s.replacement, s.explanation) for s in marks]
+    asked = [
+        Mark(s.id, s.start, s.end, s.original, s.replacement, s.explanation, tuple(s.options or ()))
+        for s in marks
+    ]
+    have_before, have_after = room_around(block.text, asked)
+    before = pick_context(_neighbours(session, block, earlier=True), have_before)
+    after = pick_context(_neighbours(session, block, earlier=False), have_after)
     system, user = build_request(
         get_style_sheet(session, book.id),
         block.text,
         asked,
-        previous=previous,
+        before=before[::-1],
+        after=after,
         source=source_texts(session, [block.id]).get(block.id),
     )
     try:

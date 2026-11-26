@@ -88,21 +88,21 @@ def test_single_check_saves_the_verdict_and_bills_the_job(
     sf = session_factory
     book_id, (b1, _), job_id = book(sf, tmp_storage)
     sid = mark(sf, b1, 15, 18, "tea", job_id=job_id)
-    provider = FakeProvider([answer("better", "the")])
+    provider = FakeProvider([answer("error", "the")])
     with sf() as s:
         got = check_suggestion(s, registry(test_settings, provider), sid, actor="a")
         s.commit()
         assert got.id == sid
     r = row(sf, sid)
     assert (r.ai_verdict, r.ai_replacement, r.ai_reason, r.ai_model) == (
-        "better", "the", "Because.", "claude-opus-5-5",
+        "error", "the", "Because.", "claude-opus-5-5",
     )  # fmt: skip
     assert r.status == "open"
     rows = usage(sf, job_id)
     assert [(u.pass_name, u.job_id) for u in rows] == [("ai", job_id)]
     assert cost(sf, job_id) == CALL_COST
     call = provider.calls[0]
-    assert "⟦teh⟧" in call["user"] and "LanguageTool's fix: tea" in call["user"]
+    assert "⟦teh⟧" in call["user"] and "LanguageTool's options:\n1. tea\n" in call["user"]
     assert call["model"] == "claude-opus-5-5"
 
 
@@ -119,17 +119,67 @@ def test_mark_without_job_bills_the_latest_proofreading_job(
     assert row(sf, sid).ai_verdict == "not_an_error"
 
 
-def test_request_has_the_previous_paragraph(session_factory, tmp_storage, test_settings):
+def _context_of(user: str, tag: str) -> str | None:
+    m = re.search(f'<{tag} read_only="true">\\n(.*?)\\n</{tag}>', user, re.S)
+    return m.group(1) if m else None
+
+
+def test_request_has_the_neighbouring_paragraphs(session_factory, tmp_storage, test_settings):
     sf = session_factory
-    _, (_, b2), job_id = book(sf, tmp_storage)
+    _, (b1, b2), job_id = book(sf, tmp_storage)
     sid = mark(sf, b2, 8, 13, "barked", job_id=job_id)
-    provider = FakeProvider([answer("correct")])
+    provider = FakeProvider([answer("error")])
     with sf() as s:
         check_suggestion(s, registry(test_settings, provider), sid, actor="a")
         s.commit()
-    assert "<previous_paragraph" in provider.calls[0]["user"]
-    assert "Katharina said teh cat sat." in provider.calls[0]["user"]
-    assert row(sf, sid).ai_verdict == "correct"
+    user = provider.calls[0]["user"]
+    assert _context_of(user, "previous_paragraphs") == "Katharina said teh cat sat."
+    assert _context_of(user, "following_paragraphs") is None  # the last paragraph
+    assert row(sf, sid).ai_verdict == "error"
+
+
+DIALOGUE = (
+    "# One", "Far away.", "# Two", "“Hello.”", "“Hi.”", "“Tea?”", "“Yes, teh tea.”",
+    "“Sure.”", "“Thanks.”", "“Hot.”", "“Bye.”",
+)  # fmt: skip
+
+
+def test_short_paragraphs_give_three_sentences_each_side_within_the_chapter(
+    session_factory, tmp_storage, test_settings
+):
+    sf = session_factory
+    _, blocks, job_id = book(sf, tmp_storage, DIALOGUE)
+    target = next(b for b in blocks if "teh" in b.text)
+    sid = mark(sf, target, 7, 10, "the", job_id=job_id)
+    provider = FakeProvider([answer()])
+    with sf() as s:
+        check_suggestion(s, registry(test_settings, provider), sid, actor="a")
+        s.commit()
+    user = provider.calls[0]["user"]
+    before = _context_of(user, "previous_paragraphs")
+    after = _context_of(user, "following_paragraphs")
+    assert before == "“Hello.”\n\n“Hi.”\n\n“Tea?”"  # reading order; not the heading "Two"
+    assert after == "“Sure.”\n\n“Thanks.”\n\n“Hot.”"
+    assert "Far away." not in user  # another chapter
+
+
+def test_chapter_check_gives_each_paragraph_its_own_context(
+    session_factory, tmp_storage, test_settings
+):
+    sf = session_factory
+    book_id, blocks, job_id = book(sf, tmp_storage, DIALOGUE)
+    first = next(b for b in blocks if b.text == "“Hi.”")
+    second = next(b for b in blocks if "teh" in b.text)
+    mark(sf, first, 1, 3, "Hey", job_id=job_id)
+    mark(sf, second, 7, 10, "the", job_id=job_id)
+    provider = FakeProvider([answer(), answer()])
+    with sf() as s:
+        check_chapter(s, registry(test_settings, provider), book_id, first.chapter_id, actor="a")
+        s.commit()
+    one, two = (c["user"] for c in provider.calls)
+    assert _context_of(one, "previous_paragraphs") == "Two\n\n“Hello.”"
+    assert _context_of(one, "following_paragraphs") == "“Tea?”\n\n“Yes, teh tea.”\n\n“Sure.”"
+    assert _context_of(two, "previous_paragraphs") == "“Hello.”\n\n“Hi.”\n\n“Tea?”"
 
 
 @pytest.mark.parametrize(
@@ -138,7 +188,7 @@ def test_request_has_the_previous_paragraph(session_factory, tmp_storage, test_s
         ({"status": "accepted"}, "not open"),
         ({"source": "model"}, "LanguageTool alone"),
         ({"agreed": True}, "LanguageTool alone"),
-        ({"ai_verdict": "correct", "ai_reason": "r"}, "already"),
+        ({"ai_verdict": "error", "ai_reason": "r"}, "already"),
     ],
 )
 def test_not_eligible_conflicts(session_factory, tmp_storage, test_settings, kw, why):
@@ -210,7 +260,7 @@ def test_mark_decided_during_the_call_keeps_its_status(session_factory, tmp_stor
     sf = session_factory
     _, (b1, _), job_id = book(sf, tmp_storage)
     sid = mark(sf, b1, 15, 18, "the", job_id=job_id)
-    reply = answer("correct")
+    reply = answer("error")
 
     def accepted_meanwhile(kwargs):
         with sf() as other:  # a teammate accepts the mark while the model thinks
@@ -225,7 +275,7 @@ def test_mark_decided_during_the_call_keeps_its_status(session_factory, tmp_stor
         s.commit()
         assert got.status == "accepted"
     r = row(sf, sid)
-    assert (r.status, r.ai_verdict) == ("accepted", "correct")
+    assert (r.status, r.ai_verdict) == ("accepted", "error")
 
 
 def test_chapter_groups_by_paragraph(session_factory, tmp_storage, test_settings):
@@ -277,14 +327,14 @@ def test_chapter_counts_failed_marks(session_factory, tmp_storage, test_settings
     book_id, (b1, b2), job_id = book(sf, tmp_storage)
     bad = mark(sf, b1, 15, 18, "tea", job_id=job_id)
     good = mark(sf, b2, 8, 13, "barked", job_id=job_id)
-    provider = FakeProvider([{"verdicts": []}, answer("correct")])
+    provider = FakeProvider([{"verdicts": []}, answer("error")])
     with sf() as s:
         got = check_chapter(s, registry(test_settings, provider), book_id, b1.chapter_id, actor="a")
         s.commit()
         checked = [r.id for r in got.checked]
     assert checked == [good]
     assert (got.remaining, got.failed) == (0, 1)
-    assert row(sf, bad).ai_verdict is None and row(sf, good).ai_verdict == "correct"
+    assert row(sf, bad).ai_verdict is None and row(sf, good).ai_verdict == "error"
     assert len(usage(sf, job_id)) == 2
 
 

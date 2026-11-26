@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import FocusCard from "./FocusCard";
 import { aiSug, sug } from "./fixtures";
@@ -17,18 +17,21 @@ function renderCard(hiddenBy: Suggestion | null, source?: string | null) {
       canUndo={false}
       asking={false}
       onAccept={noop} onReject={noop} onEdit={noop} onUndo={noop} onSave={noop} onCancelEdit={noop}
-      onAskAi={noop} onUseAiFix={noop}
+      onAskAi={noop} onUseAiFix={noop} onUseOption={noop}
     />,
   );
 }
 
-function cardFor(s: Suggestion, over: { asking?: boolean; onAskAi?: () => void; onUseAiFix?: () => void } = {}) {
+function cardFor(
+  s: Suggestion,
+  over: { asking?: boolean; onAskAi?: () => void; onUseAiFix?: () => void; onUseOption?: (text: string) => void } = {},
+) {
   const noop = vi.fn();
   return render(
     <FocusCard
       s={s} hiddenBy={null} editing={false} busy={false} canUndo={false} asking={over.asking ?? false}
       onAccept={noop} onReject={noop} onEdit={noop} onUndo={noop} onSave={noop} onCancelEdit={noop}
-      onAskAi={over.onAskAi ?? noop} onUseAiFix={over.onUseAiFix ?? noop}
+      onAskAi={over.onAskAi ?? noop} onUseAiFix={over.onUseAiFix ?? noop} onUseOption={over.onUseOption ?? noop}
     />,
   );
 }
@@ -81,7 +84,7 @@ describe("FocusCard AI check", () => {
     expect(onAskAi).toHaveBeenCalledOnce();
     unmount();
     for (const s of [
-      sug(), lt({ agreed: true }), lt({ status: "rejected" }), lt({ ai_verdict: "correct", ai_reason: "Right." }),
+      sug(), lt({ agreed: true }), lt({ status: "rejected" }), lt({ ai_verdict: "error", ai_replacement: "the", ai_reason: "Right." }),
     ]) {
       const card = cardFor(s);
       expect(screen.queryByRole("button", { name: "Ask AI" })).toBeNull();
@@ -94,32 +97,90 @@ describe("FocusCard AI check", () => {
     expect(screen.getByRole("button", { name: "Asking AI…" })).toBeDisabled();
   });
 
-  it("shows the verdict and reason", async () => {
+  it("an error with another fix shows it and makes Use AI fix the main button", async () => {
     const onUseAiFix = vi.fn();
-    cardFor(lt({ ai_verdict: "better", ai_replacement: "the cat", ai_reason: "Keeps the article." }), { onUseAiFix });
+    cardFor(
+      lt({ options: ["the", "tea"], ai_verdict: "error", ai_replacement: "tea", ai_reason: "They drink it." }),
+      { onUseAiFix },
+    );
     const verdict = screen.getByLabelText("AI verdict");
-    expect(verdict).toHaveTextContent("AI suggests a better fix: “the cat”");
-    expect(verdict).toHaveTextContent("Keeps the article.");
+    expect(verdict).toHaveTextContent("AI: definitely an error · fix “tea” (LanguageTool option 2)");
+    expect(verdict).toHaveTextContent("They drink it.");
+    expect(within(verdict).getByText(/definitely an error/)).toHaveClass("text-red-700");
+    expect(screen.getByRole("button", { name: "Use AI fix" })).not.toHaveClass("border");
+    expect(screen.getByRole("button", { name: /^Accept/ })).toHaveClass("border");
     await userEvent.click(screen.getByRole("button", { name: "Use AI fix" }));
     expect(onUseAiFix).toHaveBeenCalledOnce();
   });
 
-  it("LanguageTool right keeps Accept the main button", () => {
-    cardFor(lt({ ai_verdict: "correct", ai_reason: "A typo." }));
-    expect(screen.getByLabelText("AI verdict")).toHaveTextContent("AI: LanguageTool is right");
+  it("an error with LanguageTool's first fix keeps Accept the main button", () => {
+    cardFor(lt({ ai_verdict: "error", ai_replacement: "the", ai_reason: "A typo." }));
+    expect(screen.getByLabelText("AI verdict")).toHaveTextContent("AI: definitely an error · fix “the” (LanguageTool option 1)");
     expect(screen.queryByRole("button", { name: "Use AI fix" })).toBeNull();
     expect(screen.getByRole("button", { name: /^Accept/ })).not.toHaveClass("border");
   });
 
+  it("an AI fix of its own is named as the AI's", () => {
+    cardFor(lt({ ai_verdict: "error", ai_replacement: "The", ai_reason: "Starts a sentence." }));
+    expect(screen.getByLabelText("AI verdict")).toHaveTextContent("AI: definitely an error · fix “The” (the AI's own)");
+  });
+
+  it("maybe an error leaves no main button", () => {
+    cardFor(lt({ options: ["the", "tea"], ai_verdict: "maybe_error", ai_replacement: "tea", ai_reason: "Depends." }));
+    const verdict = screen.getByLabelText("AI verdict");
+    expect(verdict).toHaveTextContent("AI: maybe an error · fix “tea” (LanguageTool option 2)");
+    expect(within(verdict).getByText(/maybe an error/)).toHaveClass("text-amber-800");
+    for (const name of [/^Accept/, /^Reject/, /^Use AI fix/]) {
+      expect(screen.getByRole("button", { name })).toHaveClass("border");
+    }
+  });
+
   it("not an error makes Reject the main button", () => {
     cardFor(lt({ ai_verdict: "not_an_error", ai_reason: "A name." }));
-    expect(screen.getByLabelText("AI verdict")).toHaveTextContent("AI: not an error");
+    const verdict = screen.getByLabelText("AI verdict");
+    expect(verdict).toHaveTextContent("AI: definitely not an error · A name.");
+    expect(within(verdict).getByText(/definitely not an error/)).toHaveClass("text-green-700");
     expect(screen.getByRole("button", { name: /^Reject/ })).not.toHaveClass("border");
     expect(screen.getByRole("button", { name: /^Accept/ })).toHaveClass("border");
   });
 
   it("no Use AI fix once the mark is decided", () => {
-    cardFor(lt({ status: "rejected", ai_verdict: "better", ai_replacement: "x", ai_reason: "r" }));
+    cardFor(lt({ status: "rejected", ai_verdict: "error", ai_replacement: "x", ai_reason: "r" }));
     expect(screen.queryByRole("button", { name: "Use AI fix" })).toBeNull();
+  });
+});
+
+describe("FocusCard LanguageTool options", () => {
+  it("lists the options, marks the AI's pick, and uses the one clicked", async () => {
+    const onUseOption = vi.fn();
+    cardFor(lt({ options: ["the", "tea", "ten"], ai_verdict: "maybe_error", ai_replacement: "tea", ai_reason: "r" }), {
+      onUseOption,
+    });
+    const list = screen.getByRole("group", { name: "LanguageTool options" });
+    const buttons = within(list).getAllByRole("button");
+    expect(buttons.map((b) => b.textContent)).toEqual(["1. the", "2. tea · AI's pick", "3. ten"]);
+    await userEvent.click(buttons[2]);
+    expect(onUseOption).toHaveBeenCalledWith("ten");
+  });
+
+  it("names a deletion option and fix as delete", () => {
+    cardFor(lt({ replacement: "the", options: ["the", ""], ai_verdict: "error", ai_replacement: "", ai_reason: "Doubled." }));
+    const list = screen.getByRole("group", { name: "LanguageTool options" });
+    expect(within(list).getAllByRole("button").map((b) => b.textContent)).toEqual(["1. the", "2. delete · AI's pick"]);
+    expect(screen.getByLabelText("AI verdict")).toHaveTextContent("fix: delete (LanguageTool option 2)");
+  });
+
+  it("a maybe without a fix names none", () => {
+    cardFor(lt({ ai_verdict: "maybe_error", ai_replacement: null, ai_reason: "Could be dialect." }));
+    expect(screen.getByLabelText("AI verdict")).toHaveTextContent("AI: maybe an error · Could be dialect.");
+    expect(screen.queryByRole("button", { name: "Use AI fix" })).toBeNull();
+  });
+
+  it("shows no list for one option, an old mark, or a decided mark", () => {
+    for (const s of [lt({ options: ["the"] }), lt({ options: null }), lt({ options: ["the", "tea"], status: "accepted" })]) {
+      const card = cardFor(s);
+      expect(screen.queryByRole("group", { name: "LanguageTool options" })).toBeNull();
+      card.unmount();
+    }
   });
 });
