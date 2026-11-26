@@ -1,6 +1,8 @@
 """Running a PDF import job (``Job.type == "import"``): a scan task, page tasks, a build task.
 
-``import_scan`` sorts the pages (free) and makes one ``import_pages`` task per 25 pages. With
+``import_scan`` sorts the pages (free; a page with no text and no image is rendered, and one
+that is not blank, e.g. text drawn as outlines, is a scan) and makes one ``import_pages`` task
+per 25 pages. With
 the AI engine and pages to OCR it also puts an estimate on the job and marks it
 ``awaiting_estimate``: the job's ``max_cost`` is 0, so the first AI page pauses it at the cost
 cap until the owner confirms a ``max_cost`` (``confirm_import``) or turns AI down
@@ -136,10 +138,11 @@ def _scan(
     except PageReadError as exc:  # each page is still rendered and read on its own
         log.warning("the pages of book %s could not be sorted (%s)", plan.book_id, exc)
         kinds = []
-    del pdf
     if len(kinds) != pages:  # pdfminer and pdfium disagree: every page pdfium counts is read
         log.warning("book %s: %s pages sorted of %s", plan.book_id, len(kinds), pages)
         kinds = (kinds + ["scan"] * pages)[:pages]
+    kinds = [_seen_blank(pdf, page) if kind == "blank" else kind for page, kind in enumerate(kinds)]
+    del pdf
     note = None
     with sf() as s:
         job, task = w._lock_job_task(s, plan.job_id, task_id)
@@ -164,6 +167,17 @@ def _scan(
         note = w._complete_task(s, job, task, deps)
         s.commit()
     w._send(note, deps)
+
+
+def _seen_blank(pdf: bytes, page: int) -> PageKind:
+    """A page with no text and no image is blank only if it looks blank: text drawn as
+    shapes (outlines) is a scan to read. A page that cannot be rendered is left to the
+    page task, which reports it."""
+    try:
+        png = render_page(pdf, page)
+    except PageReadError:
+        return "scan"
+    return "blank" if is_blank(png) else "scan"
 
 
 # --- pages ----------------------------------------------------------------------------
@@ -583,8 +597,11 @@ def _build(
         if saved is None:
             raise RuntimeError(f"page {page + 1} of the PDF was never read")
         pages.append(from_json(saved))
-    summary = {**report(pages), "ai_fallbacks": fallbacks}
-    docx = build_docx(assemble(pages), title=title, language=variant)
+    blocks = assemble(pages)
+    no_text = not any(b.kind in ("heading", "paragraph", "footnote") for b in blocks)
+    summary = {**report(pages), "ai_fallbacks": fallbacks, "no_text": no_text}
+    docx = build_docx(blocks, title=title, language=variant)
+    del blocks
     del pages
     note = None
     with sf() as s:

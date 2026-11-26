@@ -131,8 +131,20 @@ describe("ImportPanel", () => {
     expect(screen.getByText("Tesseract read 2 pages because the AI failed on them.")).toBeInTheDocument();
   });
 
+  it("counts the blank and picture pages", async () => {
+    setup({ import_status: null, import_report: { ...REPORT, blank_pages: 2, image_pages: 1 } });
+    renderApp(<ImportPanel bookId="1" />);
+    expect(await screen.findByText("2 blank pages, 1 picture page")).toBeInTheDocument();
+  });
+
+  it("warns when the PDF had no text at all", async () => {
+    setup({ import_status: null, import_report: { ...REPORT, image_pages: 0, no_text: true } });
+    renderApp(<ImportPanel bookId="1" />);
+    expect(await screen.findByText("No text was found in this PDF")).toBeInTheDocument();
+  });
+
   it("renders nothing for a book that was not imported or had nothing to report", async () => {
-    const f = setup({ import_status: null, import_report: REPORT });
+    const f = setup({ import_status: null, import_report: { ...REPORT, image_pages: 0 } });
     const { container } = renderApp(<ImportPanel bookId="1" />);
     await waitFor(() => expect(callsTo(f, "GET", "/v1/books/1")).toHaveLength(1));
     expect(container.querySelector("p, button")).toBeNull();

@@ -40,6 +40,8 @@ export interface ImportReport {
   failed_pages: number[];
   /** Why the AI did not read a page Tesseract read instead, with a count per reason. */
   ai_fallbacks: Record<string, number>;
+  /** True when the finished book has no text at all (older imports lack it). */
+  no_text?: boolean;
 }
 
 /** GET /v1/books/{id}/translation. */

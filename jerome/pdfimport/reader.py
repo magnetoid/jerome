@@ -17,7 +17,8 @@ from jerome.errors import JeromeError, UnsupportedDocumentError
 from jerome.pdfimport.model import PageBlock, PageKind, PageResult, Run
 
 MAX_PAGES = 2000
-_WIDE = 0.9  # an image covering this much of the page is a scan
+_WIDE = 0.9  # an image covering this much of a page with text is a scan with a text layer
+_SCAN = 0.5  # an image covering this much of a page without text is a scan
 _HEADING_RATIO = 1.15  # as assemble.LARGER: clearly larger than the body text
 _CENTER_TOLERANCE = 0.06  # of the page width
 _SHORT_LINE = 80
@@ -72,7 +73,9 @@ def _walk(item):
 
 def classify_pages(pdf: bytes) -> list[PageKind]:
     """What each page is: text, scan, scan_with_layer, image or blank. The document is
-    parsed once. Runs in the caller's process; call it through ``run_isolated``."""
+    parsed once. "blank" means no text and no image: such a page may still show text drawn
+    as shapes, so the import renders it to be sure. Runs in the caller's process; call it
+    through ``run_isolated``."""
     from pdfminer.high_level import extract_pages
 
     count_pages(pdf)  # refuses an unreadable, encrypted or over-long PDF
@@ -90,11 +93,11 @@ def _classify(layout) -> PageKind:
             has_text = True
         elif isinstance(item, LTImage):
             image_area += max(item.width, 0) * max(item.height, 0)
-    wide = image_area / page_area >= _WIDE
-    if wide:
-        return "scan_with_layer" if has_text else "scan"
+    share = image_area / page_area
     if has_text:
-        return "text"
+        return "scan_with_layer" if share >= _WIDE else "text"
+    if share >= _SCAN:  # a scan, maybe with a picture on it: the engines keep pictures
+        return "scan"
     return "image" if image_area > 0 else "blank"
 
 

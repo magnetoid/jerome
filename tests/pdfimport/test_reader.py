@@ -66,3 +66,21 @@ def test_a_page_the_pdf_does_not_have_is_a_page_read_error():
     pdf = text_pdf(_PAGE)
     with pytest.raises(PageReadError):
         read_text_page(pdf, 5)
+
+
+def _picture(width_mm: int, height_mm: int) -> str:
+    import base64
+    import io
+
+    from PIL import Image
+
+    out = io.BytesIO()
+    Image.new("RGB", (400, 400), (40, 90, 160)).save(out, "PNG")
+    data = base64.b64encode(out.getvalue()).decode()
+    style = f"width: {width_mm}mm; height: {height_mm}mm; display: block"
+    return f'<img src="data:image/png;base64,{data}" style="{style}">'
+
+
+def test_a_page_mostly_covered_by_a_picture_and_no_text_is_a_scan():
+    assert classify_pages(text_pdf(_picture(170, 200))) == ["scan"]  # 55% of the page
+    assert classify_pages(text_pdf(_picture(120, 80))) == ["image"]  # 15%

@@ -764,3 +764,46 @@ def test_an_import_paused_at_the_cap_after_confirm_can_be_raised_or_given_to_tes
         drain(session_factory, deps)
         assert job_of(session_factory, book_id).status == "completed"
     assert len(provider.calls) == 1 and tesseract == [0]
+
+
+def _outlined_text_pdf() -> bytes:
+    """A page whose "text" is vector shapes only (as text converted to outlines): no text
+    object and no image on it."""
+    bars = "".join(
+        f'<rect x="10" y="{y}" width="{150 - y % 40}" height="3" fill="black"/>'
+        for y in range(10, 200, 8)
+    )
+    svg = f'<svg width="170mm" height="210mm" viewBox="0 0 170 210">{bars}</svg>'
+    return text_pdf(svg)
+
+
+@pytest.mark.parametrize("ocr_engine", ["ai", "tesseract"])
+def test_a_page_of_outlined_text_is_read_as_a_scan(
+    session_factory, tmp_storage, test_settings, tesseract, ocr_engine
+):
+    provider = FakeProvider([ai_reply("Outlined words, read by the AI.")])
+    deps = deps_for(test_settings, tmp_storage, provider)
+    pdf = joined(_outlined_text_pdf(), text_pdf("<p></p>"))
+    book_id = start(session_factory, tmp_storage, pdf, engine=ocr_engine)
+    drain(session_factory, deps)
+    job = job_of(session_factory, book_id)
+    assert job.stats["kinds"] == ["scan", "blank"] and job.stats["ocr_pages"] == 1
+    if ocr_engine == "ai":
+        assert job.estimate["ocr_pages"] == 1
+        with session_factory() as s:
+            confirm_import(s, book_id, Decimal("5"))
+            s.commit()
+        drain(session_factory, deps)
+        assert len(provider.calls) == 1
+    else:
+        assert tesseract == [0]
+    report = book_of(session_factory, book_id).import_report
+    assert report["ocr_pages"] == 1 and report["blank_pages"] == 1
+    assert report["no_text"] is False
+
+
+def test_a_book_with_no_text_says_so(session_factory, tmp_storage, test_settings, tesseract):
+    book_id = start(session_factory, tmp_storage, _image_pdf(), engine="tesseract")
+    drain(session_factory, deps_for(test_settings, tmp_storage))
+    report = book_of(session_factory, book_id).import_report
+    assert report["blank_pages"] == 1 and report["no_text"] is True

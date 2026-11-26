@@ -162,9 +162,20 @@ export default function ImportPanel({ bookId }: { bookId: string }) {
 
   if (!report) return null;
   const lines = engineLines(report);
-  if (failedPages.length === 0 && lines.length === 0) return null;
+  const blank = report.blank_pages ?? 0;
+  const pictures = report.image_pages ?? 0;
+  if (blank + pictures > 0) {
+    const n = (count: number, one: string) => `${count} ${one}${count === 1 ? "" : "s"}`;
+    lines.push(
+      [blank && n(blank, "blank page"), pictures && n(pictures, "picture page")].filter(Boolean).join(", "),
+    );
+  }
+  if (failedPages.length === 0 && lines.length === 0 && !report.no_text) return null;
   return (
     <div className="space-y-1 text-sm">
+      {report.no_text && (
+        <p role="alert" className="text-amber-700 dark:text-amber-400">No text was found in this PDF</p>
+      )}
       {failedPages.length > 0 && (
         <p role="status" className="text-amber-700 dark:text-amber-400">
           {failedPages.length === 1
