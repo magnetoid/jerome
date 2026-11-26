@@ -57,7 +57,8 @@ def test_upload_and_get_book(client, auth):
     body = r.json()
     assert set(body) == {
         "id", "title", "format", "local_only", "original_filename", "created_at",
-        "work", "source_book_id", "translated_title",
+        "work", "source_book_id", "translated_title", "import_status", "import_error",
+        "import_report",
     }  # fmt: skip
     assert body["format"] == "docx" and body["original_filename"] == "m.docx"
     assert client.get(f"/v1/books/{body['id']}", headers=auth).json()["id"] == body["id"]
