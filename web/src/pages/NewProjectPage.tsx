@@ -31,6 +31,51 @@ function detailOf(e: unknown): string {
   return e instanceof ApiError ? e.detail : "Something went wrong. Try again.";
 }
 
+type OcrEngine = "ai" | "tesseract";
+
+/** The OCR choices for a PDF: which engine reads the scanned pages, and whether to redo a text layer. */
+export function PdfOptions({
+  engine, onEngine, reocr, onReocr, localOnly,
+}: {
+  engine: OcrEngine;
+  onEngine: (e: OcrEngine) => void;
+  reocr: boolean;
+  onReocr: (r: boolean) => void;
+  localOnly: boolean;
+}) {
+  return (
+    <div className="space-y-4">
+      <div role="radiogroup" aria-labelledby="ocr-label" className="space-y-2">
+        <p id="ocr-label" className="text-sm font-medium">OCR for scanned pages</p>
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="radio"
+            name="ocr-engine"
+            checked={engine === "ai"}
+            disabled={localOnly}
+            onChange={() => onEngine("ai")}
+          />
+          AI model
+        </label>
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="radio"
+            name="ocr-engine"
+            checked={engine === "tesseract"}
+            onChange={() => onEngine("tesseract")}
+          />
+          Tesseract
+        </label>
+        {localOnly && <p className="text-sm text-muted-foreground">Local only books use Tesseract</p>}
+      </div>
+      <div className="flex items-start gap-2">
+        <Checkbox id="reocr" checked={reocr} onCheckedChange={(c) => onReocr(c === true)} />
+        <Label htmlFor="reocr" className="font-normal leading-snug">Re-OCR scanned pages</Label>
+      </div>
+    </div>
+  );
+}
+
 export default function NewProjectPage() {
   const navigate = useNavigate();
   const client = useQueryClient();
@@ -43,8 +88,14 @@ export default function NewProjectPage() {
   const [translatedTitle, setTranslatedTitle] = useState("");
   const [autoApply, setAutoApply] = useState(true);
   const [style, setStyle] = useState<HouseStyleValue>(EMPTY_STYLE);
+  const [ocrEngine, setOcrEngine] = useState<OcrEngine>("ai");
+  const [reocr, setReocr] = useState(true);
   const [fileError, setFileError] = useState<string | null>(null);
 
+  const isPdf = file !== null && /\.pdf$/i.test(file.name);
+  // The form has no local-only choice yet, so a new book is never local only here; when it
+  // gets one, this is where AI is turned off (PdfOptions already shows the copy).
+  const localOnly = false;
   const translate = work === "translate";
   // Only variants of the other language; a choice of the source's language falls back.
   const targets = VARIANTS.filter((v) => language(v.value) !== language(variant));
@@ -81,6 +132,10 @@ export default function NewProjectPage() {
       }
       if (title.trim()) form.append("title", title.trim());
       form.append("auto_apply", autoApply ? "true" : "false");
+      if (isPdf) {
+        form.append("ocr_engine", localOnly ? "tesseract" : ocrEngine);
+        form.append("reocr", reocr ? "true" : "false");
+      }
       const book = await apiFetch<Created>("/v1/books", { method: "POST", body: form });
       const changes = styleChanges();
       let styleError: string | null = null;
@@ -196,6 +251,16 @@ export default function NewProjectPage() {
               Left empty, the translation keeps the original title.
             </p>
           </div>
+        )}
+
+        {isPdf && (
+          <PdfOptions
+            engine={localOnly ? "tesseract" : ocrEngine}
+            onEngine={setOcrEngine}
+            reocr={reocr}
+            onReocr={setReocr}
+            localOnly={localOnly}
+          />
         )}
 
         <div className="flex items-start gap-2">

@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 
-const OK = /\.(docx|epub)$/i;
+const OK = /\.(docx|epub|pdf)$/i;
 
 interface Props {
   file: File | null;
@@ -16,7 +16,7 @@ export default function DropZone({ file, onFile, onReject }: Props) {
   function take(f: File | undefined) {
     if (!f) return;
     if (!OK.test(f.name)) {
-      onReject("Choose a .docx or .epub file.");
+      onReject("Choose a .docx, .epub or .pdf file.");
       return;
     }
     onFile(f);
@@ -54,7 +54,7 @@ export default function DropZone({ file, onFile, onReject }: Props) {
           <span className="font-medium">{file.name}</span>
         ) : (
           <>
-            <span className="font-medium">Drop a DOCX or EPUB here</span>
+            <span className="font-medium">Drop a DOCX, EPUB or PDF here</span>
             <span className="text-sm text-muted-foreground">or click to choose a file</span>
           </>
         )}
@@ -62,7 +62,7 @@ export default function DropZone({ file, onFile, onReject }: Props) {
       <input
         ref={input}
         type="file"
-        accept=".docx,.epub"
+        accept=".docx,.epub,.pdf"
         aria-label="Book file"
         className="sr-only"
         tabIndex={-1}

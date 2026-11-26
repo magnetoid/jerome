@@ -3,7 +3,7 @@ import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Route, Routes } from "react-router-dom";
 import { toast } from "sonner";
-import NewProjectPage from "./NewProjectPage";
+import NewProjectPage, { PdfOptions } from "./NewProjectPage";
 import { Where, json, mockApi, renderApp } from "@/test-utils";
 
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
@@ -238,5 +238,65 @@ describe("NewProjectPage", () => {
     await user.selectOptions(screen.getByLabelText("To"), "en-US");
     await user.selectOptions(screen.getByLabelText("From"), "de-CH");
     expect(screen.getByLabelText("To")).toHaveValue("en-US");
+  });
+
+  describe("a PDF", () => {
+    const pdf = () => new File(["x"], "Scan.pdf");
+
+    it("shows the OCR options only for a .pdf", async () => {
+      const user = userEvent.setup();
+      setup();
+      await choose(user);
+      expect(screen.queryByText("OCR for scanned pages")).not.toBeInTheDocument();
+      await choose(user, pdf());
+      expect(screen.getByText("OCR for scanned pages")).toBeInTheDocument();
+      expect(screen.getByRole("radio", { name: "AI model" })).toBeChecked();
+      expect(screen.getByRole("radio", { name: "Tesseract" })).not.toBeChecked();
+      expect(screen.getByRole("checkbox", { name: "Re-OCR scanned pages" })).toBeChecked();
+    });
+
+    it("posts ocr_engine and reocr", async () => {
+      const user = userEvent.setup();
+      const { f } = setup();
+      await choose(user, pdf());
+      await user.click(screen.getByRole("radio", { name: "Tesseract" }));
+      await user.click(screen.getByRole("checkbox", { name: "Re-OCR scanned pages" }));
+      await user.click(screen.getByRole("button", { name: "Create project" }));
+      await waitFor(() => expect(callsTo(f, "POST /v1/books")).toHaveLength(1));
+      const body = callsTo(f, "POST /v1/books")[0][1]!.body as FormData;
+      expect(body.get("ocr_engine")).toBe("tesseract");
+      expect(body.get("reocr")).toBe("false");
+    });
+
+    it("posts the defaults, AI and re-OCR, as they are shown", async () => {
+      const user = userEvent.setup();
+      const { f } = setup();
+      await choose(user, pdf());
+      await user.click(screen.getByRole("button", { name: "Create project" }));
+      await waitFor(() => expect(callsTo(f, "POST /v1/books")).toHaveLength(1));
+      const body = callsTo(f, "POST /v1/books")[0][1]!.body as FormData;
+      expect(body.get("ocr_engine")).toBe("ai");
+      expect(body.get("reocr")).toBe("true");
+    });
+
+    it("sends neither field for a DOCX", async () => {
+      const user = userEvent.setup();
+      const { f } = setup();
+      await choose(user);
+      await user.click(screen.getByRole("button", { name: "Create project" }));
+      await waitFor(() => expect(callsTo(f, "POST /v1/books")).toHaveLength(1));
+      const body = callsTo(f, "POST /v1/books")[0][1]!.body as FormData;
+      expect(body.has("ocr_engine")).toBe(false);
+      expect(body.has("reocr")).toBe(false);
+    });
+
+    it("disables the AI model for a local only book", () => {
+      renderApp(
+        <PdfOptions engine="tesseract" onEngine={() => {}} reocr onReocr={() => {}} localOnly />,
+      );
+      expect(screen.getByRole("radio", { name: "AI model" })).toBeDisabled();
+      expect(screen.getByRole("radio", { name: "Tesseract" })).toBeChecked();
+      expect(screen.getByText("Local only books use Tesseract")).toBeInTheDocument();
+    });
   });
 });

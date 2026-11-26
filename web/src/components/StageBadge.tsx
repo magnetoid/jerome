@@ -8,7 +8,7 @@ const STAGES: Record<
   Stage,
   { label: string; variant: "secondary" | "default" | "destructive" | "outline"; className?: string }
 > = {
-  importing: { label: "Importing…", variant: "secondary" },
+  importing: { label: "Importing", variant: "secondary" },
   set_up: { label: "Set up", variant: "outline" },
   translating: { label: "Translating", variant: "secondary" },
   translated: { label: "Translated", variant: "outline", className: "border-sky-600 text-sky-700 dark:border-sky-500 dark:text-sky-400" },

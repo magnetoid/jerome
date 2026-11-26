@@ -16,12 +16,31 @@ export function passesLabel(passes: string[]): string {
 /** "Translation", "Proofreading" or "Finished EPUB"/"Finished PDF", for copy that names what a job does. */
 export function jobNoun(j: { type: string; passes?: string[] }): string {
   if (j.type === "translate") return "Translation";
+  if (j.type === "import") return "PDF import";
   if (j.type === "publish") return FINISHED[j.passes?.[0] ?? ""] ?? "Finished file";
   return "Proofreading";
 }
 
 /** The newest job that is part of the review (proofreading or translation), not a finished file. */
-export const latestReviewJob = (jobs: Job[] | undefined) => jobs?.find((j) => j.type !== "publish");
+export const latestReviewJob = (jobs: Job[] | undefined) =>
+  jobs?.find((j) => j.type !== "publish" && j.type !== "import");
+
+/** The newest PDF import job of a book. */
+export const latestImportJob = (jobs: Job[] | undefined) => jobs?.find((j) => j.type === "import");
+
+/** GET /v1/books/{id}'s `import_report`, once a PDF import has run. */
+export interface ImportReport {
+  pages: number;
+  text_pages: number;
+  ocr_pages: number;
+  engine_pages: { ai: number; tesseract: number };
+  image_pages: number;
+  blank_pages: number;
+  /** 1-based page numbers. */
+  failed_pages: number[];
+  /** Why the AI did not read a page Tesseract read instead, with a count per reason. */
+  ai_fallbacks: Record<string, number>;
+}
 
 /** GET /v1/books/{id}/translation. */
 export interface TranslationState {
@@ -53,7 +72,7 @@ export interface JobTask {
 
 export interface Job {
   id: number;
-  /** "proofread", "translate" or "publish". */
+  /** "proofread", "translate", "publish" or "import". */
   book_id: number;
   type: string;
   status: "queued" | "running" | "paused_cost_cap" | "cancelled" | "failed" | "completed";
@@ -62,7 +81,12 @@ export interface Job {
   max_cost: string;
   cost_actual: string;
   /** A publish job's `file` (its name, once done) and `warnings`. */
-  stats: { auto_applied?: number; file?: string; warnings?: string[] } & Record<string, unknown>;
+  /** An import job's `pages`, `pages_done` and `awaiting_estimate`, and its `estimate`. */
+  estimate?: { ocr_pages?: number; cost?: string } | null;
+  stats: {
+    auto_applied?: number; file?: string; warnings?: string[];
+    pages?: number; pages_done?: number; awaiting_estimate?: boolean;
+  } & Record<string, unknown>;
   created_at: string;
   finished_at: string | null;
   tasks: JobTask[];
