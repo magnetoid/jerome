@@ -42,3 +42,13 @@ export const QUOTE_PRESETS = [
   { value: "«»‹›", label: "Guillemets «»‹›" },
   { value: "»«›‹", label: "Reversed guillemets »«›‹" },
 ];
+
+export function formatDateTime(iso: string): string {
+  return new Date(iso).toLocaleString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}

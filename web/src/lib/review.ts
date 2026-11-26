@@ -32,6 +32,8 @@ export interface Suggestion {
   decided_by: string | null;
   /** Where the decision came from: "web", "api", "auto" or "mcp" (Janus). */
   decided_channel: string | null;
+  /** When the latest decision was made; null when there is none. */
+  decided_at: string | null;
   /** The AI's rating of a LanguageTool mark, once asked for in review; null until then. */
   ai_verdict: AiVerdict | null;
   /** The AI's fix for the span (one of `options` or its own); null for "not_an_error". */

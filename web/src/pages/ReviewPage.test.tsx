@@ -3,6 +3,7 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import { json } from "@/test-utils";
+import { formatDateTime } from "@/lib/format";
 import { bodyOf, callsTo } from "@/components/project/fixtures";
 import {
   aiSug, block, firstPage, renderReview, reviewServer, sug, summaryRow,
@@ -158,7 +159,8 @@ describe("ReviewPage", () => {
     await userEvent.click(screen.getByRole("button", { name: "Applied by AI" }));
     expect(screen.getByRole("button", { name: "Applied by AI" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.queryAllByRole("button", { name: /^Needs you:/ })).toHaveLength(0);
-    expect(screen.queryAllByRole("button", { name: /^Accepted by/ })).toHaveLength(0);
+    // A teammate's accept stays clickable (who and when, Revert), but j/k skip it.
+    expect(screen.queryAllByRole("button", { name: /^Accepted by/ })).toHaveLength(1);
     expect(screen.getAllByRole("button", { name: /^Applied by AI:/ }).map((b) => b.dataset.sid)).toEqual(["6", "3"]);
     await userEvent.keyboard("j");
     expect(within(card()).getByText("Stronger ending.")).toBeInTheDocument();
@@ -401,5 +403,90 @@ describe("focus card placement (S2)", () => {
     await userEvent.click(button);
     await waitFor(() => expect(posts(fetchMock, "/v1/books/1/chapters/11/ai-check")).toHaveLength(1));
     await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Checked 40 of 63; click again for the rest"));
+  });
+});
+
+describe("decided marks stay reachable in Needs you", () => {
+  it("a click on a decided mark shows who and when, and u reverts it", async () => {
+    const at = "2026-11-25T10:42:00Z";
+    const decided = { ...s4, decided_at: at };
+    const blocks = [BLOCKS[0], BLOCKS[1], block(102, 3, "Bob said hi.", [decided])];
+    const { fetchMock } = reviewServer(blocks, SUMMARY, {
+      "POST /v1/suggestions/4/undo": () => json(200, { ...decided, status: "open", decided_at: null }),
+    });
+    renderReview();
+    await screen.findByText("2 left");
+    await userEvent.click(screen.getByRole("button", { name: /^Accepted by bob@example.com: “said”/ }));
+    expect(within(card()).getByText(`Accepted by bob@example.com · ${formatDateTime(at)}`)).toBeInTheDocument();
+    expect(within(card()).getByRole("button", { name: "Revert (u)" })).toBeEnabled();
+    await userEvent.keyboard("u");
+    await waitFor(() => expect(posts(fetchMock, "/v1/suggestions/4/undo")).toHaveLength(1));
+  });
+
+  it("j from a clicked decided mark goes to the next mark after it", async () => {
+    reviewServer(BLOCKS, SUMMARY);
+    renderReview();
+    await screen.findByText("2 left");
+    await userEvent.click(screen.getByRole("button", { name: /^Applied by AI: “\.”/ }));
+    expect(within(card()).getByText("Applied by AI")).toBeInTheDocument();
+    await userEvent.keyboard("j");
+    await waitFor(() => expect(within(card()).getByText("dgo")).toBeInTheDocument());
+  });
+
+  it("k from a clicked decided mark goes to the mark before it", async () => {
+    reviewServer(BLOCKS, SUMMARY);
+    renderReview();
+    await screen.findByText("2 left");
+    await userEvent.click(screen.getByRole("button", { name: /^Applied by AI: “barked”/ }));
+    await userEvent.keyboard("k");
+    await waitFor(() => expect(within(card()).getByText("dgo")).toBeInTheDocument());
+  });
+
+  it("u on a clicked decided mark reverts it, not the person's last decision", async () => {
+    const { fetchMock } = reviewServer(BLOCKS, SUMMARY);
+    renderReview();
+    await screen.findByText("2 left");
+    await userEvent.keyboard("j");
+    await userEvent.keyboard("a");
+    await waitFor(() => expect(within(card()).getByText("dgo")).toBeInTheDocument());
+    await userEvent.click(screen.getByRole("button", { name: /^Accepted by bob@example.com: “said”/ }));
+    await userEvent.keyboard("u");
+    await waitFor(() => expect(posts(fetchMock, "/v1/suggestions/4/undo")).toHaveLength(1));
+    expect(posts(fetchMock, "/v1/suggestions/1/undo")).toHaveLength(0);
+  });
+
+  it("a reverted mark needs you again, and deciding it moves the card on", async () => {
+    const { fetchMock } = reviewServer(BLOCKS, SUMMARY);
+    renderReview();
+    await screen.findByText("2 left");
+    await userEvent.click(screen.getByRole("button", { name: /^Accepted by bob@example.com: “said”/ }));
+    await userEvent.keyboard("u");
+    expect(await screen.findByRole("button", { name: /^Needs you: “said”/ })).toBeInTheDocument();
+    expect(await screen.findByText("3 left")).toBeInTheDocument();
+    await userEvent.keyboard("a");
+    await waitFor(() => expect(posts(fetchMock, "/v1/suggestions/4/accept")).toHaveLength(1));
+    await waitFor(() => expect(within(card()).getByText("dgo")).toBeInTheDocument());
+  });
+
+  it("on an open mark the button reads Undo and undoes the last decision", async () => {
+    const { fetchMock } = reviewServer(BLOCKS, SUMMARY);
+    renderReview();
+    await screen.findByText("2 left");
+    await userEvent.keyboard("j");
+    await userEvent.keyboard("a");
+    await waitFor(() => expect(within(card()).getByText("dgo")).toBeInTheDocument());
+    await userEvent.click(within(card()).getByRole("button", { name: "Undo (u)" }));
+    await waitFor(() => expect(posts(fetchMock, "/v1/suggestions/1/undo")).toHaveLength(1));
+  });
+
+  it("a decision on an open mark still moves the card on", async () => {
+    const { fetchMock } = reviewServer(BLOCKS, SUMMARY);
+    renderReview();
+    await screen.findByText("2 left");
+    await userEvent.click(screen.getByRole("button", { name: /^Accepted by bob@example.com: “said”/ }));
+    await userEvent.click(screen.getByRole("button", { name: /^Needs you: “teh”/ }));
+    await userEvent.keyboard("a");
+    await waitFor(() => expect(posts(fetchMock, "/v1/suggestions/1/accept")).toHaveLength(1));
+    await waitFor(() => expect(within(card()).getByText("dgo")).toBeInTheDocument());
   });
 });

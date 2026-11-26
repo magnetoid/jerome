@@ -7,8 +7,8 @@ from tests.fixtures.suggestions import add_one
 
 KEYS = {
     "chapter_id", "agreed", "disputed", "alternative", "rule", "auto_applied", "decided_by",
-    "decided_channel", "ai_verdict", "ai_replacement", "ai_reason", "ai_model", "options",
-    "lt_rule",
+    "decided_channel", "decided_at", "ai_verdict", "ai_replacement", "ai_reason", "ai_model",
+    "options", "lt_rule",
     "id", "book_id", "block_id", "start", "end", "original", "replacement", "category",
     "severity", "source", "explanation", "status", "final_text", "job_id", "model", "created_at",
 }  # fmt: skip
@@ -143,6 +143,26 @@ def test_suggestion_out_has_new_fields_and_auto_flag(client, auth, session, bloc
     assert rows[autos.id]["auto_applied"] is True and rows[autos.id]["decided_by"] == "ai"
     r = client.get(f"/v1/books/{block.book_id}/blocks/{block.id}", headers=auth)
     assert {s["id"]: s["auto_applied"] for s in r.json()["suggestions"]}[autos.id] is True
+
+
+def test_decided_at_is_the_latest_decisions_time(client, auth, session, block):
+    from datetime import datetime
+
+    from jerome.orm import Decision
+
+    s = add_one(session, block, 0, 3, "teh", "the")
+    rows = client.get(f"/v1/books/{block.book_id}/suggestions", headers=auth).json()
+    assert rows[0]["decided_at"] is None
+    r = client.post(f"/v1/suggestions/{s.id}/accept", headers=auth)
+    made = session.query(Decision).filter_by(suggestion_id=s.id).one().created_at
+    assert datetime.fromisoformat(r.json()["decided_at"]) == made
+    client.post(f"/v1/suggestions/{s.id}/undo", headers=auth)
+    r = client.post(f"/v1/suggestions/{s.id}/accept", headers=auth)
+    latest = session.query(Decision).filter_by(suggestion_id=s.id).order_by(Decision.id.desc())
+    assert datetime.fromisoformat(r.json()["decided_at"]) == latest.first().created_at
+    decide(session, s.id, "undo", actor="x", channel="system")  # bookkeeping is ignored
+    rows = client.get(f"/v1/books/{block.book_id}/suggestions", headers=auth).json()
+    assert datetime.fromisoformat(rows[0]["decided_at"]) == latest.offset(1).first().created_at
 
 
 def test_decided_by_is_the_latest_person_or_ai(client, auth, session, block):

@@ -52,15 +52,7 @@ export function formatDate(iso: string | null): string {
   });
 }
 
-export function formatDateTime(iso: string): string {
-  return new Date(iso).toLocaleString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
+export { formatDateTime } from "@/lib/format";
 
 /** Re-read everything the Settings page shows. */
 export function useRefreshSettings() {
