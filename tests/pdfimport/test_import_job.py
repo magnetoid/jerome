@@ -283,6 +283,10 @@ def test_reocr_off_uses_the_existing_layer(session_factory, tmp_storage, test_se
     assert provider.calls == [] and tesseract == []
     assert any("harbour was quiet" in t for t in texts(session_factory, book_id))
     assert book_of(session_factory, book_id).import_report["text_pages"] == 1
+    from jerome.publish.from_docx import docx_to_pub
+
+    # the scan under the layer is the page, not a picture on it
+    assert docx_to_pub(tmp_storage.read_original(book_id), "en-US").images == {}
 
 
 def test_failed_page_is_reported_and_the_book_is_ready(
@@ -938,3 +942,30 @@ def test_a_book_deleted_while_it_imports_stops_the_worker_cleanly(
     assert not (tmp_storage.root / "books" / str(book_id)).exists()
     with session_factory() as s:
         assert s.get(Book, book_id) is None and s.scalars(select(Job)).all() == []
+
+
+def test_a_picture_on_a_text_page_is_kept_in_its_place(
+    kept_pages, session_factory, tmp_storage, test_settings, tesseract
+):
+    import base64
+
+    from jerome.publish.from_docx import docx_to_pub
+
+    data = base64.b64encode(_picture_png(600, 400)).decode()
+    pdf = text_pdf(
+        "<p>The ship came in on a grey morning and the harbour was quiet.</p>"
+        f'<img src="data:image/png;base64,{data}" style="width: 120mm; display: block">'
+        "<p>They left again before the rain had stopped falling.</p>"
+        # a thin rule is an ornament, not a picture
+        f'<img src="data:image/png;base64,{data}" style="width: 120mm; height: 1mm">'
+    )
+    book_id = start(session_factory, tmp_storage, pdf, engine="tesseract")
+    drain(session_factory, deps_for(test_settings, tmp_storage))
+    assert job_of(session_factory, book_id).stats["kinds"] == ["text"]
+    saved = tmp_storage.read_page(book_id, 0)
+    assert [b["kind"] for b in saved["blocks"]] == ["paragraph", "image", "paragraph"]
+    picture = saved["blocks"][1]
+    assert picture["image_type"] == "image/jpeg" and 0 < picture["top"] < picture["bottom"] < 1
+    pub = docx_to_pub(tmp_storage.read_original(book_id), "en-US")
+    assert len(pub.images) == 1
+    assert tesseract == []

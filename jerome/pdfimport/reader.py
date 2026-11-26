@@ -161,9 +161,12 @@ def _decodes(text: str) -> bool:
 
 def read_text_page(pdf: bytes, page: int) -> PageResult:
     """The blocks of a text page (0-based ``page``): headings and paragraphs, with italic
-    and bold runs. Raises PageReadError for a page the PDF does not have. Runs in the
-    caller's process; call it through ``run_isolated``."""
-    from pdfminer.layout import LTTextLine
+    and bold runs, and its pictures in their place, cropped from a render of the page (rules
+    and ornaments, under 5% of the page and under an inch either way, and the scan under a
+    text layer are left out). Raises
+    PageReadError for a page the PDF does not have. Runs in the caller's process; call it
+    through ``run_isolated``."""
+    from pdfminer.layout import LTImage, LTTextLine
 
     layout = _layout(pdf, page)
     height, width = layout.height, layout.width
@@ -173,11 +176,72 @@ def read_text_page(pdf: bytes, page: int) -> PageResult:
         if isinstance(item, LTTextLine) and item.get_text().strip()
     ]
     lines.sort(key=lambda line: (-round(line.item.y1), line.item.x0))
-    if not lines:
-        return PageResult(page, "text", [])
-    body = _body_size(lines)
-    blocks = [_block(group, body, width, height) for group in _paragraphs(lines)]
+    blocks = []
+    if lines:
+        body = _body_size(lines)
+        blocks = [_block(group, body, width, height) for group in _paragraphs(lines)]
+    boxes = [
+        (item.x0, item.y0, item.x1, item.y1)
+        for item in _walk(layout)
+        if isinstance(item, LTImage) and _is_picture(item, width, height)
+    ]
+    for picture in _pictures(pdf, page, boxes, width, height):
+        at = next((i for i, b in enumerate(blocks) if b.top >= picture.top), len(blocks))
+        blocks.insert(at, picture)
     return PageResult(page, "text", blocks)
+
+
+_PICTURE_SHARE = 0.05  # of the page area: a smaller image is a picture only if
+_PICTURE_SIDE = 72.0  # it is at least an inch both ways
+
+
+def _is_picture(item, width: float, height: float) -> bool:
+    """An image big enough to be a picture, but not the scan under a text layer."""
+    w, h = max(item.x1 - item.x0, 0.0), max(item.y1 - item.y0, 0.0)
+    area = width * height
+    if w * h >= _WIDE * area:
+        return False
+    return w * h >= _PICTURE_SHARE * area or (w >= _PICTURE_SIDE and h >= _PICTURE_SIDE)
+
+
+def _pictures(pdf: bytes, page: int, boxes: list, width: float, height: float) -> list[PageBlock]:
+    """Image blocks of the page's pictures (PDF boxes, in points from the bottom left), cropped
+    from one render of the page; overlapping boxes (one picture drawn in pieces) are one."""
+    if not boxes:
+        return []
+    from PIL import Image
+
+    from jerome.pdfimport.render import _render
+
+    merged: list[list[float]] = []
+    for x0, y0, x1, y1 in sorted(boxes, key=lambda b: -b[3]):
+        for m in merged:
+            if x0 < m[2] and m[0] < x1 and y0 < m[3] and m[1] < y1:
+                m[:] = [min(m[0], x0), min(m[1], y0), max(m[2], x1), max(m[3], y1)]
+                break
+        else:
+            merged.append([x0, y0, x1, y1])
+    png = _render(pdf, page, 300)
+    out = []
+    with Image.open(io.BytesIO(png)) as image:
+        pw, ph = image.size
+        for x0, y0, x1, y1 in merged:
+            left = min(max(int(x0 / width * pw), 0), pw - 1)
+            top = min(max(int((1 - y1 / height) * ph), 0), ph - 1)
+            right = min(max(round(x1 / width * pw), left + 1), pw)
+            bottom = min(max(round((1 - y0 / height) * ph), top + 1), ph)
+            crop = io.BytesIO()
+            image.crop((left, top, right, bottom)).save(crop, "PNG")
+            out.append(
+                PageBlock(
+                    "image",
+                    image=crop.getvalue(),
+                    image_type="image/png",
+                    top=max(1 - y1 / height, 0.0),
+                    bottom=min(1 - y0 / height, 1.0),
+                )
+            )
+    return out
 
 
 class _Line:
