@@ -78,6 +78,15 @@ left. Each check is a paid model call, billed to the proofreading job and counte
 the per-minute text rate limit. The check is refused while a job runs on the book.
 Over MCP the same check is the `ai_check_suggestion` tool.
 
+**Remember for all books.** When the AI says a mark is definitely not an error, the card
+offers **Remember for all books**. Jerome saves the word with the AI's reason, for the book's
+language, and LanguageTool checks in every book of that language stop marking it: a
+misspelling under any spelling rule, any other mark only under its own LanguageTool rule.
+The mark and the book's other open marks of the word are rejected as your decisions. The
+words are listed under **Learned words** on the Settings page, where the super admin can
+delete one; its rejected marks stay rejected. The API is `POST
+/v1/suggestions/{id}/remember`, `GET /v1/learned-words` and `DELETE /v1/learned-words/{id}`.
+
 **First login.** There is no sign-up. Create each member once, inside the API container:
 
 ```bash

@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  AI_VERDICT_COLOURS, AI_VERDICT_LABELS, categoryLabel, canAccept, canAskAi, canEdit, canReject, canUseAiFix,
+  AI_VERDICT_COLOURS, AI_VERDICT_LABELS, categoryLabel, canAccept, canAskAi, canEdit, canReject, canRemember, canUseAiFix,
   optionsOf, resultText,
   RULE_LABELS, SOURCE_LABELS, stateLabel, type Suggestion,
 } from "@/lib/review";
@@ -32,6 +32,9 @@ interface Props {
   onUseAiFix: () => void;
   /** Accept the mark with one of LanguageTool's options. */
   onUseOption: (text: string) => void;
+  /** Learn the word for all books and reject its open marks here. */
+  onRemember: () => void;
+  remembering?: boolean;
 }
 
 /** Where the AI's fix comes from: which of LanguageTool's options, or the AI itself. */
@@ -234,6 +237,17 @@ export default function FocusCard(p: Props) {
               disabled={p.busy}
             >
               Use AI fix
+            </Button>
+          )}
+          {canRemember(s) && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={p.onRemember}
+              disabled={p.busy || p.remembering}
+              title={`LanguageTool stops marking “${s.original}” in every book in this language. Rejects this mark and its other open marks in this book (for a rule other than spelling, under the same rule).`}
+            >
+              Remember for all books
             </Button>
           )}
           {canAskAi(s) && (

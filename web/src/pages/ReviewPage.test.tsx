@@ -330,6 +330,34 @@ describe("focus card placement (S2)", () => {
     expect(bodyOf(posts(fetchMock, "/v1/suggestions/1/edit")[0])).toEqual({ replacement: "the" });
   });
 
+  it("Remember for all books posts, refreshes, and u undoes each mark it rejected", async () => {
+    const mark = sug({
+      id: 1, block_id: 100, start: 2, end: 5, original: "teh", replacement: "the", source: "languagetool",
+      ai_verdict: "not_an_error", ai_reason: "A name.",
+    });
+    const summary = SUMMARY.map((c) => (c.chapter_id === 11 ? { ...c, open: 1 } : c));
+    const { fetchMock } = reviewServer([block(100, 1, "𝔄 teh cat sat.", [mark])], summary, {
+      "POST /v1/suggestions/1/remember": () =>
+        json(200, {
+          word: { id: 1, language: "en", word: "teh", rule: "*", reason: "A name.", book_id: 1, created_by: "a", created_at: "2026-11-25T00:00:00Z" },
+          rejected: 2,
+          marks: [{ id: 1, chapter_id: 11 }, { id: 2, chapter_id: 11 }],
+        }),
+      "POST /v1/suggestions/1/undo": () => json(200, mark),
+      "POST /v1/suggestions/2/undo": () => json(200, { ...mark, id: 2 }),
+    });
+    renderReview();
+    await screen.findByText("1 left");
+    await userEvent.keyboard("j");
+    await userEvent.click(within(card()).getByRole("button", { name: "Remember for all books" }));
+    await waitFor(() => expect(posts(fetchMock, "/v1/suggestions/1/remember")).toHaveLength(1));
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Remembered “teh” for all books; rejected 2 marks"));
+    await userEvent.keyboard("u");
+    await waitFor(() => expect(posts(fetchMock, "/v1/suggestions/1/undo")).toHaveLength(1));
+    await userEvent.keyboard("u");
+    await waitFor(() => expect(posts(fetchMock, "/v1/suggestions/2/undo")).toHaveLength(1));
+  });
+
   it("another LanguageTool option is used with an edit", async () => {
     const mark = sug({
       id: 1, block_id: 100, start: 2, end: 5, original: "teh", replacement: "the", source: "languagetool",

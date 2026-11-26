@@ -213,6 +213,13 @@ export const canUseAiFix = (s: Suggestion) =>
   s.ai_replacement !== null &&
   s.ai_replacement !== s.replacement;
 
+/** A LanguageTool mark the AI rated fine that Jerome can learn: a misspelling, or one with its rule. */
+export const canRemember = (s: Suggestion) =>
+  s.status === "open" &&
+  s.source === "languagetool" &&
+  s.ai_verdict === "not_an_error" &&
+  (s.category === "typo" || s.lt_rule !== null);
+
 export const AI_VERDICT_LABELS: Record<AiVerdict, string> = {
   error: "AI: definitely an error",
   maybe_error: "AI: maybe an error",

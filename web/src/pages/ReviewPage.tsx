@@ -4,7 +4,7 @@ import Paragraph from "@/components/review/Paragraph";
 import FocusCard from "@/components/review/FocusCard";
 import ReviewToolbar from "@/components/review/ReviewToolbar";
 import CheckLtMarks from "@/components/review/CheckLtMarks";
-import { useAiCheck } from "@/hooks/useAiCheck";
+import { useAiCheck, useRemember } from "@/hooks/useAiCheck";
 import BulkAccept from "@/components/review/BulkAccept";
 import NextChapterPrompt from "@/components/review/NextChapterPrompt";
 import { Button } from "@/components/ui/button";
@@ -99,6 +99,16 @@ function ChapterReview({ bookId, chapterId, chapters }: {
   });
 
   const aiCheck = useAiCheck(bookId);
+  const remember = useRemember(bookId, {
+    onDone: (marks) => {
+      // Newest last: `u` undoes the remembered mark first, then the others it rejected.
+      const done = [...marks].reverse().map((m) => ({ id: m.id, chapterId: String(m.chapter_id) }));
+      const ids = new Set(done.map((x) => x.id));
+      setHistory((h) => [...h.filter((x) => !ids.has(x.id)), ...done].slice(-UNDO_DEPTH));
+      setDecidedIn(chapterId);
+      setMovedOn(true);
+    },
+  });
 
   // A failed next page waits for "Try again" rather than being asked for again on its own.
   const canLoadMore = query.hasNextPage && !query.isFetchingNextPage && !query.isFetchNextPageError;
@@ -215,7 +225,7 @@ function ChapterReview({ bookId, chapterId, chapters }: {
                 source={b.source}
                 hiddenBy={hiddenBy(b.suggestions, current)}
                 editing={editing === current.id}
-                busy={decide.isPending}
+                busy={decide.isPending || remember.isPending}
                 canUndo={canUndo}
                 onAccept={actions.accept}
                 onReject={actions.reject}
@@ -228,6 +238,10 @@ function ChapterReview({ bookId, chapterId, chapters }: {
                 }}
                 onUseAiFix={() => {
                   if (current.ai_replacement !== null) run(current.id, "edit", current.ai_replacement);
+                }}
+                remembering={remember.isPending}
+                onRemember={() => {
+                  if (!remember.isPending) remember.mutate(current.id);
                 }}
                 onUseOption={(text) => {
                   if (text === current.replacement) actions.accept();

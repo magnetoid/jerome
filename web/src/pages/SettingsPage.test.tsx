@@ -66,6 +66,16 @@ function setup(extra: Parameters<typeof mockApi>[0] = {}, settings = body()) {
       { id: 1, name: "ci", created_at: "2026-11-01T10:00:00Z", revoked_at: null },
       { id: 2, name: "old", created_at: "2026-10-01T10:00:00Z", revoked_at: "2026-11-02T10:00:00Z" },
     ]),
+    "GET /v1/learned-words": json(200, [
+      {
+        id: 7, language: "de", word: "Katharina", rule: "*", reason: "A name in the story.", book_id: 3,
+        created_by: "ann@example.com", created_at: "2026-11-25T10:00:00Z",
+      },
+      {
+        id: 8, language: "en", word: "gonna", rule: "INFORMAL", reason: null, book_id: null,
+        created_by: "bo@example.com", created_at: "2026-11-24T10:00:00Z",
+      },
+    ]),
     // the Anthropic key is set in body(), so the Claude model fields ask for its list
     "GET /v1/settings/provider-models?provider=anthropic": json(200, { provider: "anthropic", models: [] }),
     ...extra,
@@ -90,7 +100,7 @@ describe("SettingsPage", () => {
     setup();
     await screen.findByRole("heading", { name: "Models" });
     const names = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
-    expect(names).toEqual(["Models", "Limits", "Services", "Secrets", "API keys", "System", "Recent changes"]);
+    expect(names).toEqual(["Models", "Limits", "Services", "Secrets", "Learned words", "API keys", "System", "Recent changes"]);
     expect(screen.getByText("Ready")).toBeInTheDocument();
   });
 
@@ -220,6 +230,24 @@ describe("SettingsPage", () => {
     expect(call(f, "DELETE", "/v1/api-keys/1")).toBeUndefined();
     await user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Revoke" }));
     await waitFor(() => expect(call(f, "DELETE", "/v1/api-keys/1")).toBeTruthy());
+  });
+
+  it("lists learned words and deletes one behind a confirm", async () => {
+    const f = setup({ "DELETE /v1/learned-words/7": () => new Response(null, { status: 204 }) }).f;
+    const user = userEvent.setup();
+    const section = await screen.findByRole("region", { name: "Learned words" });
+    const kat = (await within(section).findByText("Katharina")).closest("tr")!;
+    expect(kat).toHaveTextContent("German");
+    expect(kat).toHaveTextContent("any spelling rule");
+    expect(kat).toHaveTextContent("A name in the story.");
+    expect(kat).toHaveTextContent("ann@example.com");
+    const gonna = within(section).getByText("gonna").closest("tr")!;
+    expect(gonna).toHaveTextContent("English");
+    expect(gonna).toHaveTextContent("INFORMAL");
+    await user.click(within(kat).getByRole("button", { name: "Delete Katharina" }));
+    expect(call(f, "DELETE", "/v1/learned-words/7")).toBeUndefined();
+    await user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(call(f, "DELETE", "/v1/learned-words/7")).toBeTruthy());
   });
 
   it("saves the whole prices table", async () => {

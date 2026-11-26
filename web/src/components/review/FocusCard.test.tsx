@@ -17,14 +17,20 @@ function renderCard(hiddenBy: Suggestion | null, source?: string | null) {
       canUndo={false}
       asking={false}
       onAccept={noop} onReject={noop} onEdit={noop} onUndo={noop} onSave={noop} onCancelEdit={noop}
-      onAskAi={noop} onUseAiFix={noop} onUseOption={noop}
+      onAskAi={noop} onUseAiFix={noop} onUseOption={noop} onRemember={noop}
     />,
   );
 }
 
 function cardFor(
   s: Suggestion,
-  over: { asking?: boolean; onAskAi?: () => void; onUseAiFix?: () => void; onUseOption?: (text: string) => void } = {},
+  over: {
+    asking?: boolean;
+    onAskAi?: () => void;
+    onUseAiFix?: () => void;
+    onUseOption?: (text: string) => void;
+    onRemember?: () => void;
+  } = {},
 ) {
   const noop = vi.fn();
   return render(
@@ -32,6 +38,7 @@ function cardFor(
       s={s} hiddenBy={null} editing={false} busy={false} canUndo={false} asking={over.asking ?? false}
       onAccept={noop} onReject={noop} onEdit={noop} onUndo={noop} onSave={noop} onCancelEdit={noop}
       onAskAi={over.onAskAi ?? noop} onUseAiFix={over.onUseAiFix ?? noop} onUseOption={over.onUseOption ?? noop}
+      onRemember={over.onRemember ?? noop}
     />,
   );
 }
@@ -180,6 +187,34 @@ describe("FocusCard LanguageTool options", () => {
     for (const s of [lt({ options: ["the"] }), lt({ options: null }), lt({ options: ["the", "tea"], status: "accepted" })]) {
       const card = cardFor(s);
       expect(screen.queryByRole("group", { name: "LanguageTool options" })).toBeNull();
+      card.unmount();
+    }
+  });
+});
+
+describe("FocusCard Remember for all books", () => {
+  it("is offered on a LanguageTool mark the AI rated fine, and calls onRemember", async () => {
+    const onRemember = vi.fn();
+    cardFor(lt({ ai_verdict: "not_an_error", ai_reason: "A name." }), { onRemember });
+    await userEvent.click(screen.getByRole("button", { name: "Remember for all books" }));
+    expect(onRemember).toHaveBeenCalledOnce();
+  });
+
+  it("is offered for a rule mark that has its rule", () => {
+    cardFor(lt({ category: "grammar", lt_rule: "SENT_START", ai_verdict: "not_an_error", ai_reason: "r" }));
+    expect(screen.getByRole("button", { name: "Remember for all books" })).toBeInTheDocument();
+  });
+
+  it("is not offered otherwise", () => {
+    for (const s of [
+      lt(),
+      lt({ ai_verdict: "maybe_error", ai_reason: "r" }),
+      lt({ ai_verdict: "not_an_error", ai_reason: "r", status: "rejected" }),
+      sug({ source: "model", ai_verdict: "not_an_error", ai_reason: "r" }),
+      lt({ category: "grammar", lt_rule: null, ai_verdict: "not_an_error", ai_reason: "r" }),
+    ]) {
+      const card = cardFor(s);
+      expect(screen.queryByRole("button", { name: "Remember for all books" })).toBeNull();
       card.unmount();
     }
   });

@@ -14,10 +14,12 @@ from jerome.api.schemas import (
     BulkOut,
     ChapterAiCheckOut,
     EditBody,
+    LearnedWordOut,
+    RememberOut,
     SuggestionFilterIn,
     SuggestionOut,
 )
-from jerome.core import ai_check, books, suggestions, translation
+from jerome.core import ai_check, books, learned_words, suggestions, translation
 from jerome.core.suggestions import SuggestionFilter
 from jerome.models import Registry
 from jerome.orm import Block, Decision, Suggestion
@@ -193,6 +195,28 @@ def ai_check_chapter(
         "remaining": result.remaining,
         "failed": result.failed,
         "suggestions": suggestion_out(session, result.checked),
+    }
+
+
+@router.post("/suggestions/{suggestion_id}/remember", response_model=RememberOut)
+def remember(suggestion_id: int, session: SessionDep, principal: PrincipalDep):
+    """Remember a LanguageTool mark the AI rated not_an_error for all books of its language:
+    later LanguageTool checks skip the word, and this mark and the book's other open marks
+    of it are rejected as this person's decisions."""
+    word, rejected = learned_words.remember(
+        session, suggestion_id, actor=principal.actor, channel=principal.channel
+    )
+    chapters = dict(
+        session.execute(
+            select(Suggestion.id, Block.chapter_id)
+            .join(Block, Block.id == Suggestion.block_id)
+            .where(Suggestion.id.in_(rejected))
+        ).all()
+    )
+    return {
+        "word": LearnedWordOut.model_validate(word),
+        "rejected": len(rejected),
+        "marks": [{"id": i, "chapter_id": chapters[i]} for i in rejected],
     }
 
 

@@ -314,6 +314,30 @@ class ApiKeyOut(BaseModel):
     revoked_at: datetime | None
 
 
+class LearnedWordOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    language: str
+    word: str
+    rule: str  # "*" for any spelling rule, else one LanguageTool rule id
+    reason: str | None
+    book_id: int | None
+    created_by: str
+    created_at: datetime
+
+
+class RejectedMarkOut(BaseModel):
+    id: int
+    chapter_id: int
+
+
+class RememberOut(BaseModel):
+    word: LearnedWordOut
+    rejected: int  # marks rejected: this one and the book's other open marks the word covers
+    marks: list[RejectedMarkOut]  # those marks, this one first, so the page can undo each
+
+
 class ApiKeyCreateIn(BaseModel):
     name: str
 

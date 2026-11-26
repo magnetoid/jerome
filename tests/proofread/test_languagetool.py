@@ -274,3 +274,45 @@ def test_lt_inputs_hide_the_key_and_lt_client_uses_settings(respx_mock):
     route = lt_route(respx_mock, [])
     lt_client(s).check([{"text": "x"}], "en-US")
     assert parse_form(route)["apiKey"] == "lt-key"
+
+
+def test_a_learned_spelling_word_drops_misspellings_only(respx_mock):
+    lt_route(
+        respx_mock,
+        [
+            {**lt_match(0, 9, repl="Katarina"), "rule": {"issueType": "misspelling", "id": "SP"}},
+            {
+                **lt_match(0, 9, repl="K", issue="grammar"),
+                "rule": {"issueType": "grammar", "id": "G"},
+            },
+        ],
+    )
+    learned = frozenset({("Katharina", "*")})
+    cands, dropped = languagetool_candidates(
+        [BlockText(1, "Katharina ran")], STYLE_EN, client(respx_mock), learned
+    )
+    assert [c.lt_rule for c in cands] == ["G"]
+    assert dropped == 1
+
+
+def test_a_learned_rule_word_drops_only_that_rule(respx_mock):
+    lt_route(
+        respx_mock,
+        [
+            {
+                **lt_match(0, 3, repl="sie", issue="grammar"),
+                "rule": {"issueType": "grammar", "id": "A"},
+            },
+            {
+                **lt_match(0, 3, repl="SIE", issue="grammar"),
+                "rule": {"issueType": "grammar", "id": "B"},
+            },
+            {**lt_match(0, 3, repl="Si"), "rule": {"issueType": "misspelling", "id": "A"}},
+        ],
+    )
+    learned = frozenset({("Sie", "A")})
+    cands, dropped = languagetool_candidates(
+        [BlockText(1, "Sie gehen")], STYLE_DE, client(respx_mock), learned
+    )
+    assert [c.lt_rule for c in cands] == ["B"]
+    assert dropped == 2

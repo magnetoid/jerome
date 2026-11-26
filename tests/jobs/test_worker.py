@@ -23,6 +23,7 @@ from jerome.orm import (
     Decision,
     Job,
     JobTask,
+    LearnedWord,
     ModelUsage,
     StyleSheetRow,
     Suggestion,
@@ -827,3 +828,26 @@ def test_cancel_job_waits_for_a_locked_job(session_factory, job_two_chunks):
             other.commit()
         with pytest.raises(Conflict):
             cancel_job(s, job_two_chunks.job_id)
+
+
+def test_a_learned_word_is_not_marked_in_a_new_job(session_factory, test_settings, respx_mock):
+    sf = session_factory
+    ids = build(sf, [["Katharina ran."]], passes=["languagetool"])
+    with sf() as s:
+        s.add(LearnedWord(language="en", word="Katharina", rule="*", created_by="a"))
+        s.add(LearnedWord(language="de", word="ran", rule="*", created_by="a"))
+        s.commit()
+    spelling = {"issueType": "misspelling", "id": "SP"}
+    respx_mock.post(f"{LT}/v2/check").respond(
+        json={
+            "matches": [
+                {"message": "m", "offset": 0, "length": 9, "replacements": [{"value": "K"}],
+                 "rule": spelling},
+                {"message": "m", "offset": 10, "length": 3, "replacements": [{"value": "run"}],
+                 "rule": spelling},
+            ]
+        }
+    )  # fmt: skip
+    run_task(sf, ids.task_id, make_deps(test_settings, FakeProvider([])))
+    with sf() as s:
+        assert [r.original for r in s.scalars(select(Suggestion))] == ["ran"]

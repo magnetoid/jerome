@@ -40,6 +40,7 @@ from sqlalchemy.orm import Session, aliased, sessionmaker
 
 from jerome.core.auto_apply import AutoApplyPolicy, apply_clear_cut, get_policy
 from jerome.core.books import block_texts
+from jerome.core.learned_words import rules_for
 from jerome.core.style_sheets import get_style_sheet
 from jerome.core.suggestions import add_candidates
 from jerome.core.translation import (
@@ -62,7 +63,11 @@ from jerome.models.pricing import Price
 from jerome.orm import Block, Book, Job, JobTask, ModelUsage
 from jerome.proofread.ai_pass import AiPassResult, Chunk, chunk_blocks, run_ai_pass
 from jerome.proofread.consistency import consistency_candidates
-from jerome.proofread.languagetool import LanguageToolClient, languagetool_candidates
+from jerome.proofread.languagetool import (
+    LanguageToolClient,
+    LearnedRules,
+    languagetool_candidates,
+)
 from jerome.proofread.merge import merge_candidates
 from jerome.publish.build import prepare, render
 from jerome.publish.model import PublishError
@@ -205,6 +210,7 @@ class _Plan:
     policy: AutoApplyPolicy
     chunks: list[Chunk] | list[TranslateChunk] = field(default_factory=list)
     source_style: StyleSheet | None = None  # translate jobs: the source book's
+    learned: LearnedRules = frozenset()  # learned words for the style's language
     attempts: int = 0  # the task's failed attempts before this one
 
 
@@ -273,6 +279,7 @@ def _start(sf: SessionFactory, task_id: int, deps: WorkerDeps) -> _Plan | None:
             policy=get_policy(s, job.book_id),
             attempts=task.attempts,
         )
+        plan.learned = rules_for(s, plan.style.language)
         if task.kind == "chapter" and job.type == "translate":
             plan.chunks = translation_chunks(s, job.book_id, task.chapter_id)
             plan.source_style = get_style_sheet(s, book.source_book_id)
@@ -435,7 +442,7 @@ def _run_chunk(
     if "languagetool" in plan.passes and plan.local_only and deps.lt.hosted:
         lt_skipped = 1
     elif "languagetool" in plan.passes:
-        found, lt_dropped = languagetool_candidates(chunk.blocks, plan.style, deps.lt)
+        found, lt_dropped = languagetool_candidates(chunk.blocks, plan.style, deps.lt, plan.learned)
         candidates += found
         dropped += lt_dropped
     configured = ""

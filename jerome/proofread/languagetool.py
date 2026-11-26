@@ -128,8 +128,23 @@ def _options(replacements: Sequence[dict], original: str) -> tuple[str, ...]:
     return tuple(kept)
 
 
+ANY_SPELLING = "*"  # a learned word's rule for any spelling rule
+
+LearnedRules = frozenset[tuple[str, str]]  # learned (word, rule) pairs for one language
+
+
+def covers(rules: LearnedRules, word: str, rule_id: str | None, *, misspelling: bool) -> bool:
+    """True if a LanguageTool match of ``word`` under ``rule_id`` is a learned word."""
+    if misspelling and (word, ANY_SPELLING) in rules:
+        return True
+    return rule_id is not None and (word, rule_id) in rules
+
+
 def languagetool_candidates(
-    blocks: Sequence[BlockText], style: StyleSheet, client: LanguageToolClient
+    blocks: Sequence[BlockText],
+    style: StyleSheet,
+    client: LanguageToolClient,
+    learned: LearnedRules = frozenset(),
 ) -> tuple[list[Candidate], int]:
     candidates: list[Candidate] = []
     dropped = 0
@@ -151,6 +166,7 @@ def languagetool_candidates(
             issue = rule.get("issueType", "")
             if (
                 (issue == "misspelling" and original in ignore)
+                or covers(learned, original, rule.get("id"), misspelling=issue == "misspelling")
                 or PLACEHOLDER in original
                 or not options
             ):
