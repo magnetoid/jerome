@@ -1,5 +1,7 @@
+import base64
 import json
 import re
+from collections.abc import Sequence
 from urllib.parse import urlparse
 
 import httpx
@@ -11,6 +13,19 @@ _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "host.docker.internal"}
 _OPENAI_EFFORTS = {"low", "medium", "high"}
 # OpenAI's reasoning models; the others answer reasoning_effort with an error
 _OPENAI_REASONING = re.compile(r"^(o[0-9]|gpt-5)")
+
+
+def _user_content(user: str, images: Sequence[tuple[bytes, str]]) -> str | list[dict]:
+    if not images:
+        return user
+    parts: list[dict] = [
+        {
+            "type": "image_url",
+            "image_url": {"url": f"data:{media_type};base64,{base64.b64encode(data).decode()}"},
+        }
+        for data, media_type in images
+    ]
+    return [*parts, {"type": "text", "text": user}]
 
 
 class OpenAICompatProvider:
@@ -38,6 +53,7 @@ class OpenAICompatProvider:
         schema: dict,
         max_tokens: int = 16000,
         effort: str | None = None,
+        images: Sequence[tuple[bytes, str]] = (),
     ) -> CompletionResult:
         if self.require_key and not self.api_key:
             raise JeromeError(f"{self.name} API key is not set")
@@ -46,7 +62,7 @@ class OpenAICompatProvider:
             "model": model,
             "messages": [
                 {"role": "system", "content": "\n\n".join(p.text for p in system)},
-                {"role": "user", "content": user},
+                {"role": "user", "content": _user_content(user, images)},
             ],
             "response_format": {
                 "type": "json_schema",

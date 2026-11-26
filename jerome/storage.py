@@ -1,3 +1,4 @@
+import json
 import os
 import shutil
 import tempfile
@@ -27,6 +28,31 @@ class Storage:
         if not found:
             raise NotFound(f"original file of book {book_id}")
         return found[0].read_bytes()
+
+    def save_source_pdf(self, book_id: int, data: bytes) -> Path:
+        return _write_atomic(self._book_dir(book_id) / "source.pdf", data)
+
+    def read_source_pdf(self, book_id: int) -> bytes:
+        path = self._book_dir(book_id) / "source.pdf"
+        if not path.is_file():
+            raise NotFound(f"source PDF of book {book_id}")
+        return path.read_bytes()
+
+    def save_page(self, book_id: int, page: int, d: dict) -> Path:
+        """The result of reading one page (0-based), kept so a resumed import skips it."""
+        raw = json.dumps(d, ensure_ascii=False).encode()
+        return _write_atomic(self._book_dir(book_id) / "import" / f"page-{page:04d}.json", raw)
+
+    def has_page(self, book_id: int, page: int) -> bool:
+        return (self._book_dir(book_id) / "import" / f"page-{page:04d}.json").is_file()
+
+    def read_page(self, book_id: int, page: int) -> dict | None:
+        path = self._book_dir(book_id) / "import" / f"page-{page:04d}.json"
+        return json.loads(path.read_bytes()) if path.is_file() else None
+
+    def delete_pages(self, book_id: int) -> None:
+        """Remove the saved page results of a finished import (``source.pdf`` stays)."""
+        shutil.rmtree(self._book_dir(book_id) / "import", ignore_errors=True)
 
     def save_export(self, book_id: int, name: str, data: bytes) -> Path:
         return _write_atomic(self._book_dir(book_id) / "exports" / Path(name).name, data)

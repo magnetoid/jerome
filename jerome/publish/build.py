@@ -19,7 +19,7 @@ from typing import Literal
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from jerome.core.books import get_book
+from jerome.core.books import ensure_imported, get_book
 from jerome.core.exports import EPUB_MEDIA_TYPE, ExportFile, export_book
 from jerome.core.publication import Publication, publication_of, read_cover
 from jerome.core.translation import ensure_not_source, untranslated_conflict
@@ -70,6 +70,7 @@ def check_publishable(session: Session, book_id: int) -> Book:
     of a translation translated, an author set. Raises Conflict otherwise."""
     ensure_not_source(session, book_id)
     book = get_book(session, book_id)
+    ensure_imported(book)
     conflict = untranslated_conflict(session, book)
     if conflict is not None:
         raise conflict

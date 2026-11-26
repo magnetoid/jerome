@@ -27,6 +27,7 @@ ENV PATH=/app/.venv/bin:$PATH \
 RUN apt-get update \
     && apt-get install --no-install-recommends -y \
         libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz-subset0 fontconfig \
+        tesseract-ocr tesseract-ocr-eng tesseract-ocr-deu \
     && rm -rf /var/lib/apt/lists/*
 
 RUN useradd --create-home --uid 1000 jerome \

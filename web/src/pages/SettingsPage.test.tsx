@@ -20,6 +20,7 @@ function body(over: { storage?: string; settings?: unknown[]; secrets?: unknown[
     settings: over.settings ?? [
       row("models.ai", { provider: "anthropic", model: "claude-opus-5-5" }),
       row("models.translate", { provider: "anthropic", model: "claude-opus-5-5", effort: "high" }),
+      row("models.ocr", { provider: "anthropic", model: "claude-opus-5-5", effort: "high" }),
       row("prices", {
         "model-a": { input: 1, output: 2, cache_read: 0.5, cache_write: 1.5 },
         "model-b": { input: 3, output: 4, cache_read: 1, cache_write: 2 },
@@ -342,6 +343,31 @@ describe("SettingsPage", () => {
       value: { provider: "anthropic", model: "claude-sonnet-5-5", effort: "high" },
     });
     expect(call(f, "PUT", "/v1/settings/models.ai")).toBeFalsy();
+  });
+
+  it("renders the page reading model editor and saves models.ocr", async () => {
+    const f = setup({ "PUT /v1/settings/models.ocr": () => json(200, body()) }).f;
+    const user = userEvent.setup();
+    const group = await screen.findByRole("group", { name: "PDF page reading model" });
+    expect(within(group).getByLabelText("Model")).toHaveValue("claude-opus-5-5");
+    await user.clear(within(group).getByLabelText("Model"));
+    await user.type(within(group).getByLabelText("Model"), "claude-sonnet-5-5");
+    await user.click(within(group).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(call(f, "PUT", "/v1/settings/models.ocr")).toBeTruthy());
+    expect(JSON.parse(call(f, "PUT", "/v1/settings/models.ocr")![1]!.body as string)).toEqual({
+      value: { provider: "anthropic", model: "claude-sonnet-5-5", effort: "high" },
+    });
+    expect(call(f, "PUT", "/v1/settings/models.ai")).toBeFalsy();
+  });
+
+  it("shows the page reading model as the AI check's until it is set", async () => {
+    const settings = body().settings.map((r) =>
+      (r as { key: string }).key === "models.ocr" ? row("models.ocr", {}) : r,
+    );
+    setup({}, body({ settings }));
+    const group = await screen.findByRole("group", { name: "PDF page reading model" });
+    expect(within(group).getByText("Same as AI check")).toBeInTheDocument();
+    expect(within(group).getByLabelText("Model")).toHaveValue("");
   });
 
   it("saves an empty service URL as null", async () => {

@@ -47,11 +47,14 @@ export default function ModelSettings({
   idPrefix,
   allowDeepl = false,
   keyed = [],
+  unsetNote,
 }: {
   row: SettingRow;
   label: string;
   idPrefix: string;
   allowDeepl?: boolean;
+  /** What is used while this pass has no model of its own, e.g. "Same as AI check". */
+  unsetNote?: string;
   /** Providers whose API key is set: their live model list is fetched. */
   keyed?: string[];
 }) {
@@ -111,6 +114,7 @@ export default function ModelSettings({
       onSave={onSave}
       onReset={() => reset.mutate(row.key)}
     >
+      {unsetNote && !v.model && <p className="text-sm text-muted-foreground">{unsetNote}</p>}
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="grid gap-2">
           <Label htmlFor={`${idPrefix}-provider`}>Provider</Label>

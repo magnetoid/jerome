@@ -507,3 +507,21 @@ def test_publish_task_kind_and_trim_size(session, book_factory):
     b.trim_size = "a4"
     with pytest.raises(IntegrityError):
         session.flush()
+
+
+def test_migration_0013_round_trips(engine):
+    from alembic import command
+
+    from tests.conftest import alembic_config
+
+    cfg = alembic_config()
+    try:
+        command.downgrade(cfg, "0012")
+        cols = {c["name"] for c in inspect(engine).get_columns("books")}
+        assert "import_status" not in cols
+        assert "pages" not in {c["name"] for c in inspect(engine).get_columns("job_tasks")}
+    finally:
+        command.upgrade(cfg, "head")
+    assert {"import_status", "import_error", "import_report"} <= {
+        c["name"] for c in inspect(engine).get_columns("books")
+    }

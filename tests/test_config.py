@@ -14,7 +14,7 @@ def test_defaults(monkeypatch):
     assert s.models == {
         "ai": {"provider": "anthropic", "model": "claude-opus-5-5", "effort": "high"},
         "translate": {"provider": "anthropic", "model": "claude-opus-5-5", "effort": "high"},
-    }
+    }  # no ocr pass: until it is set, PDF pages are read by the ai pass's model
     assert s.prices == {}
     assert s.webhook_secret is None
     assert s.text_daily_cost_cap == Decimal("5")

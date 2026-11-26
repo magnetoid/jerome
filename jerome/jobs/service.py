@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from jerome.core.books import get_book
+from jerome.core.books import ensure_imported, get_book
 from jerome.core.translation import ensure_not_source
 from jerome.errors import Conflict, NotFound
 from jerome.jobs.estimate import (
@@ -18,7 +18,7 @@ from jerome.jobs.estimate import (
     pending_chapter_ids,
 )
 from jerome.models import Registry
-from jerome.orm import ACTIVE_JOB_STATUSES, Block, Job, JobTask
+from jerome.orm import ACTIVE_JOB_STATUSES, Block, Book, Job, JobTask
 from jerome.publish.build import PublishFormat, check_publishable
 
 RESUMABLE = ("cancelled", "failed", "paused_cost_cap")
@@ -74,7 +74,9 @@ def create_job(
     actor: str,
 ) -> Job:
     ensure_not_source(session, book_id)
-    if get_book(session, book_id).work == "translate" and _has_pending(session, book_id):
+    book = get_book(session, book_id)
+    ensure_imported(book)
+    if book.work == "translate" and _has_pending(session, book_id):
         raise Conflict("translate the book before proofreading it")
     if (conflict := _active_conflict(session, book_id)) is not None:
         raise conflict
@@ -127,7 +129,9 @@ def create_translation_job(
 ) -> Job:
     """A job that translates every pending block, one task per chapter that has any."""
     ensure_not_source(session, book_id)
-    if get_book(session, book_id).work != "translate":
+    book = get_book(session, book_id)
+    ensure_imported(book)
+    if book.work != "translate":
         raise Conflict(f"book {book_id} is not a translation project")
     chapters = pending_chapter_ids(session, book_id)
     if not chapters:
@@ -184,6 +188,10 @@ def cancel_job(session: Session, job_id: int) -> Job:
         raise Conflict(f"job {job_id} is {job.status} and cannot be cancelled")
     job.status = "cancelled"
     job.finished_at = datetime.now(UTC)
+    if job.type == "import":  # the book is not ready, and nothing is making it so
+        book = session.get(Book, job.book_id)
+        book.import_status = "failed"
+        book.import_error = "The import was cancelled"
     session.flush()
     return job
 
@@ -218,6 +226,10 @@ def resume_job(session: Session, job_id: int, *, max_cost: Decimal | None = None
     if pending:
         job.status = "queued"
         job.finished_at = None
+        if job.type == "import":  # the book is being imported again
+            book = session.get(Book, job.book_id)
+            book.import_status = "importing"
+            book.import_error = None
     else:  # e.g. cancelled while its last chunk was in flight: nothing is left to claim
         job.status = "completed"
         job.finished_at = datetime.now(UTC)
@@ -228,3 +240,46 @@ def resume_job(session: Session, job_id: int, *, max_cost: Decimal | None = None
         raise _already_active(job.book_id) from exc
     session.refresh(job)
     return job
+
+
+def _import_job(session: Session, book_id: int) -> Job:
+    """The book's latest import job, locked."""
+    job_id = session.scalar(
+        select(Job.id)
+        .where(Job.book_id == book_id, Job.type == "import")
+        .order_by(Job.id.desc())
+        .limit(1)
+    )
+    if job_id is None:
+        raise NotFound(f"import job of book {book_id}")
+    return _lock_job(session, job_id)
+
+
+def _answer_estimate(session: Session, book_id: int, **changes) -> Job:
+    """Clear the import's ``awaiting_estimate`` with ``changes`` made to the job; a job
+    paused at its cost cap is resumed, one still reading its free pages runs on. An import
+    paused at its cap after the confirm (older jobs could be) is answered the same way."""
+    job = _import_job(session, book_id)
+    if not (job.stats or {}).get("awaiting_estimate") and job.status != "paused_cost_cap":
+        raise Conflict(f"the import of book {book_id} is not waiting for a cost confirmation")
+    job.stats = {**job.stats, "awaiting_estimate": False}
+    max_cost = changes.pop("max_cost", None)
+    for name, value in changes.items():
+        setattr(job, name, value)
+    if job.status in ("queued", "running"):
+        if max_cost is not None:
+            job.max_cost = max_cost
+        session.flush()
+        return job
+    session.flush()  # resume_job reloads the job row
+    return resume_job(session, job.id, max_cost=max_cost)
+
+
+def confirm_import(session: Session, book_id: int, max_cost: Decimal) -> Job:
+    """The owner accepts the AI OCR estimate: pages are read by the AI up to ``max_cost``."""
+    return _answer_estimate(session, book_id, max_cost=max_cost)
+
+
+def use_tesseract(session: Session, book_id: int) -> Job:
+    """The owner turns the AI OCR estimate down: Tesseract reads the scanned pages."""
+    return _answer_estimate(session, book_id, passes=["tesseract"])

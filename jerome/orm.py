@@ -29,7 +29,14 @@ from jerome.types import AI_VERDICTS, Category, Role, Severity, Source, Status
 JOB_STATUSES = ("queued", "running", "paused_cost_cap", "cancelled", "failed", "completed")
 ACTIVE_JOB_STATUSES = ("queued", "running", "paused_cost_cap")
 TASK_STATUSES = ("queued", "running", "done", "failed")
-TASK_KINDS = ("chapter", "consistency", "publish")
+TASK_KINDS = (
+    "chapter",
+    "consistency",
+    "publish",
+    "import_scan",
+    "import_pages",
+    "import_build",
+)
 TRIM_SIZES = ("6x9in", "5.5x8.5in", "5x8in", "a5")
 CHANNELS = ("api", "word", "system", "web", "auto", "mcp")
 
@@ -66,6 +73,9 @@ class Book(Base):
         CheckConstraint(_in("format", ("docx", "epub")), name="ck_books_format"),
         CheckConstraint(_in("work", ("proofread", "translate")), name="ck_books_work"),
         CheckConstraint(_in("trim_size", TRIM_SIZES), name="ck_books_trim_size"),
+        CheckConstraint(
+            _in("import_status", ("importing", "failed")), name="ck_books_import_status"
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -91,6 +101,11 @@ class Book(Base):
     description: Mapped[str | None] = mapped_column(Text)
     cover_type: Mapped[str | None] = mapped_column(String)
     trim_size: Mapped[str] = mapped_column(String, server_default="6x9in")
+    # A book made from a PDF is "importing" until its job has built it, "failed" if that
+    # failed; null once it is a normal book (jerome.pdfimport)
+    import_status: Mapped[str | None] = mapped_column(String)
+    import_error: Mapped[str | None] = mapped_column(Text)
+    import_report: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = _ts()
 
     chapters: Mapped[list["Chapter"]] = relationship(
@@ -234,10 +249,12 @@ class JobTask(Base):
     chapter_id: Mapped[int | None] = mapped_column(ForeignKey("chapters.id", ondelete="CASCADE"))
     kind: Mapped[str] = mapped_column(String)
     status: Mapped[str] = mapped_column(String, server_default="queued")
+    # import_pages tasks: 1 once the free pages of the task's range are read (jerome.pdfimport.job)
     chunks_done: Mapped[int] = mapped_column(Integer, server_default=sql_text("0"))
     attempts: Mapped[int] = mapped_column(Integer, server_default=sql_text("0"))
     not_before: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     error: Mapped[str | None] = mapped_column(Text)
+    pages: Mapped[list[Any] | None] = mapped_column(JSONB)  # [first, last] of an import task
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 

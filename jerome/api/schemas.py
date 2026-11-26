@@ -18,6 +18,9 @@ class BookOut(BaseModel):
     work: Literal["proofread", "translate"]
     source_book_id: int | None
     translated_title: str | None
+    import_status: Literal["importing", "failed"] | None = None
+    import_error: str | None = None
+    import_report: dict[str, Any] | None = None
 
 
 class PublicationOut(BaseModel):

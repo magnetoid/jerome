@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     # https://api.languagetoolplus.com). The key is a secret set on the Settings page.
     languagetool_username: str | None = None
     languagetool_api_key: SecretStr | None = None
+    # No ocr pass of its own: until one is set, PDF pages are read by the ai pass's model, so
+    # a deployment that moves the ai pass to another provider reads pages there too.
     models: dict[str, Any] = {
         "ai": {"provider": "anthropic", "model": "claude-opus-5-5", "effort": "high"},
         "translate": {"provider": "anthropic", "model": "claude-opus-5-5", "effort": "high"},
@@ -34,6 +36,7 @@ class Settings(BaseSettings):
     text_daily_cost_cap: Decimal = Decimal(5)
     text_rpm: int = 30
     max_upload_mb: int = 50
+    max_pdf_upload_mb: int = 200
     trusted_proxies: list[str] = []  # direct peers whose X-Forwarded-For is believed (JSON list)
     session_days: int = 30
     cookie_secure: bool = True

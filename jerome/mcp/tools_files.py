@@ -23,6 +23,7 @@ from jerome.core import books, exports, transfer_links
 from jerome.core.agent_actions import record_action
 from jerome.core.exports import ExportFormat, ReviewFilters
 from jerome.core.review_imports import import_review
+from jerome.errors import UnsupportedDocumentError
 from jerome.mcp.context import ToolContext, call, current_request
 from jerome.mcp.files import MIB, PREFIX
 from jerome.mcp.rest import READ_ONLY, rest_json
@@ -93,6 +94,10 @@ def import_book(
     other tools take. Same as POST /v1/books. Logged in the Janus activity log."""
 
     def body(c: ToolContext) -> dict[str, Any]:
+        if (filename or "").lower().endswith(".pdf"):
+            raise UnsupportedDocumentError(
+                "PDF import is not available through Janus yet; upload it on the New project page"
+            )
         data = _consume(c, upload_id)
         book = routes_books.import_upload(
             c.session,

@@ -180,4 +180,12 @@ describe("ProjectsPage", () => {
     expect(within(finished[2]).getByText("Translated")).toBeInTheDocument();
     expect(within(finished[4]).getByRole("link")).toHaveTextContent("Start proofreading");
   });
+
+  it("labels the importing stage Importing", async () => {
+    listRoutes([project({ id: 8, title: "Scan Book", stage: "importing" })]);
+    renderApp(<ProjectsPage />);
+    const row = (await screen.findByText("Scan Book")).closest("tr")!;
+    expect(within(row).getByText("Importing")).toBeInTheDocument();
+    expect(within(row).getByRole("link", { name: "View progress" })).toHaveAttribute("href", "/projects/8");
+  });
 });

@@ -1,4 +1,6 @@
+import base64
 import json
+from collections.abc import Sequence
 
 import anthropic
 
@@ -23,6 +25,23 @@ def _system_blocks(system: list[SystemPart]) -> list[dict]:
         }
         for p in system
     ]
+
+
+def _user_content(user: str, images: Sequence[tuple[bytes, str]]) -> str | list[dict]:
+    if not images:
+        return user
+    parts: list[dict] = [
+        {
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": media_type,
+                "data": base64.b64encode(data).decode(),
+            },
+        }
+        for data, media_type in images
+    ]
+    return [*parts, {"type": "text", "text": user}]
 
 
 class ClaudeProvider:
@@ -52,6 +71,7 @@ class ClaudeProvider:
         schema: dict,
         max_tokens: int = 16000,
         effort: str | None = None,
+        images: Sequence[tuple[bytes, str]] = (),
     ) -> CompletionResult:
         response = self.client.beta.messages.create(
             betas=[FALLBACK_BETA],
@@ -59,7 +79,7 @@ class ClaudeProvider:
             model=model,
             max_tokens=max_tokens,
             system=_system_blocks(system),
-            messages=[{"role": "user", "content": user}],
+            messages=[{"role": "user", "content": _user_content(user, images)}],
             thinking={"type": "adaptive"},
             output_config={
                 "format": {"type": "json_schema", "schema": schema},

@@ -182,8 +182,14 @@ def import_cmd(
     local_only: Annotated[
         bool, typer.Option(help="Never send this book to a remote model")
     ] = False,
+    ocr: Annotated[
+        str | None,
+        typer.Option(
+            help="For a PDF: read scanned pages with ai or tesseract (default: ai if set up)"
+        ),
+    ] = None,
 ) -> None:
-    """Import a DOCX or EPUB and print the new book id."""
+    """Import a DOCX, EPUB or PDF and print the new book id. A PDF is read in the background."""
     from typing import get_args
 
     from jerome.core.books import import_book
@@ -197,7 +203,18 @@ def import_cmd(
         )
         raise typer.Exit(2)
 
+    if ocr not in (None, "ai", "tesseract"):
+        typer.echo("Error: --ocr must be ai or tesseract", err=True)
+        raise typer.Exit(2)
+
     settings = get_settings()
+    from jerome.api.routes_books import is_pdf
+
+    with path.open("rb") as f:
+        head = f.read(5)
+    if is_pdf(path.name, head):
+        _import_pdf(path, variant, local_only, ocr, settings)
+        return
     engine = make_engine(settings.database_url)
     try:
         with session_scope(engine) as session:
@@ -216,6 +233,51 @@ def import_cmd(
     finally:
         engine.dispose()
     typer.echo(book_id)
+
+
+def _import_pdf(path: Path, variant: str, local_only: bool, ocr: str | None, settings) -> None:
+    from sqlalchemy import select
+
+    from jerome.api.routes_books import default_ocr_engine
+    from jerome.core.auto_apply import DEFAULT_POLICY
+    from jerome.core.books import start_pdf_import
+    from jerome.orm import Job
+    from jerome.storage import Storage
+
+    if ocr == "ai" and local_only:
+        typer.echo("Error: a local-only book cannot be read with AI; use --ocr tesseract", err=True)
+        raise typer.Exit(2)
+    engine_name = ocr or default_ocr_engine(_registry(), local_only)
+    engine = make_engine(settings.database_url)
+    try:
+        with session_scope(engine) as session:
+            book = start_pdf_import(
+                session,
+                Storage(settings.data_dir),
+                filename=path.name,
+                data=path.read_bytes(),
+                variant=variant,  # type: ignore[arg-type]
+                title=None,
+                local_only=local_only,
+                auto_apply=DEFAULT_POLICY,
+                engine=engine_name,  # type: ignore[arg-type]
+                reocr=True,
+                work="proofread",
+                target_variant=None,
+                translated_title=None,
+                actor="cli",
+            )
+            book_id = book.id
+            job_id = session.scalar(
+                select(Job.id).where(Job.book_id == book_id, Job.type == "import")
+            )
+    except UnsupportedDocumentError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(2) from exc
+    finally:
+        engine.dispose()
+    typer.echo(book_id)
+    typer.echo(f"importing in the background (job {job_id})")
 
 
 @app.command()

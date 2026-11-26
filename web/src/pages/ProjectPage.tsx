@@ -18,6 +18,7 @@ import ExportMenu from "@/components/project/ExportMenu";
 import PublicationSection from "@/components/project/PublicationSection";
 import FinishedFiles from "@/components/project/FinishedFiles";
 import ReviewUpload from "@/components/project/ReviewUpload";
+import ImportPanel from "@/components/project/ImportPanel";
 import SettingsTab from "@/components/project/SettingsTab";
 import TranslationPanel, { FlaggedParagraphs, SourceBookLink } from "@/components/project/TranslationPanel";
 import { PROJECTS_KEY, useProjects, type Project } from "@/hooks/useProjects";
@@ -30,11 +31,14 @@ interface Book {
   format: "docx" | "epub";
   /** The hidden source book of a translation; absent from older servers. */
   source_book_id?: number | null;
+  import_status?: "importing" | "failed" | null;
 }
 
 function MainPanel({ project, format }: { project: Project; format: string }) {
   const id = String(project.id);
   switch (project.stage) {
+    case "importing":
+      return null; // the ImportPanel above shows it
     case "set_up":
       return project.work === "translate"
         ? <TranslationPanel project={project} format={format} />
@@ -84,13 +88,15 @@ export default function ProjectPage() {
   }
 
   const idle = project.active_job === null;
+  // A PDF whose import failed has no review to act on; the ImportPanel offers Retry.
+  const importFailed = book.data?.import_status === "failed";
   const format = book.data?.format ?? project.format;
   // A cancelled job is not a stage of its own (the stage shows what is there to review), but
   // the cancel promised it could be resumed: offer that until another job takes its place.
   const resumable =
-    idle && project.stage !== "needs_attention" && latestReviewJob(jobs.data)?.status === "cancelled";
+    idle && !importFailed && project.stage !== "needs_attention" && latestReviewJob(jobs.data)?.status === "cancelled";
   // set_up and translated already show the proofreading start (or the translation's).
-  const rerun = idle && project.stage !== "set_up" && project.stage !== "translated";
+  const rerun = idle && !importFailed && project.stage !== "importing" && project.stage !== "set_up" && project.stage !== "translated";
   const sourceId = book.data?.source_book_id;
   const counts = project.work === "translate" ? project.translation ?? {} : {};
   const flaggedCount = counts.flagged ?? 0;
@@ -119,7 +125,8 @@ export default function ProjectPage() {
 
         <TabsContent value="overview" className="space-y-8 pt-4">
           <section className="space-y-4">
-            <MainPanel project={project} format={format} />
+            <ImportPanel bookId={id} />
+            {!importFailed && <MainPanel project={project} format={format} />}
             {resumable && (
               <div className="border-t pt-4">
                 <AttentionPanel bookId={id} activeJobId={null} />

@@ -31,6 +31,7 @@ def test_key_lists():
     assert RUNTIME_KEYS == (
         "models.ai",
         "models.translate",
+        "models.ocr",
         "prices",
         "text_daily_cost_cap",
         "text_rpm",
@@ -430,3 +431,19 @@ def test_overlay_languagetool_premium():
     assert validate("languagetool_username", "  ") is None
     with pytest.raises(InvalidSetting):
         validate("languagetool_username", 5)
+
+
+def test_the_ocr_pass_follows_the_ai_pass_until_it_is_set():
+    from jerome.models import FakeProvider, Registry
+    from jerome.pdfimport.job import ocr_model
+
+    base = Settings(_env_file=None)
+    assert value_of(base, "models.ocr") == {}
+    rows = [row("models.ai", {"provider": "openai", "model": "gpt-5"})]
+    settings = overlay(base, rows, None).settings
+    providers = {"anthropic": FakeProvider([]), "openai": FakeProvider([])}
+    provider, cfg = ocr_model(Registry(settings, providers), local_only=False)
+    assert provider is providers["openai"] and cfg.model == "gpt-5"
+    rows.append(row("models.ocr", {"provider": "anthropic", "model": "claude-opus-5-5"}))
+    provider, cfg = ocr_model(Registry(overlay(base, rows, None).settings, providers), False)
+    assert provider is providers["anthropic"] and cfg.model == "claude-opus-5-5"

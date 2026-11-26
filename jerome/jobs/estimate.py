@@ -8,7 +8,7 @@ from typing import Literal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from jerome.core.books import block_texts, get_book, list_chapters
+from jerome.core.books import block_texts, ensure_imported, get_book, list_chapters
 from jerome.core.style_sheets import get_style_sheet
 from jerome.core.translation import (
     NO_TRANSLATION_MODEL,
@@ -129,6 +129,7 @@ def estimate_job(
 ) -> Estimate:
     ensure_not_source(session, book_id)
     book = get_book(session, book_id)
+    ensure_imported(book)
     chapter_chunks: dict[int, list[Chunk]] = {
         cid: attach_sources(
             session,

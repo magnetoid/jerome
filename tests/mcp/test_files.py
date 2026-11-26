@@ -361,3 +361,16 @@ def test_failed_review_import_leaves_the_upload_for_a_retry(
     assert [a.summary for a in actions(session)] == ["Imported a review copy"]
     left = {f.name for f in _transfer_files(test_settings)}
     assert str(up["upload_id"]) not in left and str(junk["upload_id"]) in left
+
+
+def test_mcp_refuses_pdf(client, mcp_auth, session):
+    up = _upload(client, mcp_auth, b"%PDF-1.4 x")
+    out = mcp_call(
+        client,
+        mcp_auth,
+        "import_book",
+        {"upload_id": up["upload_id"], "filename": "b.pdf", "variant": "en-US"},
+    )
+    assert "PDF import is not available through Janus yet" in tool_error(out)
+    assert "upload it on the New project page" in tool_error(out)
+    assert session.get(TransferLink, up["upload_id"]) is not None  # the upload is not spent

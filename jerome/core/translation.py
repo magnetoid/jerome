@@ -257,20 +257,51 @@ def import_for_translation(
         work="translate",
         source_book_id=source.id,
         translated_title=translated_title,
-        # Publication details carry over; the ISBNs never do: a translation is another book
-        authors=list(source.authors or []),
-        publisher=source.publisher,
-        rights=source.rights,
-        description=source.description,
-        year=source.year,
-        trim_size=source.trim_size,
     )
-    book.style_sheet = StyleSheetRow(
-        variant=target_variant,
-        quote_style=DEFAULT_QUOTES[target_variant],
-        house_spellings={},
-        ignore_words=[],
-    )
+    make_translation(session, storage, source=source, book=book, target_variant=target_variant)
+    return book
+
+
+def make_translation(
+    session: Session,
+    storage: Storage,
+    *,
+    source: Book,
+    book: Book,
+    target_variant: Variant,
+    keep_existing: bool = False,
+) -> None:
+    """Fill ``book`` (a translated book, new or already in the session) with the empty
+    chapters and pending blocks that mirror ``source``, and give it the target style sheet.
+
+    With ``keep_existing`` (a PDF import, whose book the owner could edit while it was
+    read), the book's publication details already set and its style sheet's quote style
+    stay; only empty details are taken from ``source``."""
+    book.source_book_id = source.id
+    book.work = "translate"
+    # Publication details carry over; the ISBNs never do: a translation is another book
+    carried = {
+        "authors": list(source.authors or []),
+        "publisher": source.publisher,
+        "rights": source.rights,
+        "description": source.description,
+        "year": source.year,
+        "trim_size": source.trim_size,
+    }
+    for name, value in carried.items():
+        if not (keep_existing and getattr(book, name)):
+            setattr(book, name, value)
+    if book.style_sheet is None:
+        book.style_sheet = StyleSheetRow(
+            variant=target_variant,
+            quote_style=DEFAULT_QUOTES[target_variant],
+            house_spellings={},
+            ignore_words=[],
+        )
+    else:
+        book.style_sheet.variant = target_variant
+        if not keep_existing:
+            book.style_sheet.quote_style = DEFAULT_QUOTES[target_variant]
     session.add(book)
     session.flush()
 
@@ -323,7 +354,6 @@ def import_for_translation(
                 ],
             )
     session.expire(book)
-    return book
 
 
 def marks_from_json(raw: list[Any]) -> list[Mark]:

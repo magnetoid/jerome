@@ -15,6 +15,7 @@ import { relativeTime, variantLabel } from "@/lib/format";
 function nextStep(p: Project): { label: string; to: string } {
   const base = `/projects/${p.id}`;
   switch (p.stage) {
+    case "importing": return { label: "View progress", to: base };
     case "set_up":
       return { label: p.work === "translate" ? "Start translation" : "Start proofreading", to: base };
     case "translating": return { label: "View progress", to: base };
