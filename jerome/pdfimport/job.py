@@ -209,10 +209,9 @@ def _seen_blank(pdf: bytes, page: int) -> PageKind:
     shapes (outlines) is a scan to read. A page that cannot be rendered is left to the
     page task, which reports it."""
     try:
-        png = render_page(pdf, page)
-    except PageReadError:
+        return "blank" if is_blank(render_page(pdf, page)) else "scan"
+    except Exception:  # noqa: BLE001 - not rendered or not opened: the page task reports it
         return "scan"
-    return "blank" if is_blank(png) else "scan"
 
 
 # --- pages ----------------------------------------------------------------------------
@@ -441,10 +440,12 @@ def _render(pdf: bytes, page: int, *, scan: bool = True) -> tuple[bytes | None, 
     and a pale one must not be lost."""
     try:
         png = render_page(pdf, page)
+        if scan and is_blank(png):
+            return None, PageResult(page, "blank", [])
     except PageReadError as exc:
         return None, _failed(page, str(exc))
-    if scan and is_blank(png):
-        return None, PageResult(page, "blank", [])
+    except Exception as exc:  # noqa: BLE001 - an image Pillow cannot open fails its page alone
+        return None, _failed(page, f"{type(exc).__name__}: {exc}")
     return png, None
 
 

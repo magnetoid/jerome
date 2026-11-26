@@ -146,3 +146,16 @@ def _tsv(*words: tuple[str, float]) -> str:
 )
 def test_a_page_is_text_only_when_tesseract_is_confident(words, text):
     assert ocr_tesseract._confident(ocr_tesseract._words(_tsv(*words))) is text
+
+
+def test_a_huge_page_is_rendered_at_a_lower_resolution():
+    import pypdfium2 as pdfium
+
+    doc = pdfium.PdfDocument.new()
+    doc.new_page(14400, 14400)  # 200 x 200 inches, the largest page a PDF may have
+    out = io.BytesIO()
+    doc.save(out)
+    png = render_page(out.getvalue(), 0)
+    with Image.open(io.BytesIO(png)) as image:
+        assert image.width * image.height <= 60_000_000
+        assert image.width > 7000  # as large as the cap allows

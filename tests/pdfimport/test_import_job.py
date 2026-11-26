@@ -877,3 +877,23 @@ def test_a_reply_that_breaks_the_parser_is_still_on_the_books(
     assert len(provider.calls) == 1 and tesseract == [0]
     assert usage_passes(session_factory) == ["ocr"]
     assert book_of(session_factory, book_id).import_report["ai_fallbacks"] == {"billed_error": 1}
+
+
+def test_a_page_image_that_cannot_be_opened_fails_that_page_only(
+    session_factory, tmp_storage, test_settings, tesseract, monkeypatch
+):
+    from PIL import Image
+
+    def bomb(png: bytes) -> bool:
+        raise Image.DecompressionBombError("too many pixels")
+
+    monkeypatch.setattr(import_job, "is_blank", bomb)
+    pdf = joined(text_pdf(ONE), _inked_pdf(), text_pdf(THREE))
+    book_id = start(session_factory, tmp_storage, pdf, engine="tesseract")
+    drain(session_factory, deps_for(test_settings, tmp_storage))
+    assert job_of(session_factory, book_id).status == "completed"
+    book = book_of(session_factory, book_id)
+    assert book.import_status is None and book.import_report["failed_pages"] == [2]
+    saved = tmp_storage.read_page(book_id, 1)
+    assert saved["source"] == "failed" and "too many pixels" in saved["error"]
+    assert any("harbour was quiet" in t for t in texts(session_factory, book_id))
