@@ -246,17 +246,30 @@ def _block(group: list[_Line], body: float, page_width: float, page_height: floa
 
 def _runs(group: list[_Line]) -> list[Run]:
     """Runs of one style each. A space between two styles goes to the plainer side, as it
-    does in the source (``The <em>ship</em> came``), though the PDF styles it as it likes."""
+    does in the source (``The <em>ship</em> came``), though the PDF styles it as it likes.
+    Spaces pdfminer infers between words placed apart (LTAnno, where the PDF has no space
+    glyph) count as spaces; a run of spaces is one."""
+    from pdfminer.layout import LTChar
+
     chars: list[list] = []  # [text, italic, bold, is_space]
+
+    def space() -> None:
+        if chars and not chars[-1][3]:
+            chars.append([" ", None, None, True])
+
     for i, line in enumerate(group):
         if i:
-            chars.append([" ", None, None, True])
-        for char in line.chars:
-            name = char.fontname or ""
-            text = char.get_text()
+            space()
+        for item in line.item:
+            text = item.get_text()
+            if not isinstance(item, LTChar) or text.isspace():
+                if text:  # an inferred space or line end (LTAnno), or a space glyph
+                    space()
+                continue
+            name = item.fontname or ""
             italic = "Italic" in name or "Oblique" in name
             bold = "Bold" in name
-            chars.append([" " if text.isspace() else text, italic, bold, text.isspace()])
+            chars.append([text, italic, bold, False])
     for i, entry in enumerate(chars):
         if not entry[3]:
             continue

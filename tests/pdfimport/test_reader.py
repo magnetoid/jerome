@@ -107,3 +107,18 @@ def test_a_text_layer_that_does_not_decode_is_a_scan(monkeypatch, layer):
 
 def test_a_text_layer_that_decodes_stays_text_and_a_lone_number_is_not_judged():
     assert classify_pages(text_pdf(_PAGE + _BREAK + "<p>12</p>")) == ["text", "text"]
+
+
+def test_words_placed_without_space_glyphs_keep_their_spaces():
+    from tests.fixtures.pdf_builders import words_pdf
+
+    pdf = words_pdf(["The", "ship", "came", "in."])
+    assert count_pages(pdf) == 1 and classify_pages(pdf) == ["text"]
+    (block,) = read_text_page(pdf, 0).blocks
+    assert "".join(r.text for r in block.runs) == "The ship came in."
+
+
+def test_text_with_space_glyphs_has_no_double_spaces():
+    pdf = text_pdf("<p>The <em>ship</em> came in, and   then it rained.</p>")
+    (block,) = read_text_page(pdf, 0).blocks
+    assert "".join(r.text for r in block.runs) == "The ship came in, and then it rained."
