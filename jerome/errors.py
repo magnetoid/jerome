@@ -28,3 +28,7 @@ class UnknownModelPrice(JeromeError):
 
 class UnsupportedLanguagePair(JeromeError):
     """Source and target of a translation must differ in language."""
+
+
+class InvalidFeedback(JeromeError):
+    """Feedback sent from the web app that cannot be kept as it is."""

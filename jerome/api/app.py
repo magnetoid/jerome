@@ -13,6 +13,7 @@ from jerome.api import (
     routes_auth,
     routes_books,
     routes_exports,
+    routes_feedback,
     routes_jobs,
     routes_projects,
     routes_publication,
@@ -36,6 +37,7 @@ from jerome.errors import (
     AiCheckError,
     Conflict,
     InvalidChangeError,
+    InvalidFeedback,
     NotFound,
     UnknownModelPrice,
     UnsupportedDocumentError,
@@ -56,6 +58,7 @@ _ERROR_STATUS: dict[type[Exception], int] = {
     InvalidSetting: 400,
     UnsupportedLanguagePair: 400,
     InvalidPublication: 422,
+    InvalidFeedback: 422,
     AiCheckError: 502,
     ProviderListError: 502,
 }
@@ -117,6 +120,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(routes_projects.router, prefix="/v1", dependencies=auth)
     app.include_router(routes_agent_actions.router, prefix="/v1", dependencies=auth)
     app.include_router(routes_activity.router, prefix="/v1", dependencies=auth)
+    app.include_router(routes_feedback.router, prefix="/v1", dependencies=auth)
     mount_mcp(app)  # /mcp, outside /v1, with its own Bearer-only auth
     # The catch-all web app goes last, so it never shadows an API route.
     if settings.web_dir is not None:
