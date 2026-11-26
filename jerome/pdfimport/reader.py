@@ -110,6 +110,12 @@ def classify_pages(pdf: bytes) -> list[PageKind]:
     return [_classify(layout) for layout in extract_pages(io.BytesIO(pdf))]
 
 
+def classify_page(pdf: bytes, page: int) -> PageKind:
+    """What one page (0-based) is, as classify_pages says. Runs in the caller's process;
+    call it through ``run_isolated``."""
+    return _classify(_layout(pdf, page))
+
+
 def _classify(layout) -> PageKind:
     from pdfminer.layout import LTImage, LTTextLine
 

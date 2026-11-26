@@ -535,19 +535,40 @@ def _classify_fails(pdf: bytes) -> list:
     raise ValueError("pdfminer cannot parse this PDF")
 
 
-@pytest.mark.parametrize("classify", [_classify_all_but_last, _classify_fails])
+def _classify_page_1_fails(pdf: bytes, page: int):
+    """classify_page, except that page 1 (the second) cannot be sorted."""
+    from jerome.pdfimport.reader import classify_page
+
+    if page == 1:
+        raise ValueError("pdfminer cannot parse this page")
+    return classify_page(pdf, page)
+
+
 def test_pages_the_sorting_missed_are_read_as_scans(
-    session_factory, tmp_storage, test_settings, tesseract, monkeypatch, classify
+    session_factory, tmp_storage, test_settings, tesseract, monkeypatch
 ):
-    monkeypatch.setattr(import_job, "classify_pages", classify)
+    monkeypatch.setattr(import_job, "classify_pages", _classify_all_but_last)
     pdf = text_pdf(ONE + BREAK + TWO + BREAK + THREE)
     book_id = start(session_factory, tmp_storage, pdf, engine="tesseract")
     drain(session_factory, deps_for(test_settings, tmp_storage))
     job = job_of(session_factory, book_id)
     assert job.status == "completed" and len(job.stats["kinds"]) == 3
-    assert tesseract == ([2] if classify is _classify_all_but_last else [0, 1, 2])
+    assert tesseract == [2]
     report = book_of(session_factory, book_id).import_report
     assert report["pages"] == 3 and report["failed_pages"] == []
+
+
+def test_when_the_sorting_fails_each_page_is_sorted_alone(
+    session_factory, tmp_storage, test_settings, tesseract, monkeypatch
+):
+    monkeypatch.setattr(import_job, "classify_pages", _classify_fails)
+    monkeypatch.setattr(import_job, "classify_page", _classify_page_1_fails)
+    pdf = text_pdf(ONE + BREAK + TWO + BREAK + THREE)
+    book_id = start(session_factory, tmp_storage, pdf, engine="tesseract")
+    drain(session_factory, deps_for(test_settings, tmp_storage))
+    job = job_of(session_factory, book_id)
+    assert job.status == "completed" and job.stats["kinds"] == ["text", "scan", "text"]
+    assert tesseract == [1]  # only the page that could not be sorted is OCR'd
 
 
 def _fail_the_import(sf, storage, deps) -> int:

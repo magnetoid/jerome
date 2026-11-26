@@ -47,7 +47,13 @@ from jerome.pdfimport.docx_build import build_docx
 from jerome.pdfimport.model import PageBlock, PageKind, PageResult, from_json, to_json
 from jerome.pdfimport.ocr_ai import ai_page, estimate_ocr
 from jerome.pdfimport.ocr_tesseract import TesseractMissing, tesseract_page
-from jerome.pdfimport.reader import PageReadError, classify_pages, read_text_page, run_isolated
+from jerome.pdfimport.reader import (
+    PageReadError,
+    classify_page,
+    classify_pages,
+    read_text_page,
+    run_isolated,
+)
 from jerome.pdfimport.render import render_page
 from jerome.storage import Storage
 
@@ -135,9 +141,9 @@ def _scan(
         pages = int(s.get(Job, plan.job_id).stats.get("pages") or 0)
     try:
         kinds: list[PageKind] = run_isolated(classify_pages, pdf, timeout=120 + pages)
-    except PageReadError as exc:  # each page is still rendered and read on its own
+    except PageReadError as exc:  # sorted again a few pages at a time, then page by page
         log.warning("the pages of book %s could not be sorted (%s)", plan.book_id, exc)
-        kinds = []
+        kinds = _classify_alone(pdf, pages)
     if len(kinds) != pages:  # pdfminer and pdfium disagree: every page pdfium counts is read
         log.warning("book %s: %s pages sorted of %s", plan.book_id, len(kinds), pages)
         kinds = (kinds + ["scan"] * pages)[:pages]
@@ -167,6 +173,35 @@ def _scan(
         note = w._complete_task(s, job, task, deps)
         s.commit()
     w._send(note, deps)
+
+
+SORT_BATCH = 25  # pages sorted in one child when the whole PDF could not be
+
+
+def _classify_some(classify, pdf: bytes, pages: list[int]) -> list[PageKind]:
+    return [classify(pdf, page) for page in pages]
+
+
+def _classify_alone(pdf: bytes, pages: int) -> list[PageKind]:
+    """Each page's kind when sorting the whole PDF failed: SORT_BATCH pages per child, and a
+    batch that fails page by page; a page that still cannot be sorted is a scan, so it is
+    read (and reported if that fails too)."""
+    kinds: list[PageKind] = []
+    for first in range(0, pages, SORT_BATCH):
+        batch = list(range(first, min(first + SORT_BATCH, pages)))
+        try:
+            timeout = 60 + 5 * len(batch)
+            kinds += run_isolated(_classify_some, classify_page, pdf, batch, timeout=timeout)
+            continue
+        except PageReadError:
+            pass
+        for page in batch:
+            try:
+                kinds.append(run_isolated(classify_page, pdf, page, timeout=60))
+            except PageReadError as exc:
+                log.warning("page %s could not be sorted (%s); it is read as a scan", page, exc)
+                kinds.append("scan")
+    return kinds
 
 
 def _seen_blank(pdf: bytes, page: int) -> PageKind:
