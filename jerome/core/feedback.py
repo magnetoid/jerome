@@ -1,4 +1,4 @@
-"""Feedback from the people using Jerome: bug reports, feature requests and ideas.
+"""Feedback from the people using Jerome: bug reports, feature requests and recommendations.
 
 Anyone signed in sends it from the web app, with a screenshot of the page they were on; the
 super admin reads it on the Feedback page, marks it done and deletes it.

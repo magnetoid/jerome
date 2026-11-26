@@ -355,7 +355,7 @@ class FeedbackOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    kind: str  # bug, feature or idea
+    kind: str  # bug, feature or recommendation
     message: str
     page: str | None
     viewport: str | None

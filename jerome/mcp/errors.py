@@ -18,6 +18,7 @@ from jerome.errors import (
     AiCheckError,
     Conflict,
     InvalidChangeError,
+    InvalidFeedback,
     NotFound,
     UnknownModelPrice,
     UnsupportedDocumentError,
@@ -37,6 +38,7 @@ _CODES: dict[type[Exception], str] = {
     InvalidSetting: "invalid",
     UnsupportedLanguagePair: "invalid",
     InvalidPublication: "invalid",
+    InvalidFeedback: "invalid",
     AiCheckError: "unavailable",  # 502: no usable verdict from the AI
     ProviderListError: "unavailable",  # 502: the provider failed
 }

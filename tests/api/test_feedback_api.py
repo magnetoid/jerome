@@ -57,7 +57,7 @@ def test_a_member_sends_feedback_with_a_screenshot(web_client, session):
 
 def test_feedback_without_a_screenshot(web_client, session):
     login(web_client, session)
-    r = _send(web_client, kind="idea", message="  Show word counts per chapter.  ")
+    r = _send(web_client, kind="recommendation", message="  Show word counts per chapter.  ")
     assert r.status_code == 201, r.text
     assert r.json()["message"] == "Show word counts per chapter."
     assert r.json()["has_screenshot"] is False
@@ -76,9 +76,9 @@ def test_feedback_is_checked(web_client, session):
 
 def test_feedback_kinds(web_client, session):
     login(web_client, session)
-    for kind in ("bug", "feature", "idea"):
+    for kind in ("bug", "feature", "recommendation"):
         assert _send(web_client, kind=kind).status_code == 201
-    assert [f["kind"] for f in web_client.get("/v1/feedback").json()] == ["idea", "feature", "bug"]
+    assert [f["kind"] for f in web_client.get("/v1/feedback").json()] == ["recommendation", "feature", "bug"]
 
 
 def test_the_super_admin_marks_done_and_deletes(web_client, session):

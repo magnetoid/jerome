@@ -1,4 +1,4 @@
-"""feedback: bug reports, feature requests and ideas sent from the web app
+"""feedback: bug reports, feature requests and recommendations sent from the web app
 
 Revision ID: 0014
 Revises: 0013
@@ -29,7 +29,7 @@ def upgrade() -> None:
         sa.Column(
             "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
         ),
-        sa.CheckConstraint("kind IN ('bug', 'feature', 'idea')", name="ck_feedback_kind"),
+        sa.CheckConstraint("kind IN ('bug', 'feature', 'recommendation')", name="ck_feedback_kind"),
         sa.CheckConstraint("status IN ('new', 'done')", name="ck_feedback_status"),
     )
 

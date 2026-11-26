@@ -476,12 +476,12 @@ class LearnedWord(Base):
     created_at: Mapped[datetime] = _ts()
 
 
-FEEDBACK_KINDS = ("bug", "feature", "idea")
+FEEDBACK_KINDS = ("bug", "feature", "recommendation")
 FEEDBACK_STATUSES = ("new", "done")
 
 
 class Feedback(Base):
-    """A bug report, feature request or idea sent from the web app, with an optional
+    """A bug report, feature request or recommendation sent from the web app, with an optional
     screenshot of the page it was sent from. Read by the super admin."""
 
     __tablename__ = "feedback"
