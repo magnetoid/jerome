@@ -87,6 +87,16 @@ words are listed under **Learned words** on the Settings page, where the super a
 delete one; its rejected marks stay rejected. The API is `POST
 /v1/suggestions/{id}/remember`, `GET /v1/learned-words` and `DELETE /v1/learned-words/{id}`.
 
+**Send feedback.** At the bottom of the sidebar, **Send feedback** takes a picture of the
+page as it is on screen, then opens a short form: a bug, a feature or a recommendation, and a
+message. The screenshot is attached unless the sender unticks it; the page address, window
+size and browser go with it. The super admin reads everything sent on the **Feedback** page,
+marks each one done and deletes it. The API is `POST /v1/feedback` (multipart: `kind`,
+`message`, optional `page`, `viewport`, `user_agent` and a PNG or JPEG `screenshot` of at
+most 10 MB), and, for the super admin, `GET /v1/feedback`, `GET
+/v1/feedback/{id}/screenshot`, `PATCH /v1/feedback/{id}` with `{"status": "new" | "done"}`
+and `DELETE /v1/feedback/{id}`.
+
 **First login.** There is no sign-up. Create each member once, inside the API container:
 
 ```bash

@@ -476,6 +476,37 @@ class LearnedWord(Base):
     created_at: Mapped[datetime] = _ts()
 
 
+FEEDBACK_KINDS = ("bug", "feature", "recommendation")
+FEEDBACK_STATUSES = ("new", "done")
+
+
+class Feedback(Base):
+    """A bug report, feature request or recommendation sent from the web app, with an optional
+    screenshot of the page it was sent from. Read by the super admin."""
+
+    __tablename__ = "feedback"
+    __table_args__ = (
+        CheckConstraint(_in("kind", FEEDBACK_KINDS), name="ck_feedback_kind"),
+        CheckConstraint(_in("status", FEEDBACK_STATUSES), name="ck_feedback_status"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    kind: Mapped[str] = mapped_column(String)
+    message: Mapped[str] = mapped_column(Text)
+    page: Mapped[str | None] = mapped_column(String)
+    viewport: Mapped[str | None] = mapped_column(String)
+    user_agent: Mapped[str | None] = mapped_column(String)
+    screenshot: Mapped[bytes | None] = mapped_column(LargeBinary, deferred=True)
+    screenshot_type: Mapped[str | None] = mapped_column(String)
+    status: Mapped[str] = mapped_column(String, server_default="new")
+    created_by: Mapped[str] = mapped_column(String)
+    created_at: Mapped[datetime] = _ts()
+
+    @property
+    def has_screenshot(self) -> bool:
+        return self.screenshot_type is not None
+
+
 SETTINGS_AUDIT_ACTIONS = ("set", "replaced", "cleared", "reset", "key_created", "key_revoked")
 
 

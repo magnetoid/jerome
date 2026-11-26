@@ -349,3 +349,22 @@ class ApiKeyCreateIn(BaseModel):
 class ApiKeyCreatedOut(BaseModel):
     key: ApiKeyOut
     token: str
+
+
+class FeedbackOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    kind: str  # bug, feature or recommendation
+    message: str
+    page: str | None
+    viewport: str | None
+    user_agent: str | None
+    has_screenshot: bool
+    status: str  # new or done
+    created_by: str
+    created_at: datetime
+
+
+class FeedbackStatusIn(BaseModel):
+    status: Literal["new", "done"]

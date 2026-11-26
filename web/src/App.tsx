@@ -10,6 +10,7 @@ import NewProjectPage from "@/pages/NewProjectPage";
 import ProjectPage from "@/pages/ProjectPage";
 import ActivityPage from "@/pages/ActivityPage";
 import ReviewPage from "@/pages/ReviewPage";
+import FeedbackPage from "@/pages/FeedbackPage";
 import ThemeProvider from "@/components/ThemeProvider";
 import { Toaster } from "@/components/ui/sonner";
 
@@ -41,6 +42,7 @@ export default function App() {
             <Route path="/activity" element={<ActivityPage />} />
             <Route path="/team" element={<TeamPage />} />
             <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/feedback" element={<FeedbackPage />} />
             <Route path="*" element={<Placeholder title="Page not found" />} />
           </Route>
         </Routes>

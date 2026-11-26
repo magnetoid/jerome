@@ -1,14 +1,18 @@
-import { Link, Navigate, NavLink, Outlet } from "react-router-dom";
+import { useState } from "react";
+import { Link, Navigate, NavLink, Outlet, useLocation } from "react-router-dom";
 import {
   ActivityIcon,
   ChevronsUpDownIcon,
   FolderIcon,
+  InboxIcon,
+  MessageSquareIcon,
   PlusIcon,
   SettingsIcon,
   UsersIcon,
   type LucideIcon,
 } from "lucide-react";
 import { useTheme } from "next-themes";
+import { toast } from "sonner";
 import { useLogout, useMe } from "@/hooks/useMe";
 import { Button } from "@/components/ui/button";
 import {
@@ -22,6 +26,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
+import { captureScreen } from "@/lib/screenshot";
+import FeedbackDialog from "@/components/FeedbackDialog";
 
 // Below lg the sidebar shows icons only; the label stays readable to screen readers.
 const LABEL = "sr-only lg:not-sr-only";
@@ -57,6 +63,20 @@ export default function AppShell() {
   const me = useMe();
   const logout = useLogout();
   const { theme, setTheme } = useTheme();
+  const location = useLocation();
+  const [feedback, setFeedback] = useState<{ open: boolean; shot: Blob | null; page: string }>({
+    open: false,
+    shot: null,
+    page: "",
+  });
+
+  async function openFeedback() {
+    const page = location.pathname + location.search;
+    const busy = toast.loading("Taking a screenshot…");
+    const shot = await captureScreen();
+    toast.dismiss(busy);
+    setFeedback({ open: true, shot, page });
+  }
 
   if (me.isError) {
     // A 401 is already redirecting to /login; anything else needs to be visible.
@@ -88,8 +108,19 @@ export default function AppShell() {
           <NavItem to="/activity" icon={ActivityIcon}>Activity</NavItem>
           {admin && <NavItem to="/team" icon={UsersIcon}>Team</NavItem>}
           {admin && <NavItem to="/settings" icon={SettingsIcon}>Settings</NavItem>}
+          {admin && <NavItem to="/feedback" icon={InboxIcon}>Feedback</NavItem>}
         </nav>
-        <div className="mt-auto">
+        <div className="mt-auto flex flex-col gap-1">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="w-full justify-center text-muted-foreground lg:justify-start"
+            title="Send feedback"
+            onClick={() => void openFeedback()}
+          >
+            <MessageSquareIcon aria-hidden />
+            <span className={LABEL}>Send feedback</span>
+          </Button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="sm" className="w-full justify-center lg:justify-between" title={me.data.name}>
@@ -122,6 +153,12 @@ export default function AppShell() {
       <div className="min-w-0 flex-1">
         <Outlet />
       </div>
+      <FeedbackDialog
+        open={feedback.open}
+        onOpenChange={(open) => setFeedback((f) => ({ ...f, open }))}
+        screenshot={feedback.shot}
+        page={feedback.page}
+      />
     </div>
   );
 }
