@@ -10,9 +10,12 @@ h1 { font-size: 24pt; }
 """
 
 
-def text_pdf(html_body: str, *, header: str | None = None, page_numbers: bool = False) -> bytes:
+def text_pdf(
+    html_body: str, *, header: str | None = None, page_numbers: bool = False, css: str = ""
+) -> bytes:
     """A text PDF made with WeasyPrint. ``<div style="page-break-after: always">`` splits
-    pages; ``header`` repeats at the top of each page, ``page_numbers`` at the bottom."""
+    pages; ``header`` repeats at the top of each page, ``page_numbers`` at the bottom;
+    ``css`` is added after the default style (e.g. ``@page :left`` headers)."""
     import weasyprint
 
     margin_boxes = ""
@@ -20,7 +23,8 @@ def text_pdf(html_body: str, *, header: str | None = None, page_numbers: bool = 
         margin_boxes += f'@top-center {{ content: "{header}"; font-size: 9pt; }}'
     if page_numbers:
         margin_boxes += "@bottom-center { content: counter(page); font-size: 9pt; }"
-    html = f"<html><head><style>{_CSS % margin_boxes}</style></head><body>{html_body}</body></html>"
+    style = _CSS % margin_boxes + css
+    html = f"<html><head><style>{style}</style></head><body>{html_body}</body></html>"
     return weasyprint.HTML(string=html).write_pdf()
 
 

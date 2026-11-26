@@ -18,7 +18,7 @@ from jerome.pdfimport.model import PageBlock, PageKind, PageResult, Run
 
 MAX_PAGES = 2000
 _WIDE = 0.9  # an image covering this much of the page is a scan
-_HEADING_RATIO = 1.2
+_HEADING_RATIO = 1.15  # as assemble.LARGER: clearly larger than the body text
 _CENTER_TOLERANCE = 0.06  # of the page width
 _SHORT_LINE = 80
 

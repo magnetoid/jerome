@@ -158,3 +158,51 @@ def test_report_counts_and_lists_failed_pages():
         "blank_pages": 1,
         "failed_pages": [6, 7],  # 1-based, as a reader counts pages
     }
+
+
+def test_a_larger_chapter_number_or_heading_in_the_band_stays():
+    pages = [
+        page(
+            n,
+            PageBlock("heading", [Run(num)], top=0.04, bottom=0.07, size=20),
+            PageBlock("heading", [Run(f"Chapter {n}")], top=0.06, bottom=0.075, size=20),
+            para(f"Body {n}.", size=12),
+            para("12", top=0.95, bottom=0.97, size=9),
+        )
+        for n, num in ((1, "I"), (5, "II"), (9, "III"), (13, "IV"))
+    ]
+    out = texts(assemble(pages))
+    assert out == [
+        x
+        for n, num in ((1, "I"), (5, "II"), (9, "III"), (13, "IV"))
+        for x in (num, f"Chapter {n}", f"Body {n}.")
+    ]
+
+
+def test_a_header_on_every_other_page_is_dropped():
+    pages = []
+    for n in range(11):
+        header = "Jane Author" if n % 2 else "The Long Voyage"
+        pages.append(page(n, para(header, top=0.03, bottom=0.05, size=9), para(f"Body {n}.")))
+    assert texts(assemble(pages)) == [f"Body {n}." for n in range(11)]
+
+
+def test_a_drop_cap_joins_its_paragraph():
+    p = page(
+        1,
+        PageBlock("heading", [Run("T")], top=0.2, bottom=0.25, size=36),
+        para("he ship came in.", top=0.2, bottom=0.4, size=12),
+    )
+    out = assemble([p])
+    assert texts(out) == ["The ship came in."] and out[0].kind == "paragraph"
+
+
+def test_small_notes_at_the_foot_of_a_text_page_do_not_stop_the_join():
+    p1 = page(
+        1,
+        para("The cat sat on the", top=0.2, bottom=0.85, size=12),
+        para("1 A note set small at the foot.", top=0.88, bottom=0.9, size=9),
+    )
+    p2 = page(2, para("mat and slept.", top=0.1, bottom=0.2, size=12))
+    out = texts(assemble([p1, p2]))
+    assert out == ["The cat sat on the mat and slept.", "1 A note set small at the foot."]
