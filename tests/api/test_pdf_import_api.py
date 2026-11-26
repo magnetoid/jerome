@@ -109,3 +109,65 @@ def test_estimate_routes_errors(client, auth, awaiting):
     assert client.post("/v1/books/99999/import/use-tesseract", headers=auth).status_code == 404
     bad = client.post(f"/v1/books/{book_id}/import/confirm", headers=auth, json={"max_cost": "0"})
     assert bad.status_code == 422
+
+
+MIB = 1024 * 1024
+
+
+@pytest.fixture
+def pdf_limits(test_settings):
+    test_settings.max_upload_mb = 0
+    test_settings.max_pdf_upload_mb = 2
+
+
+def padded_pdf(size: int) -> bytes:
+    return blank_pdf() + b"\n%" + b"x" * size
+
+
+def multipart(filename: str, content: bytes) -> tuple[bytes, dict]:
+    head = (
+        b'--b\r\nContent-Disposition: form-data; name="variant"\r\n\r\nen-US\r\n'
+        b'--b\r\nContent-Disposition: form-data; name="ocr_engine"\r\n\r\ntesseract\r\n'
+        b'--b\r\nContent-Disposition: form-data; name="file"; filename="'
+        + filename.encode()
+        + b'"\r\nContent-Type: application/octet-stream\r\n\r\n'
+    )
+    return head + content + b"\r\n--b--\r\n", {"content-type": "multipart/form-data; boundary=b"}
+
+
+def post_raw(client, auth, filename, content, *, chunked):
+    body, headers = multipart(filename, content)
+    headers = {**auth, **headers}
+    if chunked:
+        parts = (body[i : i + 256 * 1024] for i in range(0, len(body), 256 * 1024))
+        return client.post("/v1/books", content=parts, headers=headers)
+    return client.post("/v1/books", content=body, headers=headers)
+
+
+@pytest.mark.parametrize("chunked", [False, True])
+def test_middleware_lets_a_big_pdf_through(client, auth, pdf_limits, chunked):
+    r = post_raw(client, auth, "big.pdf", padded_pdf(int(1.5 * MIB)), chunked=chunked)
+    assert r.status_code != 413, r.text  # 201, or 422 if the padding is refused: not the limit
+
+
+@pytest.mark.parametrize("chunked", [False, True])
+def test_middleware_refuses_a_pdf_over_the_pdf_limit(client, auth, pdf_limits, chunked):
+    r = post_raw(client, auth, "big.pdf", padded_pdf(int(3.5 * MIB)), chunked=chunked)
+    assert r.status_code == 413
+
+
+@pytest.mark.parametrize("chunked", [False, True])
+def test_a_docx_claiming_a_pdf_name_inside_is_still_limited(client, auth, pdf_limits, chunked):
+    content = b'filename="x.pdf"' + b"x" * int(1.5 * MIB)
+    assert post_raw(client, auth, "m.docx", content, chunked=chunked).status_code == 413
+
+
+def test_a_pdf_without_an_extension_starts_an_import(client, auth, session):
+    r = client.post(
+        "/v1/books",
+        headers=auth,
+        files={"file": ("book", blank_pdf())},
+        data={"variant": "en-US", "ocr_engine": "tesseract"},
+    )
+    assert r.status_code == 201, r.text
+    assert r.json()["import_status"] == "importing"

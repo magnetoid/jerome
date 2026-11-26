@@ -242,3 +242,19 @@ def test_cli_imports_a_pdf(cli_runner, cli_env, session_factory):
         assert book.import_status == "importing"
         assert (job.type, job.passes) == ("import", ["tesseract"])
     assert lines[1] == f"importing in the background (job {job.id})"
+
+
+def test_cli_imports_a_pdf_without_an_extension(cli_runner, cli_env, session_factory):
+    import io
+
+    import pypdfium2 as pdfium
+
+    doc = pdfium.PdfDocument.new()
+    doc.new_page(200, 200)
+    buf = io.BytesIO()
+    doc.save(buf)
+    path = cli_env / "book"
+    path.write_bytes(buf.getvalue())
+    out = cli_runner.invoke(app, ["import", str(path), "--variant", "en-US", "--ocr", "tesseract"])
+    assert out.exit_code == 0, out.output
+    assert "importing in the background" in out.stdout

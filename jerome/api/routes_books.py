@@ -100,7 +100,7 @@ def import_upload(
     )
 
 
-def _start_pdf(session, storage, registry, actor, *, auto_apply, **fields) -> Book:
+def _start_pdf(session, storage, actor, *, auto_apply, **fields) -> Book:
     if fields["work"] == "translate" and fields["target_variant"] is None:
         raise RequestValidationError(
             [
@@ -131,8 +131,9 @@ def default_ocr_engine(registry: Registry, local_only: bool) -> OcrEngine:
     return "tesseract"
 
 
-def _is_pdf(filename: str | None) -> bool:
-    return (filename or "").lower().endswith(".pdf")
+def is_pdf(filename: str | None, head: bytes) -> bool:
+    """A PDF is recognised by its ``.pdf`` name or by its ``%PDF-`` magic."""
+    return (filename or "").lower().endswith(".pdf") or head.startswith(b"%PDF-")
 
 
 @router.post("/books", status_code=201, response_model=BookOut)
@@ -153,7 +154,9 @@ def upload_book(
     ocr_engine: Annotated[OcrEngine | None, Form()] = None,
     reocr: Annotated[bool, Form()] = True,
 ):
-    if _is_pdf(file.filename):
+    head = file.file.read(5)
+    file.file.seek(0)
+    if is_pdf(file.filename, head):
         if ocr_engine == "ai" and local_only:
             raise HTTPException(
                 status_code=422, detail="a local-only book cannot be read with the AI engine"
@@ -162,7 +165,6 @@ def upload_book(
         return _start_pdf(
             session,
             storage,
-            registry,
             actor,
             filename=file.filename or "upload.pdf",
             data=data,

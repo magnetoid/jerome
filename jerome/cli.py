@@ -208,7 +208,11 @@ def import_cmd(
         raise typer.Exit(2)
 
     settings = get_settings()
-    if path.suffix.lower() == ".pdf":
+    from jerome.api.routes_books import is_pdf
+
+    with path.open("rb") as f:
+        head = f.read(5)
+    if is_pdf(path.name, head):
         _import_pdf(path, variant, local_only, ocr, settings)
         return
     engine = make_engine(settings.database_url)
