@@ -203,9 +203,9 @@ def start_pdf_import(
                 f"cannot translate {variant} to {target_variant}: "
                 "source and target must be different languages"
             )
-    from jerome.pdfimport.reader import count_pages  # pypdfium2 loads only when it is needed
+    from jerome.pdfimport.reader import count_pages_isolated  # loaded only when needed
 
-    pages = count_pages(data)  # UnsupportedDocumentError: encrypted, damaged, too long
+    pages = count_pages_isolated(data)  # UnsupportedDocumentError: unreadable, too long
     stem = Path(filename).stem
     shown = variant if work != "translate" or target_variant is None else target_variant
     book = Book(

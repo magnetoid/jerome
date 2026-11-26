@@ -136,3 +136,32 @@ def test_projects_list_shows_the_import_stage(session, tmp_storage):
     session.flush()
     (p,) = [p for p in list_projects(session) if p["id"] == book.id]
     assert p["stage"] == "needs_attention"
+
+
+def _kills_the_counter(pdf: bytes):
+    import os
+
+    os._exit(1)
+
+
+def _never_counts(pdf: bytes):
+    import time
+
+    time.sleep(30)
+
+
+def test_the_page_count_runs_in_its_own_process(session, tmp_storage, monkeypatch):
+    from jerome.pdfimport import reader
+
+    monkeypatch.setattr(reader, "_count_or_refusal", _kills_the_counter)
+    with pytest.raises(UnsupportedDocumentError, match="cannot be read"):
+        start(session, tmp_storage)
+    monkeypatch.setattr(reader, "_count_or_refusal", _never_counts)
+    monkeypatch.setattr(reader, "COUNT_TIMEOUT", 1)
+    with pytest.raises(UnsupportedDocumentError, match="cannot be read"):
+        start(session, tmp_storage)
+
+
+def test_a_pdf_over_the_page_limit_says_so(session, tmp_storage):
+    with pytest.raises(UnsupportedDocumentError, match="2001 pages; the limit is 2000"):
+        start(session, tmp_storage, data=make_pdf(2001))

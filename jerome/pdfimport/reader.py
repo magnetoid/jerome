@@ -50,6 +50,32 @@ def count_pages(pdf: bytes) -> int:
     return count
 
 
+COUNT_TIMEOUT = 60  # seconds the page count of an upload may take
+
+
+def _count_or_refusal(pdf: bytes) -> tuple[int | None, str | None]:
+    """count_pages, with its refusal as a message instead of an exception."""
+    try:
+        return count_pages(pdf), None
+    except UnsupportedDocumentError as exc:
+        return None, str(exc)
+
+
+def count_pages_isolated(pdf: bytes) -> int:
+    """count_pages in a ``spawn`` child, so the process that took the upload never parses an
+    untrusted PDF itself. A child that crashes or takes longer than COUNT_TIMEOUT is an
+    UnsupportedDocumentError too."""
+    try:
+        count, refusal = run_isolated(_count_or_refusal, pdf, timeout=COUNT_TIMEOUT)
+    except PageReadError as exc:
+        raise UnsupportedDocumentError(
+            f"This PDF cannot be read (counting its pages failed: {exc})"
+        ) from exc
+    if refusal is not None:
+        raise UnsupportedDocumentError(refusal)
+    return count
+
+
 def _layout(pdf: bytes, page: int):
     """pdfminer's layout of one page (0-based). Raises PageReadError if there is no such
     page."""
