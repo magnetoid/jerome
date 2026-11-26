@@ -687,3 +687,31 @@ def test_a_pale_picture_stays_a_picture(session_factory, tmp_storage, test_setti
     assert saved["source"] == "image" and len(saved["blocks"]) == 1
     report = book_of(session_factory, book_id).import_report
     assert report["image_pages"] == 1 and report["blank_pages"] == 0
+
+
+def _dark_title_page(pen) -> None:
+    """A black part-title page with a white 24 pt title, as a 300 dpi scan gives it."""
+    from PIL import ImageFont
+
+    pen.rectangle([0, 0, 2480, 3508], fill=12)
+    pen.text((700, 1600), "Part Two", fill=245, font=ImageFont.load_default(size=100))
+
+
+def test_a_dark_page_with_a_light_title_is_not_blank():
+    assert import_job.is_blank(_page_png(_dark_title_page)) is False
+
+
+def test_a_dark_title_page_is_read_not_dropped(
+    session_factory, tmp_storage, test_settings, tesseract
+):
+    from PIL import Image
+
+    out = io.BytesIO()
+    Image.open(io.BytesIO(_page_png(_dark_title_page))).convert("RGB").save(
+        out, "PDF", resolution=300
+    )
+    book_id = start(session_factory, tmp_storage, out.getvalue(), engine="tesseract")
+    drain(session_factory, deps_for(test_settings, tmp_storage))
+    assert job_of(session_factory, book_id).stats["kinds"] == ["scan"]
+    assert tesseract == [0]
+    assert book_of(session_factory, book_id).import_report["blank_pages"] == 0

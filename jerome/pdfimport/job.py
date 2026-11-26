@@ -54,10 +54,11 @@ PAGES_PER_TASK = 25
 OCR_PASS = "ocr"
 PICTURE_PX = 1600  # the long side of a kept picture, at most
 PICTURE_QUALITY = 85
-# Blank page test (see is_blank), at the 300 dpi render: ink is this much darker than the
+# Blank page test (see is_blank), tuned for the 300 dpi render: ink is this much darker than the
 # paper; a mark of at most DUST_PX pixels within DUST_SIZE x DUST_SIZE (under 0.85 mm) is
 # dust. A 10 pt letter or hyphen has more pixels; a hairline is longer.
 _INK_STEP = 25
+_LIGHT_PAPER = 200  # a page whose median grey is darker than this is not blank paper
 DUST_PX = 24
 DUST_SIZE = 10
 _MAX_INK = 60_000  # more ink than this is never a blank page
@@ -304,10 +305,12 @@ def _failed(page: int, error: str) -> PageResult:
 
 def is_blank(png: bytes) -> bool:
     """True for a scanned page with no ink but dust. It errs towards "not blank": a page kept
-    by mistake costs one white picture, a page dropped by mistake loses text.
+    by mistake costs one white picture, a page dropped by mistake loses text. The pixel
+    thresholds assume the 300 dpi render (render_page's default).
 
-    At the render's own resolution, ink is any pixel clearly darker than the paper (the
-    median grey, so grey paper is paper too). Ink pixels are joined into 8-connected marks;
+    Paper is the median grey, so grey paper is paper too; a page whose median is darker than
+    _LIGHT_PAPER (a black cover or part-title page) is never blank. Ink is any pixel clearly
+    darker than the paper. Ink pixels are joined into 8-connected marks;
     a mark of at most DUST_PX pixels within DUST_SIZE x DUST_SIZE is dust. The page is blank
     only when every mark is dust. A 1 px hairline or one 10 pt letter is not dust; a page
     with more than _MAX_INK ink pixels is not blank without looking further."""
@@ -323,7 +326,9 @@ def is_blank(png: bytes) -> bool:
         if seen >= half:
             paper = value
             break
-    limit = max(paper - _INK_STEP, 0)
+    if paper < _LIGHT_PAPER:  # dark paper: its light marks would not count as ink
+        return False
+    limit = paper - _INK_STEP
     ink_pixels = sum(histogram[:limit])
     if ink_pixels == 0:
         return True
