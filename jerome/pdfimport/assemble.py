@@ -126,11 +126,12 @@ def _drop_furniture(
     - text that repeats there (digits aside) on at least 3 pages, and on at least half of the
       pages from its first to its last appearance, counting all pages or the even or the odd
       ones alone (alternating headers, a chapter's title over its pages);
-    - text that is a heading of the book set there small (a running chapter title, even over
-      a short chapter);
+    - text that is a heading of the book, set there as a paragraph or smaller than the body
+      text (a running chapter title, even over a short chapter); a heading of body size
+      there is a chapter's own;
     - lone numbers.
-    A block larger than the body text (a chapter heading or number), a lone number that is a
-    heading with no size (the AI's chapter number), and pictures always stay."""
+    A block larger than the body text (a chapter heading or number), a heading with no size
+    (the AI's: it leaves headers out), and pictures always stay."""
     counted: dict[object, list[int]] = {"all": [], 0: [], 1: []}
     seen: dict[tuple, list[int]] = {}
     titles: set[str] = set()
@@ -170,14 +171,19 @@ def _drop_furniture(
         if b.kind in ("image", "footnote"):
             return False
         bands = _bands(b)
-        if not bands or _larger_than_body(b, body.get(p.source, 0.0)):
+        size = body.get(p.source, 0.0)
+        if not bands or _larger_than_body(b, size):
             return False
-        if _is_lone_number(_text(b)):  # but not the AI's chapter number, which has no size
-            return not (b.kind == "heading" and b.size <= 0)
+        if b.kind == "heading" and b.size <= 0:  # the AI's heading: it left headers out
+            return False
+        if _is_lone_number(_text(b)):
+            return True
         k = _key(_text(b))
         if not k:
             return False
-        return k in titles or any(repeats(band, k, p.page % 2) for band in bands)
+        # a running title is set small; a heading of body size there is the chapter's own
+        small = b.kind != "heading" or (size > 0 and b.size <= NOTE_SIZE * size)
+        return (small and k in titles) or any(repeats(band, k, p.page % 2) for band in bands)
 
     return [[b for b in blocks if not drop(b, p)] for p, blocks in zip(pages, kept, strict=True)]
 

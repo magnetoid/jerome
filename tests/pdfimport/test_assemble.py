@@ -288,3 +288,23 @@ def test_an_ai_chapter_number_in_the_band_stays():
     number = PageBlock("heading", [Run("IV")], top=0.03, bottom=0.06)
     out = assemble([page(1, number, para("It rained."), source="ai")])
     assert texts(out) == ["IV", "It rained."]
+
+
+def test_ai_chapter_headings_at_the_top_of_their_pages_stay():
+    pages = []
+    for n in range(1, 5):
+        heading = PageBlock("heading", [Run(f"Chapter {n}")], top=0.03, bottom=0.06)
+        pages.append(page(n, heading, para(f"Body {n}.", top=0.2, bottom=0.6), source="ai"))
+    assert texts(assemble(pages)) == [
+        x for n in range(1, 5) for x in (f"Chapter {n}", f"Body {n}.")
+    ]
+
+
+def test_a_centred_body_size_heading_in_the_band_stays():
+    first = PageBlock("heading", [Run("Chapter 1")], top=0.1, bottom=0.13, size=20)
+    band = PageBlock("heading", [Run("Chapter 2")], top=0.03, bottom=0.06, size=12, centered=True)
+    pages = [
+        page(1, first, para("Body one.", size=12)),
+        page(2, band, para("Body two.", size=12)),
+    ]
+    assert texts(assemble(pages)) == ["Chapter 1", "Body one.", "Chapter 2", "Body two."]
