@@ -106,11 +106,21 @@ def import_book(
 
 
 def populate_from_docx(
-    session: Session, storage: Storage, book: Book, data: bytes, variant: Variant
+    session: Session,
+    storage: Storage,
+    book: Book,
+    data: bytes,
+    variant: Variant,
+    *,
+    keep_existing: bool = False,
 ) -> None:
     """Fill a Book that exists already (its title, ``original_filename`` and options set)
-    from DOCX bytes: publication details, style sheet, chapters, blocks, and the original."""
-    _fill(session, storage, book, read_docx(data), variant, data)
+    from DOCX bytes: publication details, style sheet, chapters, blocks, and the original.
+
+    With ``keep_existing`` (a PDF import, whose book the owner could edit while it was
+    read), publication details already set stay and only empty ones are filled, and a quote
+    style the owner chose (not the variant's default) stays."""
+    _fill(session, storage, book, read_docx(data), variant, data, keep_existing=keep_existing)
 
 
 def _fill(
@@ -120,20 +130,30 @@ def _fill(
     parsed: ParsedBook,
     variant: Variant,
     data: bytes,
+    *,
+    keep_existing: bool = False,
 ) -> None:
-    book.authors = prefill_authors(parsed.authors)
-    book.publisher = parsed.publisher
-    book.rights = (parsed.rights or "")[:500] or None
-    book.year = parsed.year if parsed.year and 1000 <= parsed.year <= 2999 else None
+    found = {
+        "authors": prefill_authors(parsed.authors),
+        "publisher": parsed.publisher,
+        "rights": (parsed.rights or "")[:500] or None,
+        "year": parsed.year if parsed.year and 1000 <= parsed.year <= 2999 else None,
+    }
+    for name, value in found.items():
+        if not (keep_existing and getattr(book, name)):
+            setattr(book, name, value)
     quotes = detect_quote_style((b.text for c in parsed.chapters for b in c.blocks), variant)
+    sheet = book.style_sheet
+    if keep_existing and sheet is not None and sheet.quote_style != DEFAULT_QUOTES[sheet.variant]:
+        quotes = sheet.quote_style  # the owner's choice
     style = StyleSheet(variant, quotes, {}, [])
-    if book.style_sheet is None:
+    if sheet is None:
         book.style_sheet = StyleSheetRow(
             variant=variant, quote_style=quotes, house_spellings={}, ignore_words=[]
         )
     else:
-        book.style_sheet.variant = variant
-        book.style_sheet.quote_style = quotes
+        sheet.variant = variant
+        sheet.quote_style = quotes
     session.add(book)
     session.flush()
 

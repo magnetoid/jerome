@@ -623,11 +623,13 @@ def _build(
             s.add(source)
             s.flush()
             populate_from_docx(s, storage, source, docx, variant)
-            make_translation(s, storage, source=source, book=book, target_variant=target)
+            make_translation(
+                s, storage, source=source, book=book, target_variant=target, keep_existing=True
+            )
             book = s.get(Book, plan.book_id)
             book.title = book.translated_title or book.title  # as import_for_translation
         else:
-            populate_from_docx(s, storage, book, docx, variant)
+            populate_from_docx(s, storage, book, docx, variant, keep_existing=True)
         book = s.get(Book, plan.book_id)
         book.import_status = None
         book.import_error = None

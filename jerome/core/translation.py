@@ -263,19 +263,34 @@ def import_for_translation(
 
 
 def make_translation(
-    session: Session, storage: Storage, *, source: Book, book: Book, target_variant: Variant
+    session: Session,
+    storage: Storage,
+    *,
+    source: Book,
+    book: Book,
+    target_variant: Variant,
+    keep_existing: bool = False,
 ) -> None:
     """Fill ``book`` (a translated book, new or already in the session) with the empty
-    chapters and pending blocks that mirror ``source``, and give it the target style sheet."""
+    chapters and pending blocks that mirror ``source``, and give it the target style sheet.
+
+    With ``keep_existing`` (a PDF import, whose book the owner could edit while it was
+    read), the book's publication details already set and its style sheet's quote style
+    stay; only empty details are taken from ``source``."""
     book.source_book_id = source.id
     book.work = "translate"
     # Publication details carry over; the ISBNs never do: a translation is another book
-    book.authors = list(source.authors or [])
-    book.publisher = source.publisher
-    book.rights = source.rights
-    book.description = source.description
-    book.year = source.year
-    book.trim_size = source.trim_size
+    carried = {
+        "authors": list(source.authors or []),
+        "publisher": source.publisher,
+        "rights": source.rights,
+        "description": source.description,
+        "year": source.year,
+        "trim_size": source.trim_size,
+    }
+    for name, value in carried.items():
+        if not (keep_existing and getattr(book, name)):
+            setattr(book, name, value)
     if book.style_sheet is None:
         book.style_sheet = StyleSheetRow(
             variant=target_variant,
@@ -285,7 +300,8 @@ def make_translation(
         )
     else:
         book.style_sheet.variant = target_variant
-        book.style_sheet.quote_style = DEFAULT_QUOTES[target_variant]
+        if not keep_existing:
+            book.style_sheet.quote_style = DEFAULT_QUOTES[target_variant]
     session.add(book)
     session.flush()
 

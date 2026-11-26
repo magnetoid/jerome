@@ -807,3 +807,30 @@ def test_a_book_with_no_text_says_so(session_factory, tmp_storage, test_settings
     drain(session_factory, deps_for(test_settings, tmp_storage))
     report = book_of(session_factory, book_id).import_report
     assert report["blank_pages"] == 1 and report["no_text"] is True
+
+
+@pytest.mark.parametrize("work", ["proofread", "translate"])
+def test_details_set_while_importing_survive_the_build(
+    session_factory, tmp_storage, test_settings, work
+):
+    target = "de-DE" if work == "translate" else None
+    book_id = start(
+        session_factory, tmp_storage, text_pdf(ONE), engine="tesseract", work=work, target=target
+    )
+    with session_factory() as s:
+        book = s.get(Book, book_id)
+        book.style_sheet.quote_style = "»«›‹"
+        book.style_sheet.house_spellings = {"harbor": "harbour"}
+        book.publisher = "Harbour Press"
+        book.authors = ["Jane Author"]
+        book.year = 1999
+        book.description = "A voyage."
+        book.trim_size = "5x8in"
+        s.commit()
+    drain(session_factory, deps_for(test_settings, tmp_storage))
+    book = book_of(session_factory, book_id)
+    assert book.import_status is None
+    assert book.style_sheet.quote_style == "»«›‹"
+    assert book.style_sheet.house_spellings == {"harbor": "harbour"}
+    assert (book.publisher, book.authors, book.year) == ("Harbour Press", ["Jane Author"], 1999)
+    assert (book.description, book.trim_size) == ("A voyage.", "5x8in")
