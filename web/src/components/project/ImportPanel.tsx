@@ -26,9 +26,13 @@ function engineLines(report: ImportReport): string[] {
   if (ai + tesseract > 0) {
     lines.push(`Read by AI: ${pagesOf(ai)} · Tesseract: ${pagesOf(tesseract)}`);
   }
-  const fallbacks = Object.values(report.ai_fallbacks ?? {}).reduce((a, b) => a + b, 0);
+  const { cost_cap: capped = 0, ...failed } = report.ai_fallbacks ?? {};
+  const fallbacks = Object.values(failed).reduce((a, b) => a + b, 0);
   if (fallbacks > 0) {
     lines.push(`Tesseract read ${pagesOf(fallbacks)} because the AI failed on them.`);
+  }
+  if (capped > 0) {
+    lines.push(`Tesseract read ${pagesOf(capped)} after the maximum cost was reached.`);
   }
   return lines;
 }
@@ -64,7 +68,9 @@ export default function ImportPanel({ bookId }: { bookId: string }) {
 
   const [typed, setTyped] = useState<string | null>(null);
   const estimate = job?.stats.awaiting_estimate ? job.estimate : null;
-  const maxCost = typed ?? estimate?.cost ?? "";
+  // confirmed, yet paused at the cap (an older import): raise the cap or let Tesseract read on
+  const capped = !estimate && job?.status === "paused_cost_cap";
+  const maxCost = typed ?? (capped ? job?.max_cost : estimate?.cost) ?? "";
 
   function changed(j: Job) {
     client.setQueryData(jobKey(j.id), j);
@@ -95,11 +101,15 @@ export default function ImportPanel({ bookId }: { bookId: string }) {
   if (status === "importing") {
     return (
       <div className="space-y-4">
-        {estimate ? (
+        {estimate || capped ? (
           <div className="space-y-3 rounded-lg border p-4">
-            <p>
-              Estimate ready: {estimate.ocr_pages} pages need AI OCR, about {money(estimate.cost ?? "0")}
-            </p>
+            {estimate ? (
+              <p>
+                Estimate ready: {estimate.ocr_pages} pages need AI OCR, about {money(estimate.cost ?? "0")}
+              </p>
+            ) : (
+              <p>Paused at the cost limit</p>
+            )}
             <div className="flex flex-wrap items-end gap-3">
               <div className="space-y-1">
                 <Label htmlFor="import-max-cost">Max cost (dollars)</Label>

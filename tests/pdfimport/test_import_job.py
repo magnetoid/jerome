@@ -715,3 +715,52 @@ def test_a_dark_title_page_is_read_not_dropped(
     assert job_of(session_factory, book_id).stats["kinds"] == ["scan"]
     assert tesseract == [0]
     assert book_of(session_factory, book_id).import_report["blank_pages"] == 0
+
+
+def test_the_cap_reached_after_confirm_never_pauses_tesseract_reads_the_rest(
+    session_factory, tmp_storage, test_settings, tesseract, monkeypatch
+):
+    monkeypatch.setattr(import_job, "PAGES_PER_TASK", 1)  # every AI page is a task's first
+    provider = FakeProvider([ai_reply("The ship came in on a grey morning.")])
+    deps = deps_for(test_settings, tmp_storage, provider)
+    book_id = start(
+        session_factory, tmp_storage, scan_pdf(text_pdf(ONE + BREAK + TWO + BREAK + THREE))
+    )
+    drain(session_factory, deps)
+    with session_factory() as s:
+        confirm_import(s, book_id, Decimal("0.0001"))  # covers the first page only
+        s.commit()
+    drain(session_factory, deps)
+    job = job_of(session_factory, book_id)
+    assert job.status == "completed"
+    assert len(provider.calls) == 1 and len(tesseract) == 2  # which page depends on the queue
+    report = book_of(session_factory, book_id).import_report
+    assert report["engine_pages"] == {"ai": 1, "tesseract": 2}
+    assert report["ai_fallbacks"] == {"cost_cap": 2}
+
+
+def test_an_import_paused_at_the_cap_after_confirm_can_be_raised_or_given_to_tesseract(
+    session_factory, tmp_storage, test_settings, tesseract
+):
+    """An import paused at its cap after the owner confirmed (as older jobs could be)."""
+    provider = FakeProvider([ai_reply("The ship came in on a grey morning.")])
+    deps = deps_for(test_settings, tmp_storage, provider)
+    for answer in ("confirm", "tesseract"):
+        book_id = start(session_factory, tmp_storage, _inked_pdf())
+        drain(session_factory, deps)
+        with session_factory() as s:
+            job = s.scalars(select(Job).where(Job.book_id == book_id)).one()
+            job.stats = {**job.stats, "awaiting_estimate": False}
+            s.commit()
+        with session_factory() as s:
+            if answer == "confirm":
+                resumed = confirm_import(s, book_id, Decimal("5"))
+                assert resumed.max_cost == Decimal("5")
+            else:
+                resumed = use_tesseract(s, book_id)
+                assert resumed.passes == ["tesseract"]
+            assert resumed.status == "queued"
+            s.commit()
+        drain(session_factory, deps)
+        assert job_of(session_factory, book_id).status == "completed"
+    assert len(provider.calls) == 1 and tesseract == [0]

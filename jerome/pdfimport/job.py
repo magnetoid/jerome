@@ -12,8 +12,9 @@ The free pages come first (text layers, pictures, blank pages, and scans when Te
 engine), then the AI pages. Text pages are never held back by the cost cap: a task that meets
 the cap at its first AI page while another queued page task has not read its free pages trades
 ranges with that task and reads those free pages; the job pauses only when no free page is
-left unread. Within a task, an AI page the model cannot read (a refusal, an unusable or empty
-reply, an error) or one met after the cap was reached is read by Tesseract instead. A page that
+left unread. Once the owner has confirmed, the cap never pauses the job: every AI page met
+after it was reached is read by Tesseract (``ai_fallbacks["cost_cap"]``). An AI page the model
+cannot read (a refusal, an unusable or empty reply, an error) is read by Tesseract too. A page that
 cannot be read at all is saved as ``failed``; a scanned page with nothing on it but dust is
 saved as ``blank`` without asking either engine. Why the AI did not read a page is counted in
 ``stats["ai_fallbacks"]``. Pictures are kept as JPEGs of at most 1600 px. The last page task
@@ -245,9 +246,10 @@ def _gate(
 ) -> tuple[str, Chosen | None, str]:
     """May the next AI page be read? Returns (verdict, model, the PDF's variant):
     ``ai``; ``tesseract`` (the job no longer uses AI); ``capped`` (the cost cap was reached
-    in this task: Tesseract reads the page); ``swapped`` (the cap met at the task's first AI
-    page, so the task took a range whose free pages are unread); ``stop`` (the job is not
-    running, or it paused at the cap: the task goes back to the queue)."""
+    after the owner confirmed, or in this task: Tesseract reads the page); ``swapped`` (before
+    the confirm, the cap met at the task's first AI page, so the task took a range whose free
+    pages are unread); ``stop`` (the job is not running, or it paused for the estimate: the
+    task goes back to the queue)."""
     note = None
     with sf() as s:
         job = w._lock_job(s, plan.job_id)
@@ -263,8 +265,8 @@ def _gate(
         if job.cost_actual < job.max_cost:
             s.commit()
             return "ai", chosen, variant
-        if not first:
-            s.commit()
+        if not first or not job.stats.get("awaiting_estimate"):
+            s.commit()  # confirmed: the cap never pauses the import, Tesseract reads on
             return "capped", None, variant
         unread = s.scalars(
             select(JobTask)

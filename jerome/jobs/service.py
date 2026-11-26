@@ -257,9 +257,10 @@ def _import_job(session: Session, book_id: int) -> Job:
 
 def _answer_estimate(session: Session, book_id: int, **changes) -> Job:
     """Clear the import's ``awaiting_estimate`` with ``changes`` made to the job; a job
-    paused at its cost cap is resumed, one still reading its free pages runs on."""
+    paused at its cost cap is resumed, one still reading its free pages runs on. An import
+    paused at its cap after the confirm (older jobs could be) is answered the same way."""
     job = _import_job(session, book_id)
-    if not (job.stats or {}).get("awaiting_estimate"):
+    if not (job.stats or {}).get("awaiting_estimate") and job.status != "paused_cost_cap":
         raise Conflict(f"the import of book {book_id} is not waiting for a cost confirmation")
     job.stats = {**job.stats, "awaiting_estimate": False}
     max_cost = changes.pop("max_cost", None)

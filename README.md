@@ -265,7 +265,9 @@ one of two engines:
 **Estimate and confirm.** Nothing is spent on AI reading before you confirm. When the scanned
 pages are known, the import pauses with an estimate of the AI cost; confirm it with a maximum
 cost (`POST /v1/books/{id}/import/confirm` with `max_cost`), or use Tesseract instead
-(`POST /v1/books/{id}/import/use-tesseract`). Reading stops at the maximum.
+(`POST /v1/books/{id}/import/use-tesseract`). When the AI reading reaches the maximum,
+Tesseract reads the remaining scanned pages and the import finishes; the import report
+says how many.
 
 **Re-OCR scanned pages** (`reocr`, on by default): a scanned page that already has a text
 layer is read again by the engine, because the layer of a scan is often poor. Turn it off to

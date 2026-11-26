@@ -73,6 +73,34 @@ describe("ImportPanel", () => {
     await waitFor(() => expect(callsTo(f, "POST", "/v1/books/1/import/use-tesseract")).toHaveLength(1));
   });
 
+  it("offers a higher max cost or Tesseract for an import paused at the cost limit", async () => {
+    const paused = importJob({ awaiting_estimate: false }, { status: "paused_cost_cap", max_cost: "1.5" });
+    const f = setup({ import_status: "importing" }, [paused], {
+      "POST /v1/books/1/import/confirm": () => json(200, importJob()),
+      "POST /v1/books/1/import/use-tesseract": () => json(200, importJob()),
+    });
+    renderApp(<ImportPanel bookId="1" />);
+    expect(await screen.findByText("Paused at the cost limit")).toBeInTheDocument();
+    const field = screen.getByLabelText(/max cost/i);
+    expect(field).toHaveValue(1.5);
+    await userEvent.clear(field);
+    await userEvent.type(field, "3");
+    await userEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    await waitFor(() => expect(callsTo(f, "POST", "/v1/books/1/import/confirm")).toHaveLength(1));
+    expect(bodyOf(callsTo(f, "POST", "/v1/books/1/import/confirm")[0])).toEqual({ max_cost: 3 });
+    expect(screen.getByRole("button", { name: "Use Tesseract instead" })).toBeInTheDocument();
+  });
+
+  it("says how many pages Tesseract read after the maximum cost was reached", async () => {
+    setup({
+      import_status: null,
+      import_report: { ...REPORT, engine_pages: { ai: 1, tesseract: 2 }, ai_fallbacks: { cost_cap: 2 } },
+    });
+    renderApp(<ImportPanel bookId="1" />);
+    expect(await screen.findByText("Tesseract read 2 pages after the maximum cost was reached.")).toBeInTheDocument();
+    expect(screen.queryByText(/because the AI failed/)).toBeNull();
+  });
+
   it("shows a failed import with its error and retries by resuming the job", async () => {
     const f = setup({ import_status: "failed", import_error: "the PDF is damaged" }, [
       importJob({}, { status: "failed" }),
