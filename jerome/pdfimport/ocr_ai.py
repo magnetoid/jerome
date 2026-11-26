@@ -12,7 +12,9 @@ from jerome.models.registry import PassConfig, Registry
 from jerome.pdfimport.model import PageBlock, PageResult, Run
 
 _INPUT_TOKENS = 1600  # per page: the image and the prompt
-_OUTPUT_TOKENS = 900
+_OUTPUT_TOKENS = 3000  # the blocks, with room for the model's thinking
+_SENT_PX = 1568  # the long side of the copy of the page the model gets, at most
+_SENT_QUALITY = 85
 _MAX_TOKENS = 8000
 _MAX_LEVEL = 6
 
@@ -76,7 +78,10 @@ _TOKEN = re.compile(r"(\*\*|\*|\[\^(\d+)\])")
 def ai_page(
     provider: Provider, cfg: PassConfig, png: bytes, page: int, language: str
 ) -> tuple[PageResult, Usage]:
-    """Read a page image (``page`` is 0-based) with the ocr model."""
+    """Read a page image (``page`` is 0-based) with the ocr model. The model gets a JPEG of
+    at most 1568 px (within the providers' image limits); pictures are cropped from ``png``.
+    Anything that goes wrong reading the reply is a ModelOutputError carrying the usage, so
+    the billed call is recorded."""
     result = provider.complete(
         model=cfg.model,
         system=[SystemPart(_PROMPT.format(language=language))],
@@ -84,9 +89,32 @@ def ai_page(
         schema=SCHEMA,
         max_tokens=_MAX_TOKENS,
         effort=cfg.effort,
-        images=[(png, "image/png")],
+        images=[(_sent_copy(png), "image/jpeg")],
     )
-    return PageResult(page, "ai", _blocks(result, png)), result.usage
+    try:
+        blocks = _blocks(result, png)
+    except ModelOutputError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - the call was billed whatever went wrong
+        raise ModelOutputError(
+            f"the reply could not be read ({type(exc).__name__}: {exc})",
+            usage=result.usage,
+            model=result.model,
+            provider=result.provider,
+        ) from exc
+    return PageResult(page, "ai", blocks), result.usage
+
+
+def _sent_copy(png: bytes) -> bytes:
+    """The page as an RGB JPEG whose long side is at most _SENT_PX."""
+    from PIL import Image
+
+    with Image.open(io.BytesIO(png)) as image:
+        copy = image.convert("RGB")
+    copy.thumbnail((_SENT_PX, _SENT_PX), Image.Resampling.LANCZOS)  # never enlarges
+    out = io.BytesIO()
+    copy.save(out, "JPEG", quality=_SENT_QUALITY)
+    return out.getvalue()
 
 
 def _blocks(result: CompletionResult, png: bytes) -> list[PageBlock]:
@@ -153,10 +181,11 @@ def _crop(png: bytes, box: tuple[float, float, float, float]) -> bytes:
 
     with Image.open(io.BytesIO(png)) as image:
         w, h = image.size
-        left, top = int(box[0] * w), int(box[1] * h)
-        right, bottom = max(round(box[2] * w), left + 1), max(round(box[3] * h), top + 1)
+        left, top = min(int(box[0] * w), w - 1), min(int(box[1] * h), h - 1)
+        right = min(max(round(box[2] * w), left + 1), w)
+        bottom = min(max(round(box[3] * h), top + 1), h)
         out = io.BytesIO()
-        image.crop((left, top, min(right, w), min(bottom, h))).save(out, "PNG")
+        image.crop((left, top, right, bottom)).save(out, "PNG")  # at least 1 x 1 px
         return out.getvalue()
 
 

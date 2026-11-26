@@ -834,3 +834,25 @@ def test_details_set_while_importing_survive_the_build(
     assert book.style_sheet.house_spellings == {"harbor": "harbour"}
     assert (book.publisher, book.authors, book.year) == ("Harbour Press", ["Jane Author"], 1999)
     assert (book.description, book.trim_size) == ("A voyage.", "5x8in")
+
+
+def test_a_reply_that_breaks_the_parser_is_still_on_the_books(
+    session_factory, tmp_storage, test_settings, tesseract, monkeypatch
+):
+    from jerome.pdfimport import ocr_ai
+
+    def broken(raw, png):
+        raise RuntimeError("cannot read this block")
+
+    monkeypatch.setattr(ocr_ai, "_block", broken)
+    provider = FakeProvider([ai_reply("The ship came in on a grey morning.")])
+    deps = deps_for(test_settings, tmp_storage, provider)
+    book_id = start(session_factory, tmp_storage, _inked_pdf())
+    drain(session_factory, deps)
+    with session_factory() as s:
+        confirm_import(s, book_id, Decimal("5"))
+        s.commit()
+    drain(session_factory, deps)
+    assert len(provider.calls) == 1 and tesseract == [0]
+    assert usage_passes(session_factory) == ["ocr"]
+    assert book_of(session_factory, book_id).import_report["ai_fallbacks"] == {"billed_error": 1}

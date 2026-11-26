@@ -55,7 +55,9 @@ def test_ai_page_parses_runs_and_crops_images():
     assert usage == provider.usage
     call = provider.calls[0]
     assert call["schema"] == SCHEMA and call["model"] == "claude-opus-5-5"
-    assert call["effort"] == "high" and call["images"] == [(_page(), "image/png")]
+    assert call["effort"] == "high"
+    ((sent, media_type),) = call["images"]
+    assert media_type == "image/jpeg" and sent.startswith(b"\xff\xd8")
     assert "en-US" in call["user"] + "".join(p.text for p in call["system"])
 
 
@@ -92,11 +94,43 @@ def test_estimate_ocr_uses_the_ocr_price():
         prices={"m1": {"input": 10, "output": 50, "cache_read": 0, "cache_write": 0}},
     )
     registry = Registry(settings, {"anthropic": FakeProvider([])})
-    # 3 pages x (1600 x 10 + 900 x 50) / 1e6
-    assert estimate_ocr(registry, 3) == Decimal("0.183")
+    # 3 pages x (1600 x 10 + 3000 x 50) / 1e6: output with room for thinking
+    assert estimate_ocr(registry, 3) == Decimal("0.498")
 
 
 def test_estimate_ocr_is_zero_without_a_price():
     settings = Settings(_env_file=None, models={"ocr": {"provider": "anthropic", "model": "zz"}})
     assert estimate_ocr(Registry(settings, {}), 5) == Decimal(0)
     assert estimate_ocr(Registry(Settings(_env_file=None, models={}), {}), 5) == Decimal(0)
+
+
+def test_the_model_gets_a_jpeg_of_at_most_1568_px_and_crops_come_from_the_full_page():
+    reply = {"blocks": [_block("image", box=[0, 0, 0.5, 0.5])]}
+    provider = FakeProvider([reply])
+    result, _ = ai_page(provider, CFG, _page(2480, 3508), 0, "en-US")
+    ((sent, media_type),) = provider.calls[0]["images"]
+    assert media_type == "image/jpeg"
+    with Image.open(io.BytesIO(sent)) as image:
+        assert image.format == "JPEG" and max(image.size) == 1568
+    with Image.open(io.BytesIO(result.blocks[0].image)) as crop:
+        assert crop.size == (1240, 1754)
+
+
+def test_a_box_at_the_edge_crops_one_pixel():
+    reply = {"blocks": [_block("image", box=[1, 1, 1, 1])]}
+    result, _ = ai_page(FakeProvider([reply]), CFG, _page(), 0, "en-US")
+    with Image.open(io.BytesIO(result.blocks[0].image)) as crop:
+        assert crop.size == (1, 1)
+
+
+def test_any_failure_reading_the_reply_is_a_billed_output_error(monkeypatch):
+    from jerome.pdfimport import ocr_ai
+
+    def broken(raw, png):
+        raise RuntimeError("cannot read this block")
+
+    monkeypatch.setattr(ocr_ai, "_block", broken)
+    provider = FakeProvider([{"blocks": [_block("paragraph", "Hi.")]}])
+    with pytest.raises(ModelOutputError) as err:
+        ai_page(provider, CFG, _page(), 0, "en-US")
+    assert err.value.usage == provider.usage
