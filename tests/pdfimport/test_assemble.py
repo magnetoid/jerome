@@ -206,3 +206,85 @@ def test_small_notes_at_the_foot_of_a_text_page_do_not_stop_the_join():
     p2 = page(2, para("mat and slept.", top=0.1, bottom=0.2, size=12))
     out = texts(assemble([p1, p2]))
     assert out == ["The cat sat on the mat and slept.", "1 A note set small at the foot."]
+
+
+_TITLES = [
+    "The Harbour",
+    "The Storm",
+    "Landfall",
+    "The Island",
+    "Night Watch",
+    "The Reef",
+    "Calm Water",
+    "The Return",
+    "Old Friends",
+    "The Lighthouse",
+    "Departure",
+    "Home Port",
+]
+
+
+def _book_with_running_titles(chapters: int, length: int):
+    """Chapters of ``length`` pages: a large heading on each chapter's first page, the
+    chapter's title as the running header of odd pages and the author on even pages."""
+    pages = []
+    for c in range(chapters):
+        for i in range(length):
+            n = c * length + i
+            header = _TITLES[c] if n % 2 else "Jane Author"
+            blocks = [para(header, top=0.03, bottom=0.05, size=9, centered=True)]
+            if i == 0:
+                blocks.append(
+                    PageBlock("heading", [Run(_TITLES[c])], top=0.1, bottom=0.14, size=20)
+                )
+            blocks.append(para(f"Body {n}.", size=12))
+            pages.append(page(n, *blocks))
+    return pages
+
+
+def test_chapter_title_headers_in_a_long_book_are_dropped():
+    out = texts(assemble(_book_with_running_titles(12, 6)))  # 72 pages
+    assert out == [
+        x for c in range(12) for x in [_TITLES[c]] + [f"Body {c * 6 + i}." for i in range(6)]
+    ]
+
+
+def test_chapter_title_headers_of_short_chapters_are_dropped():
+    out = texts(assemble(_book_with_running_titles(8, 4)))  # 32 pages, 2 odd pages a chapter
+    assert out == [
+        x for c in range(8) for x in [_TITLES[c]] + [f"Body {c * 4 + i}." for i in range(4)]
+    ]
+
+
+def test_a_centred_or_unplaced_one_letter_heading_is_not_a_drop_cap():
+    centred = PageBlock("heading", [Run("I")], top=0.1, bottom=0.15, size=20, centered=True)
+    out = assemble([page(1, centred, para("It was a grey morning.", top=0.2, size=12))])
+    assert [b.kind for b in out] == ["heading", "paragraph"]
+    unplaced = PageBlock("heading", [Run("V")], top=0.5, bottom=0.5)
+    out = assemble([page(1, unplaced, para("It rained.", top=0.5, bottom=0.5), source="ai")])
+    assert texts(out) == ["V", "It rained."]
+
+
+def test_a_text_heading_no_larger_than_the_book_body_is_a_paragraph():
+    pages = [page(n, para(f"Body text of page {n}.", size=12)) for n in range(3)]
+    pages.append(page(3, PageBlock("heading", [Run("Body text that looked large.")], size=12)))
+    pages.append(page(4, PageBlock("heading", [Run("A centred line")], size=12, centered=True)))
+    kinds = [b.kind for b in assemble(pages)]
+    assert kinds == ["paragraph"] * 4 + ["heading"]
+
+
+def test_small_paragraphs_ending_a_scanned_page_stay_in_place():
+    p1 = page(
+        1,
+        para("The cat sat on the", top=0.2, bottom=0.8, size=30),
+        para("A caption.", top=0.85, bottom=0.88, size=20),
+        source="tesseract",
+    )
+    p2 = page(2, para("mat and slept.", top=0.1, bottom=0.2, size=30), source="tesseract")
+    assert texts(assemble([p1, p2])) == ["The cat sat on the", "A caption.", "mat and slept."]
+
+
+def test_an_ai_chapter_number_in_the_band_stays():
+    number = PageBlock("heading", [Run("IV")], top=0.03, bottom=0.06)
+    out = assemble([page(1, number, para("It rained."), source="ai")])
+    assert texts(out) == ["IV", "It rained."]

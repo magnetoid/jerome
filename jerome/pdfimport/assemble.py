@@ -7,7 +7,7 @@ from jerome.pdfimport.model import PageBlock, PageResult, Run
 
 BAND = 0.08
 REPEATS = 3  # a header repeats on at least this many pages
-SHARE = 0.1  # and this share of the pages (or of the even or the odd pages)
+DENSITY = 0.5  # and on this share of the pages (all, even or odd) it spans
 LARGER = 1.15  # a block this much larger than the body text is never furniture
 NOTE_SIZE = 0.9  # a paragraph ending a page at most this size of the body is a note
 SENTENCE_END = ".!?:»“”"
@@ -76,7 +76,9 @@ def _larger_than_body(b: PageBlock, body: float) -> bool:
 
 
 def _join_drop_caps(blocks: list[PageBlock]) -> list[PageBlock]:
-    """A one-letter heading followed by a paragraph is a drop cap: it starts that paragraph."""
+    """A one-letter heading beside the first line of the paragraph after it is a drop cap: it
+    starts that paragraph. A centred one ("I" over a chapter) or one with no position (from
+    the AI) stays a heading."""
     out: list[PageBlock] = []
     for b in blocks:
         prev = out[-1] if out else None
@@ -85,6 +87,9 @@ def _join_drop_caps(blocks: list[PageBlock]) -> list[PageBlock]:
             and prev.kind == "heading"
             and len(_text(prev).strip()) == 1
             and _text(prev).strip().isalpha()
+            and not prev.centered
+            and not (prev.top == prev.bottom == 0.5)  # no box: nothing says it is beside
+            and prev.bottom > b.top
             and b.kind == "paragraph"
             and _first_text_run(b) is not None
         ):
@@ -97,37 +102,69 @@ def _join_drop_caps(blocks: list[PageBlock]) -> list[PageBlock]:
     return out
 
 
+def _demote_headings(
+    pages: list[PageResult], kept: list[list[PageBlock]], body: dict[str, float]
+) -> None:
+    """A text-layer heading that is neither centred nor larger than the book's body text is a
+    paragraph: the reader judged it against its own page, whose notes may outweigh the body."""
+    text_body = body.get("text", 0.0)
+    if text_body <= 0:
+        return
+    for p, blocks in zip(pages, kept, strict=True):
+        if p.source != "text":
+            continue
+        for b in blocks:
+            if b.kind == "heading" and b.size > 0 and not b.centered:
+                if not _larger_than_body(b, text_body):
+                    b.kind, b.level = "paragraph", 1
+
+
 def _drop_furniture(
     pages: list[PageResult], kept: list[list[PageBlock]], body: dict[str, float]
 ) -> list[list[PageBlock]]:
-    """Drop running headers, footers and page numbers: text in the top or bottom band that
-    repeats there (digits aside) on at least 3 pages and 10% of the pages, or of the even or
-    the odd pages alone (alternating headers), and lone numbers there. A block larger than
-    the body text (a chapter heading or number) and pictures always stay."""
-    counted = {"all": 0, 0: 0, 1: 0}
-    seen: dict[tuple, int] = {}
+    """Drop running headers, footers and page numbers in the top or bottom band:
+    - text that repeats there (digits aside) on at least 3 pages, and on at least half of the
+      pages from its first to its last appearance, counting all pages or the even or the odd
+      ones alone (alternating headers, a chapter's title over its pages);
+    - text that is a heading of the book set there small (a running chapter title, even over
+      a short chapter);
+    - lone numbers.
+    A block larger than the body text (a chapter heading or number), a lone number that is a
+    heading with no size (the AI's chapter number), and pictures always stay."""
+    counted: dict[object, list[int]] = {"all": [], 0: [], 1: []}
+    seen: dict[tuple, list[int]] = {}
+    titles: set[str] = set()
     for p, blocks in zip(pages, kept, strict=True):
         if not any(b.kind != "image" for b in blocks):
             continue
         parity = p.page % 2
-        counted["all"] += 1
-        counted[parity] += 1
+        counted["all"].append(p.page)
+        counted[parity].append(p.page)
         keys = set()
         for b in blocks:
             if b.kind in ("image", "footnote"):
                 continue
             k = _key(_text(b))
-            if k:
-                keys.update((band, k) for band in _bands(b))
+            if not k:
+                continue
+            keys.update((band, k) for band in _bands(b))
+            if b.kind == "heading" and (
+                not _bands(b) or _larger_than_body(b, body.get(p.source, 0.0))
+            ):
+                titles.add(k)
         for item in keys:
-            seen[(*item, "all")] = seen.get((*item, "all"), 0) + 1
-            seen[(*item, parity)] = seen.get((*item, parity), 0) + 1
+            for group in ("all", parity):
+                seen.setdefault((*item, group), []).append(p.page)
 
     def repeats(band: str, k: str, parity: int) -> bool:
-        return any(
-            seen.get((band, k, group), 0) >= max(REPEATS, SHARE * counted[group])
-            for group in ("all", parity)
-        )
+        for group in ("all", parity):
+            found = seen.get((band, k, group), [])
+            if len(found) < REPEATS:
+                continue
+            span = sum(1 for n in counted[group] if found[0] <= n <= found[-1])
+            if len(found) >= DENSITY * span:
+                return True
+        return False
 
     def drop(b: PageBlock, p: PageResult) -> bool:
         if b.kind in ("image", "footnote"):
@@ -135,10 +172,12 @@ def _drop_furniture(
         bands = _bands(b)
         if not bands or _larger_than_body(b, body.get(p.source, 0.0)):
             return False
-        if _is_lone_number(_text(b)):
-            return True
+        if _is_lone_number(_text(b)):  # but not the AI's chapter number, which has no size
+            return not (b.kind == "heading" and b.size <= 0)
         k = _key(_text(b))
-        return bool(k) and any(repeats(band, k, p.page % 2) for band in bands)
+        if not k:
+            return False
+        return k in titles or any(repeats(band, k, p.page % 2) for band in bands)
 
     return [[b for b in blocks if not drop(b, p)] for p, blocks in zip(pages, kept, strict=True)]
 
@@ -280,15 +319,16 @@ def assemble(pages: list[PageResult]) -> list[PageBlock]:
     ordered = sorted(pages, key=lambda p: p.page)
     copies = [_join_drop_caps([_copy(b) for b in p.blocks]) for p in ordered]
     body_size = _body_sizes(ordered, copies)
+    _demote_headings(ordered, copies, body_size)
     kept = _drop_furniture(ordered, copies, body_size)
     _rank_headings(ordered, kept, body_size)
     bodies: list[list[PageBlock]] = []
     tails: list[list[PageBlock]] = []
     counter = 0
     for p, blocks in zip(ordered, kept, strict=True):
-        body, small = _split_notes(
-            [b for b in blocks if b.kind != "footnote"], body_size.get(p.source, 0.0)
-        )
+        body, small = [b for b in blocks if b.kind != "footnote"], []
+        if p.source == "text":  # small trailing text there is a note the reader left
+            body, small = _split_notes(body, body_size.get("text", 0.0))
         tail, counter = _renumber_notes(body, [b for b in blocks if b.kind == "footnote"], counter)
         for b in body + small:
             _rejoin_hyphens(b)

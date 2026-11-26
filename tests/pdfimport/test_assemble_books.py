@@ -97,3 +97,53 @@ def test_heading_levels_are_ranked_across_the_book():
     headings = [h for h, b in zip(headings, blocks, strict=True) if b.kind == "heading"]
     assert [t for level, t in headings if level == 1] == chapters
     assert [level for level, t in headings if t.startswith("Section")] == [2] * 6
+
+
+_NAMES = [
+    "Arrival",
+    "The Storm",
+    "Landfall",
+    "The Island",
+    "Night Watch",
+    "The Reef",
+    "Calm Water",
+    "The Return",
+]
+
+
+def test_running_chapter_titles_of_short_chapters_are_dropped():
+    rnd = random.Random(23)
+    html, expected = [], []
+    for name in _NAMES:
+        html.append(f"<h1>{name}</h1>")
+        expected.append(name)
+        for _ in range(4):
+            text = _paragraph(rnd, 330)
+            html.append(f"<p>{text}</p>")
+            expected.append(text)
+    css = (
+        _CHAPTERS
+        + "h1 { string-set: chapter content() }"
+        + '@page :left { @top-center { content: "Jane Author"; font-size: 9pt } }'
+        + "@page :right { @top-center { content: string(chapter); font-size: 9pt } }"
+    )
+    pdf = text_pdf("".join(html), page_numbers=True, css=css)
+    assert count_pages(pdf) >= 24
+    blocks = _assembled(pdf)
+    assert _texts(blocks) == expected
+    assert [_texts([b])[0] for b in blocks if b.kind == "heading"] == _NAMES
+
+
+def test_body_text_on_a_page_of_notes_stays_body_text():
+    rnd = random.Random(8)
+    body = "".join(f"<p>{_paragraph(rnd, 300)}</p>" for _ in range(2))
+    short = "It was over by the evening, and nobody spoke of it again."
+    notes = "".join(
+        f'<p style="font-size: 9pt">{n} {_paragraph(rnd, 45)}</p>' for n in range(1, 13)
+    )
+    pdf = text_pdf(
+        body + '<div style="page-break-before: always"></div>' + f"<p>{short}</p>" + notes
+    )
+    blocks = _assembled(pdf)
+    (found,) = [b for b in blocks if _texts([b])[0] == short]
+    assert found.kind == "paragraph"
