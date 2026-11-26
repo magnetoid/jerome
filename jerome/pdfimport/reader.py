@@ -7,10 +7,12 @@ child (``run_isolated``), so one page that hangs or crashes the reader fails alo
 import io
 import multiprocessing
 import queue as queue_module
+import re
 import statistics
 import sys
 import time
 import traceback
+import unicodedata
 from collections import Counter
 
 from jerome.errors import JeromeError, UnsupportedDocumentError
@@ -86,19 +88,43 @@ def _classify(layout) -> PageKind:
     from pdfminer.layout import LTImage, LTTextLine
 
     page_area = max(layout.width * layout.height, 1.0)
-    has_text = False
+    text: list[str] = []
     image_area = 0.0
     for item in _walk(layout):
         if isinstance(item, LTTextLine) and item.get_text().strip():
-            has_text = True
+            text.append(item.get_text())
         elif isinstance(item, LTImage):
             image_area += max(item.width, 0) * max(item.height, 0)
     share = image_area / page_area
+    if text and not _decodes("".join(text)):
+        return "scan"  # its text layer is not text: the page needs OCR
+    has_text = bool(text)
     if has_text:
         return "scan_with_layer" if share >= _WIDE else "text"
     if share >= _SCAN:  # a scan, maybe with a picture on it: the engines keep pictures
         return "scan"
     return "image" if image_area > 0 else "blank"
+
+
+_CID = re.compile(r"\(cid:\d+\)")
+_BAD_SHARE = 0.1  # more undecodable characters than this, and the layer is not text
+_LETTER_SHARE = 0.2  # fewer letters than this, and the layer is not text
+_JUDGED = 20  # the letter share is judged from this many characters on (not a lone "12")
+
+
+def _decodes(text: str) -> bool:
+    """Whether a page's text layer is text: few glyphs pdfminer could not map (``(cid:NN)``),
+    replacement, private-use or control characters, and enough letters."""
+    cids = len(_CID.findall(text))
+    chars = [c for c in _CID.sub("", text) if not c.isspace()]
+    total = cids + len(chars)
+    if total == 0:
+        return True
+    bad = cids + sum(1 for c in chars if c == "\ufffd" or unicodedata.category(c) in ("Co", "Cc"))
+    if bad > _BAD_SHARE * total:
+        return False
+    letters = sum(1 for c in chars if c.isalpha())
+    return total < _JUDGED or letters >= _LETTER_SHARE * total
 
 
 def read_text_page(pdf: bytes, page: int) -> PageResult:

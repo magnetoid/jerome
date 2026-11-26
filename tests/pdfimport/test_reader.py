@@ -84,3 +84,26 @@ def _picture(width_mm: int, height_mm: int) -> str:
 def test_a_page_mostly_covered_by_a_picture_and_no_text_is_a_scan():
     assert classify_pages(text_pdf(_picture(170, 200))) == ["scan"]  # 55% of the page
     assert classify_pages(text_pdf(_picture(120, 80))) == ["image"]  # 15%
+
+
+@pytest.mark.parametrize(
+    "layer",
+    [
+        "(cid:12)(cid:7)(cid:9) (cid:3)(cid:41)(cid:22)(cid:5) the ship (cid:8)(cid:8)",
+        "  ship came in ",
+        "The ship came ���� in on a ���� morning",
+        "\x01\x02\x03\x04 the harbour was quiet \x05\x06\x07",
+        "1234 5678 9012 3456 7890 1234 5678 9012 ;;;; ----",
+    ],
+    ids=["cid", "private-use", "replacement", "control", "few-letters"],
+)
+def test_a_text_layer_that_does_not_decode_is_a_scan(monkeypatch, layer):
+    from pdfminer.layout import LTTextLineHorizontal
+
+    pdf = text_pdf(_PAGE)
+    monkeypatch.setattr(LTTextLineHorizontal, "get_text", lambda self: layer)
+    assert classify_pages(pdf) == ["scan"]
+
+
+def test_a_text_layer_that_decodes_stays_text_and_a_lone_number_is_not_judged():
+    assert classify_pages(text_pdf(_PAGE + _BREAK + "<p>12</p>")) == ["text", "text"]
