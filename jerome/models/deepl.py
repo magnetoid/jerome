@@ -12,7 +12,7 @@ from collections.abc import Sequence
 
 import httpx
 
-from jerome.errors import JeromeError
+from jerome.errors import JeromeError, MissingApiKey
 from jerome.models.base import SystemPart, Usage
 from jerome.translate.tags import escape_text
 
@@ -83,7 +83,7 @@ class DeepLProvider:
     ) -> tuple[list[str], Usage]:
         """Translate tagged texts, in order. Raises on any HTTP error (the task retries)."""
         if not self.api_key:
-            raise JeromeError("deepl API key is not set")
+            raise MissingApiKey("deepl")
         sent = [to_deepl(t, keep) for t in texts]
         out: list[str] = []
         for start in range(0, len(sent), _BATCH):

@@ -6,7 +6,7 @@ from urllib.parse import urlparse
 
 import httpx
 
-from jerome.errors import JeromeError
+from jerome.errors import MissingApiKey
 from jerome.models.base import CompletionResult, ModelOutputError, SystemPart, Usage
 
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "host.docker.internal"}
@@ -56,7 +56,7 @@ class OpenAICompatProvider:
         images: Sequence[tuple[bytes, str]] = (),
     ) -> CompletionResult:
         if self.require_key and not self.api_key:
-            raise JeromeError(f"{self.name} API key is not set")
+            raise MissingApiKey(self.name)
         headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
         body: dict = {
             "model": model,
