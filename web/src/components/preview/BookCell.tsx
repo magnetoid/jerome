@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { cpToUtf16 } from "@/lib/offsets";
 import type { MarkJson, PreviewBlock, PreviewState } from "@/lib/preview";
 import { cn } from "@/lib/utils";
 import "./book.css";
@@ -32,7 +33,9 @@ function wrap(kind: string, href: string | null, key: string, child: ReactNode):
 }
 
 /** The text cut at every mark edge and picture, each piece wrapped in the marks over it. */
-export function formatted(text: string, marks: MarkJson[]): ReactNode[] {
+export function formatted(text: string, cpMarks: MarkJson[]): ReactNode[] {
+  // The API counts code points; JavaScript slices UTF-16 units.
+  const marks = cpMarks.map((m) => ({ ...m, start: cpToUtf16(text, m.start), end: cpToUtf16(text, m.end) }));
   const cuts = new Set([0, text.length]);
   for (const m of marks) {
     cuts.add(Math.max(0, Math.min(text.length, m.start)));
@@ -66,8 +69,10 @@ export function formatted(text: string, marks: MarkJson[]): ReactNode[] {
 
 /** One paragraph in the Book view, set in the book's typeface. Footnotes are list items,
  * for the Notes list under the chapter. */
-export default function BookCell({ block, state, lang, firstAfterHeading }: {
+export default function BookCell({ block, state, lang, firstAfterHeading, note }: {
   block: PreviewBlock; state: PreviewState; lang: string | undefined; firstAfterHeading: boolean;
+  /** A short remark shown before a footnote's text ("Not translated yet"). */
+  note?: string;
 }) {
   const text = block[state];
   const content = text ? formatted(text.text, text.marks) : null;
@@ -83,7 +88,12 @@ export default function BookCell({ block, state, lang, firstAfterHeading }: {
       body = <ul><li><p>{content}</p></li></ul>;
       break;
     case "footnote":
-      return <li lang={lang}>{content}</li>;
+      return (
+        <li lang={lang}>
+          {note && <span className="mr-1 text-xs italic opacity-70">{note}</span>}
+          {content}
+        </li>
+      );
     default:
       body = <p className={cn(firstAfterHeading && "no-indent")}>{content}</p>;
   }

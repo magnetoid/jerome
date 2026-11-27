@@ -22,22 +22,29 @@ export function langFor(state: PreviewState, page: PreviewPageData | undefined):
   return (state === "original" && page.source_variant) || page.variant || undefined;
 }
 
+/** Whether a translation or proofread cell has no finished translation behind it. */
+function untranslated(state: PreviewState, block: PreviewBlock): "pending" | "flagged" | null {
+  const status = block.translation?.status;
+  return state !== "original" && (status === "pending" || status === "flagged") ? status : null;
+}
+const UNTRANSLATED = { pending: "Not translated yet", flagged: "Flagged: not translated" } as const;
+
 /** One paragraph in one state, drawn for the chosen view. */
 export function cellFor(view: PreviewView, state: PreviewState, block: PreviewBlock, prefs: Prefs, ctx?: CellContext): ReactNode {
   const text = block[state];
-  const status = block.translation?.status;
+  const missing = untranslated(state, block);
   // Until a paragraph is translated, neither its translation nor its proofread text exists.
-  if (state !== "original" && status === "pending") return muted("Not translated yet");
+  if (missing === "pending") return muted(UNTRANSLATED.pending);
   if (!text) return null;
   // A flagged paragraph keeps the source text: say so, and set it in the source language.
-  const flagged = state !== "original" && status === "flagged";
+  const flagged = missing === "flagged";
   const cell =
     view === "book" ? (
       <BookCell block={block} state={state} lang={flagged ? ctx?.sourceLang : ctx?.lang} firstAfterHeading={ctx?.firstAfterHeading ?? false} />
     ) : (
       <TextCell text={text} kind={block.kind} changes={prefs.changes && state === "proofread"} />
     );
-  return flagged ? <>{muted("Flagged: not translated")}{cell}</> : cell;
+  return flagged ? <>{muted(UNTRANSLATED.flagged)}{cell}</> : cell;
 }
 
 function ChapterPreview({ bookId, chapterId, chapters }: { bookId: string; chapterId: string; chapters: ChapterSummary[] }) {
@@ -122,9 +129,19 @@ function ChapterPreview({ bookId, chapterId, chapters }: { bookId: string; chapt
                 <section key={s} className="book min-w-0" lang={langFor(s, first)}>
                   <h3 id={`notes-${s}`} className="mb-2 text-sm font-semibold">Notes</h3>
                   <ol aria-labelledby={`notes-${s}`} className="book-notes">
-                    {notes.map((b) => (
-                      <BookCell key={b.id} block={b} state={s} lang={langFor(s, first)} firstAfterHeading={false} />
-                    ))}
+                    {notes.map((b) => {
+                      const missing = untranslated(s, b);
+                      return (
+                        <BookCell
+                          key={b.id}
+                          block={b}
+                          state={s}
+                          lang={langFor(missing === "flagged" ? "original" : s, first)}
+                          firstAfterHeading={false}
+                          note={missing ? UNTRANSLATED[missing] : undefined}
+                        />
+                      );
+                    })}
                   </ol>
                 </section>
               ))}

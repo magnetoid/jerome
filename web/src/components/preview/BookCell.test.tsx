@@ -57,4 +57,15 @@ describe("BookCell", () => {
     expect(container.querySelector("p")).toHaveClass("no-indent");
     expect(cell({ text: "Later.", marks: [] }).container.querySelector("p")).not.toHaveClass("no-indent");
   });
+
+  it("counts mark offsets in code points", () => {
+    const { container } = cell({ text: "\u{1F600} cat sat", marks: [mark(2, 5, "italic")] });
+    expect(container.querySelector("em")).toHaveTextContent(/^cat$/);
+  });
+
+  it("puts a note before a footnote's text", () => {
+    const block: PreviewBlock = { id: 1, ordinal: 0, kind: "footnote", original: null, translation: null, proofread: { text: "Source note.", marks: [] } };
+    const { container } = render(<ol><BookCell block={block} state="proofread" lang="en-GB" firstAfterHeading={false} note="Flagged: not translated" /></ol>);
+    expect(container.querySelector("li")).toHaveTextContent("Flagged: not translatedSource note.");
+  });
 });

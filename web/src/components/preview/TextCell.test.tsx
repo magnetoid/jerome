@@ -27,4 +27,11 @@ describe("TextCell", () => {
     expect(container.querySelector("ins")).toHaveTextContent("big");
     expect(container.querySelector("del")).toHaveTextContent("s");
   });
+
+  it("counts the API's offsets in code points, not UTF-16 units", () => {
+    const text = { text: "\u{1F600} dog", marks: [], changes: [{ start: 2, end: 5, removed: "cat" }] };
+    const { container } = render(<TextCell text={text} kind="paragraph" changes />);
+    expect(container.querySelector("ins")).toHaveTextContent(/^dog$/);
+    expect(container).toHaveTextContent("\u{1F600} catdog");
+  });
 });

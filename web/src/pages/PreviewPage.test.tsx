@@ -180,4 +180,25 @@ describe("PreviewPage", () => {
     expect(cells[2]).toHaveTextContent("Flagged: not translated");
     expect(cells[1].querySelector("[lang]")).toHaveAttribute("lang", "en-GB");
   });
+
+  it("says which notes are not translated in the Book view", async () => {
+    const pending = block(2, {
+      kind: "footnote",
+      original: { text: "A note.", marks: [] },
+      translation: { text: "", marks: [], status: "pending" },
+      proofread: { text: "", marks: [], changes: [] },
+    });
+    const flagged = block(3, {
+      kind: "footnote",
+      original: { text: "Another note.", marks: [] },
+      translation: { text: "Another note.", marks: [], status: "flagged" },
+      proofread: { text: "Another note.", marks: [], changes: [] },
+    });
+    setup("/projects/7/preview/3?view=book", page({ total_blocks: 3, blocks: [block(0), pending, flagged] }));
+    await screen.findByText("Hello 0.");
+    const proofreadNotes = within(screen.getAllByRole("list", { name: "Notes" })[1]).getAllByRole("listitem");
+    expect(proofreadNotes[0]).toHaveTextContent("Not translated yet");
+    expect(proofreadNotes[1]).toHaveTextContent("Flagged: not translated");
+    expect(proofreadNotes[1]).toHaveAttribute("lang", "en-GB");
+  });
 });

@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { cpToUtf16 } from "@/lib/offsets";
 import type { StateText } from "@/lib/preview";
 import { cn } from "@/lib/utils";
 
@@ -33,7 +34,9 @@ export default function TextCell({ text, kind, changes }: { text: StateText; kin
   const parts: ReactNode[] = [];
   let at = 0;
   if (changes) {
-    (text.changes ?? []).forEach((span, i) => {
+    (text.changes ?? []).forEach((cpSpan, i) => {
+      // The API counts code points; JavaScript slices UTF-16 units.
+      const span = { ...cpSpan, start: cpToUtf16(text.text, cpSpan.start), end: cpToUtf16(text.text, cpSpan.end) };
       parts.push(...plain(text.text.slice(at, span.start), `t${i}`));
       if (span.removed) {
         parts.push(
