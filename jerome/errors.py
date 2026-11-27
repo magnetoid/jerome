@@ -32,3 +32,14 @@ class UnsupportedLanguagePair(JeromeError):
 
 class InvalidFeedback(JeromeError):
     """Feedback sent from the web app that cannot be kept as it is."""
+
+
+class MissingApiKey(JeromeError):
+    """A model provider's API key is not set: the owner has to save it on the Settings page."""
+
+    def __init__(self, provider: str) -> None:
+        self.provider = provider
+        super().__init__(
+            f"{provider} API key is not set. Save it under Settings → Secrets, "
+            "or pick another model under Settings → Models."
+        )

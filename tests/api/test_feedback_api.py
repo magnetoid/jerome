@@ -78,7 +78,8 @@ def test_feedback_kinds(web_client, session):
     login(web_client, session)
     for kind in ("bug", "feature", "recommendation"):
         assert _send(web_client, kind=kind).status_code == 201
-    assert [f["kind"] for f in web_client.get("/v1/feedback").json()] == ["recommendation", "feature", "bug"]
+    kinds = [f["kind"] for f in web_client.get("/v1/feedback").json()]
+    assert kinds == ["recommendation", "feature", "bug"]
 
 
 def test_the_super_admin_marks_done_and_deletes(web_client, session):
