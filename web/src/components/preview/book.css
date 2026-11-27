@@ -1,0 +1,86 @@
+@font-face {
+  font-family: "EB Garamond";
+  src: url("/fonts/EBGaramond-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "EB Garamond";
+  src: url("/fonts/EBGaramond-Italic.ttf") format("truetype");
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: "EB Garamond";
+  src: url("/fonts/EBGaramond-Bold.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "EB Garamond";
+  src: url("/fonts/EBGaramond-BoldItalic.ttf") format("truetype");
+  font-weight: 700;
+  font-style: italic;
+  font-display: swap;
+}
+
+/* A book page: the typeface and setting of the published book. */
+.book {
+  font-family: "EB Garamond", serif;
+  font-size: 1.0625rem;
+  line-height: 1.45;
+  text-align: justify;
+  hyphens: auto;
+  -webkit-hyphens: auto;
+}
+.book p {
+  margin: 0;
+  text-indent: 1.2em;
+}
+.book p.no-indent,
+.book li p,
+.book blockquote p {
+  text-indent: 0;
+}
+.book h2 {
+  margin: 1.5em 0 0.75em;
+  text-align: center;
+  font-size: 1.35em;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+}
+.book blockquote {
+  margin: 0.5em 1.5em;
+}
+.book ul {
+  margin: 0;
+  padding-left: 1.5em;
+  list-style: disc;
+}
+.book ol.book-notes {
+  margin: 0;
+  padding-left: 1.5em;
+  list-style: decimal;
+  font-size: 0.85em;
+  text-align: left;
+}
+.book .small-caps {
+  font-variant: small-caps;
+}
+.book a {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.book .book-picture {
+  display: inline-block;
+  margin: 0.25em 0;
+  padding: 1.5em 2em;
+  border: 1px dashed currentColor;
+  border-radius: 4px;
+  font-size: 0.8em;
+  opacity: 0.6;
+  text-indent: 0;
+}

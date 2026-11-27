@@ -48,6 +48,13 @@ export const DEFAULT_PREFS: Prefs = {
   changes: true,
 };
 export const PREVIEW_PAGE = 100;
+/** The widest a Single column gets in the Book view, by the book's trim size. */
+export const TRIM_WIDTHS: Record<string, string> = {
+  "6x9in": "30rem",
+  "5.5x8.5in": "27rem",
+  "5x8in": "25rem",
+  a5: "26rem",
+};
 const STORAGE_KEY = "jerome.preview";
 
 export const previewKey = (chapterId: string) => ["preview", chapterId] as const;

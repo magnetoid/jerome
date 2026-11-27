@@ -139,4 +139,24 @@ describe("PreviewPage", () => {
     await userEvent.setup().selectOptions(screen.getByLabelText("Chapter"), "4");
     expect(screen.getByTestId("where")).toHaveTextContent("/projects/7/preview/4?layout=single&states=original");
   });
+
+  it("sets the book view in each column's language, with the notes under the text", async () => {
+    const note = block(2, {
+      kind: "footnote",
+      original: { text: "A note.", marks: [] },
+      translation: { text: "Eine Notiz.", marks: [], status: "done" },
+      proofread: { text: "Eine Anmerkung.", marks: [], changes: [] },
+    });
+    setup("/projects/7/preview/3?view=book", page({ total_blocks: 3, blocks: [block(0, { kind: "heading" }), block(1), note] }));
+    await screen.findByText("Hello 0.");
+    const rows = screen.getAllByRole("row");
+    expect(rows.some((r) => r.textContent?.includes("A note."))).toBe(false);
+    const notes = screen.getAllByRole("list", { name: "Notes" });
+    expect(notes).toHaveLength(2);
+    expect(notes[0]).toHaveTextContent("A note.");
+    expect(notes[1]).toHaveTextContent("Eine Anmerkung.");
+    expect(screen.getByText("Hello 0.").closest("[lang]")).toHaveAttribute("lang", "en-GB");
+    expect(screen.getByText("Servus 0.").closest("[lang]")).toHaveAttribute("lang", "de-DE");
+    expect(screen.getByText("Servus 1.").closest("p")).toHaveClass("no-indent");
+  });
 });
