@@ -9,7 +9,7 @@ export default defineConfig({
     alias: [{ find: "@", replacement: path.resolve(__dirname, "./src") }],
   },
   server: {
-    proxy: { "/v1": "http://127.0.0.1:8000" },
+    proxy: { "/v1": "http://127.0.0.1:8000", "/fonts": "http://127.0.0.1:8000" },
   },
   test: {
     environment: "jsdom",

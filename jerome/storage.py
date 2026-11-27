@@ -29,6 +29,14 @@ class Storage:
             raise NotFound(f"original file of book {book_id}")
         return found[0].read_bytes()
 
+    def original_suffix(self, book_id: int) -> str | None:
+        """The extension of the stored original (".docx", ".epub"), or None if there is none."""
+        found = sorted(self._book_dir(book_id).glob("original.*"))
+        return found[0].suffix if found else None
+
+    def has_source_pdf(self, book_id: int) -> bool:
+        return (self._book_dir(book_id) / "source.pdf").is_file()
+
     def save_source_pdf(self, book_id: int, data: bytes) -> Path:
         return _write_atomic(self._book_dir(book_id) / "source.pdf", data)
 

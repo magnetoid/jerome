@@ -61,6 +61,16 @@ comments, Word with tracked changes, clean Word, clean EPUB) are on the project 
 and its bearer keys work as before, except team management (`/v1/users`), which needs a
 super admin signed in to the web interface.
 
+**Preview.** **Preview** on the project page shows a chapter as it reads now, in three
+states: the original, the translation (translated books only) and the proofread text, which
+is the translation or the original with the accepted and edited changes applied, the same
+rule the clean exports use. Show one state, or two or three side by side; the text view marks
+what proofreading changed, and the book view sets the text in the book's typeface and trim
+size. Nothing can be edited there. **Download original** returns the file that was uploaded
+(for a translated book, the file it was translated from), and **Download original PDF** the
+PDF a book was imported from. The routes are `GET /v1/chapters/{id}/preview?offset=&limit=`
+(up to 200 paragraphs a page) and `GET /v1/books/{id}/original` (`?pdf=true` for the PDF).
+
 **Asking the AI about a LanguageTool mark.** LanguageTool often marks text that is fine
 (names, dialogue, the author's style). On the review card of a mark LanguageTool made alone,
 **Ask AI** asks the proofreading AI model (`models.ai`) whether the mark is right. The AI
