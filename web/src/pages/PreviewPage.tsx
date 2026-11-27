@@ -14,7 +14,7 @@ import {
 const muted = (text: string) => <p className="text-sm italic text-muted-foreground">{text}</p>;
 
 /** Where a cell sits: the language of its column, and whether it follows a heading. */
-export type CellContext = { lang: string | undefined; firstAfterHeading: boolean };
+export type CellContext = { lang: string | undefined; sourceLang?: string; firstAfterHeading: boolean };
 
 /** The language of a state's column: the source's for a translated book's Original. */
 export function langFor(state: PreviewState, page: PreviewPageData | undefined): string | undefined {
@@ -25,12 +25,19 @@ export function langFor(state: PreviewState, page: PreviewPageData | undefined):
 /** One paragraph in one state, drawn for the chosen view. */
 export function cellFor(view: PreviewView, state: PreviewState, block: PreviewBlock, prefs: Prefs, ctx?: CellContext): ReactNode {
   const text = block[state];
-  if (state === "translation" && text?.status === "pending") return muted("Not translated yet");
+  const status = block.translation?.status;
+  // Until a paragraph is translated, neither its translation nor its proofread text exists.
+  if (state !== "original" && status === "pending") return muted("Not translated yet");
   if (!text) return null;
-  if (view === "book") {
-    return <BookCell block={block} state={state} lang={ctx?.lang} firstAfterHeading={ctx?.firstAfterHeading ?? false} />;
-  }
-  return <TextCell text={text} kind={block.kind} changes={prefs.changes && state === "proofread"} />;
+  // A flagged paragraph keeps the source text: say so, and set it in the source language.
+  const flagged = state !== "original" && status === "flagged";
+  const cell =
+    view === "book" ? (
+      <BookCell block={block} state={state} lang={flagged ? ctx?.sourceLang : ctx?.lang} firstAfterHeading={ctx?.firstAfterHeading ?? false} />
+    ) : (
+      <TextCell text={text} kind={block.kind} changes={prefs.changes && state === "proofread"} />
+    );
+  return flagged ? <>{muted("Flagged: not translated")}{cell}</> : cell;
 }
 
 function ChapterPreview({ bookId, chapterId, chapters }: { bookId: string; chapterId: string; chapters: ChapterSummary[] }) {
@@ -102,6 +109,7 @@ function ChapterPreview({ bookId, chapterId, chapters }: { bookId: string; chapt
                 <div key={s} role="cell" className="min-w-0">
                   {cellFor(prefs.view, s, b, prefs, {
                     lang: langFor(s, first),
+                    sourceLang: langFor("original", first),
                     firstAfterHeading: i === 0 || rows[i - 1].kind === "heading",
                   })}
                 </div>

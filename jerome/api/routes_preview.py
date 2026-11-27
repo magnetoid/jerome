@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, Query, Response
 
 from jerome.api.deps import SessionDep, get_storage
 from jerome.api.routes_exports import content_disposition
-from jerome.core.books import get_book
+from jerome.core.books import ensure_imported, get_book
 from jerome.core.exports import safe_title
 from jerome.core.preview import chapter_preview
 from jerome.core.translation import ensure_not_source
@@ -45,6 +45,7 @@ def original(
     a book was imported from."""
     book = get_book(session, book_id)
     ensure_not_source(session, book_id)
+    ensure_imported(book)
     holders = [book.id] + ([book.source_book_id] if book.source_book_id else [])
     if pdf:
         for holder in holders:

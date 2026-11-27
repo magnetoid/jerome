@@ -159,4 +159,25 @@ describe("PreviewPage", () => {
     expect(screen.getByText("Servus 0.").closest("[lang]")).toHaveAttribute("lang", "de-DE");
     expect(screen.getByText("Servus 1.").closest("p")).toHaveClass("no-indent");
   });
+
+  it("says a pending paragraph is not translated yet in the default proofread column", async () => {
+    setup("/projects/7/preview/3");
+    await screen.findByText("Hello 1.");
+    const row = screen.getByText("Hello 1.").closest('[role="row"]') as HTMLElement;
+    expect(within(row).getAllByRole("cell")[1]).toHaveTextContent("Not translated yet");
+  });
+
+  it("marks a flagged paragraph as not translated, in the source language", async () => {
+    const flagged = block(1, {
+      translation: { text: "Hello 1.", marks: [], status: "flagged" },
+      proofread: { text: "Hello 1.", marks: [], changes: [] },
+    });
+    setup("/projects/7/preview/3?view=book&states=original,translation,proofread", page({ blocks: [block(0), flagged] }));
+    await screen.findByText("Hello 0.");
+    const row = screen.getAllByRole("row").find((r) => r.textContent?.includes("Hello 1."))!;
+    const cells = within(row).getAllByRole("cell");
+    expect(cells[1]).toHaveTextContent("Flagged: not translated");
+    expect(cells[2]).toHaveTextContent("Flagged: not translated");
+    expect(cells[1].querySelector("[lang]")).toHaveAttribute("lang", "en-GB");
+  });
 });

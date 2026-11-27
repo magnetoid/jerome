@@ -108,3 +108,15 @@ def test_fonts_are_served(client):
     assert client.get("/fonts/..%2F..%2Form.py").status_code == 404
     assert client.get("/fonts/OFL.txt").status_code == 404
     assert client.get("/fonts/Missing-Font.ttf").status_code == 404
+
+
+def test_original_download_waits_for_the_import(client, auth, session, tmp_storage):
+    book = import_book(
+        session, tmp_storage, filename="i.docx", data=make_docx(["Text."]), variant="en-GB"
+    )
+    tmp_storage.save_source_pdf(book.id, b"%PDF-1.4\n%%EOF\n")
+    for status in ("importing", "failed"):
+        book.import_status = status
+        session.flush()
+        for url in (f"/v1/books/{book.id}/original", f"/v1/books/{book.id}/original?pdf=true"):
+            assert client.get(url, headers=auth).status_code == 409, (status, url)
