@@ -63,7 +63,7 @@ export default function PreviewToolbar({ chapters, chapterId, onChapter, prefs, 
   const toggle = (s: PreviewState) =>
     onPrefs({ ...prefs, states: prefs.states.includes(s) ? prefs.states.filter((x) => x !== s) : [...prefs.states, s] });
   return (
-    <div className="sticky top-0 z-20 -mx-4 border-b bg-background/95 px-4 py-3 backdrop-blur sm:-mx-6 sm:px-6">
+    <div className="border-b pb-3">
       <div className="flex flex-wrap items-end gap-3">
         <div className="grid gap-1">
           <Label htmlFor="preview-chapter" className="text-xs text-muted-foreground">Chapter</Label>

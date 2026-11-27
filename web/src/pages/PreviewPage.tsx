@@ -81,7 +81,7 @@ function ChapterPreview({ bookId, chapterId, chapters }: { bookId: string; chapt
           className="mx-auto text-sm"
           style={width ? { maxWidth: width } : undefined}
         >
-          <div role="row" className="sticky top-[4.75rem] z-10 grid gap-6 border-b bg-background py-2" style={columns}>
+          <div role="row" className="sticky top-0 z-10 grid gap-6 border-b bg-background/95 py-2 backdrop-blur" style={columns}>
             {prefs.states.map((s) => (
               <div key={s} role="columnheader" className="font-medium">
                 {STATE_LABELS[s]}
