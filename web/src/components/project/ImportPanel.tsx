@@ -102,7 +102,7 @@ export default function ImportPanel({ bookId }: { bookId: string }) {
     return (
       <div className="space-y-4">
         {estimate || capped ? (
-          <div className="space-y-3 rounded-lg border p-4">
+          <div className="space-y-3 rounded-lg border bg-card p-4 shadow-xs">
             {estimate ? (
               <p>
                 Estimate ready: {estimate.ocr_pages} pages need AI OCR, about {money(estimate.cost ?? "0")}
