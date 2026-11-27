@@ -201,4 +201,21 @@ describe("PreviewPage", () => {
     expect(proofreadNotes[1]).toHaveTextContent("Flagged: not translated");
     expect(proofreadNotes[1]).toHaveAttribute("lang", "en-GB");
   });
+
+  it("marks the chosen option of each group in the toolbar", async () => {
+    setup("/projects/7/preview/3");
+    await screen.findByText("Hello 0.");
+    const on = (role: string, name: string) => screen.getByRole(role, { name }).getAttribute("data-on");
+    expect(on("radio", "Text")).toBe("true");
+    expect(on("radio", "Book")).toBeNull();
+    expect(on("radio", "Side by side")).toBe("true");
+    expect(on("radio", "Single")).toBeNull();
+    expect(on("checkbox", "Original")).toBe("true");
+    expect(on("checkbox", "Translation")).toBeNull();
+    expect(on("checkbox", "Proofread")).toBe("true");
+
+    await userEvent.setup().click(screen.getByRole("radio", { name: "Book" }));
+    expect(on("radio", "Book")).toBe("true");
+    expect(on("radio", "Text")).toBeNull();
+  });
 });

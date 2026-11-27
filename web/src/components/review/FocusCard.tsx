@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { usePageEnter } from "@/lib/pageEnter";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -167,12 +168,17 @@ export default function FocusCard(p: Props) {
   const rejectFirst = open && s.ai_verdict === "not_an_error";
   const fixFirst = open && s.ai_verdict === "error" && canUseAiFix(s);
   const acceptFirst = !rejectFirst && !fixFirst && !(open && s.ai_verdict === "maybe_error");
+  // The card comes in quietly, and again when it turns to another suggestion in the same
+  // paragraph. It is the same element throughout, so focus and keys are never interrupted.
+  const card = usePageEnter<HTMLElement>(String(s.id), "card-enter");
   return (
     <section
+      ref={card}
       aria-label="Focused suggestion"
       data-focus-card
+      data-suggestion={s.id}
       tabIndex={-1}
-      className="sticky bottom-4 z-[5] mt-2 mb-2 space-y-3 rounded-lg border bg-card p-4 shadow-md outline-none md:mr-[15.5rem]"
+      className="card-enter sticky bottom-4 z-[5] mt-2 mb-2 space-y-3 rounded-lg border bg-card p-4 shadow-md outline-none md:mr-[15.5rem]"
     >
       <Change s={s} />
       {p.source != null && (
