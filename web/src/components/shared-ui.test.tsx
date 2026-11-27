@@ -6,6 +6,7 @@ import Logo from "@/components/Logo";
 import StageBadge, { type Stage } from "@/components/StageBadge";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
 
 describe("Loading", () => {
   it("announces itself once and hides its shapes from screen readers", () => {
@@ -107,5 +108,21 @@ describe("DropZone", () => {
     fireEvent.dragLeave(zone);
     expect(zone).not.toHaveAttribute("data-over");
     expect(zone).not.toHaveClass("border-brand");
+  });
+});
+
+describe("Table", () => {
+  it("never scrolls up and down: a row that rises in must not bring a scrollbar", () => {
+    const { container } = render(
+      <Table>
+        <TableBody>
+          <TableRow className="row-enter">
+            <TableCell>One</TableCell>
+          </TableRow>
+        </TableBody>
+      </Table>,
+    );
+    const frame = container.querySelector('[data-slot="table-container"]');
+    expect(frame).toHaveClass("overflow-x-auto", "overflow-y-hidden");
   });
 });

@@ -117,6 +117,12 @@ describe("the theme", () => {
     expect(bookCss).not.toContain("@font-face");
   });
 
+  it("shows keyboard focus on a plain link as a solid gilt outline", () => {
+    // The ring token carries its own alpha: halving it again made focus nearly invisible.
+    expect(css).not.toContain("outline-ring/50");
+    expect(css).toMatch(/\n  a:focus-visible \{\s*outline: 2px solid var\(--brand\);\s*outline-offset: 2px;/);
+  });
+
   it("links the favicon", () => {
     expect(html).toMatch(/<link rel="icon" type="image\/svg\+xml" href="\/favicon\.svg" \/>/);
   });

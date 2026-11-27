@@ -1,4 +1,4 @@
-import { useState, type CSSProperties } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import { Link } from "react-router-dom";
 import { BookOpenIcon, SearchIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -32,6 +32,8 @@ function nextStep(p: Project): { label: string; to: string } {
 
 /** Only the first rows of a list come in one after another; a long list must not take long. */
 const STAGGERED = 12;
+/** How long the rows take to come in: the last row's delay, its animation, and some slack. */
+const STAGGER_MS = STAGGERED * 25 + 180 + 100;
 
 /** The book's language, or the language pair of a translation (`en-GB → de-DE`). */
 function languageOf(p: Project): string {
@@ -74,6 +76,14 @@ export default function ProjectsPage() {
 }
 
 function ProjectsBody({ projects, search }: { projects: Project[]; search: string }) {
+  // The rows come in once, when the list first shows. The class then goes: the list is
+  // fetched again every few seconds while a job runs, and a row the browser moves to
+  // another place would play a class it still carried a second time.
+  const [entering, setEntering] = useState(true);
+  useEffect(() => {
+    const done = window.setTimeout(() => setEntering(false), STAGGER_MS);
+    return () => window.clearTimeout(done);
+  }, []);
   if (projects.length === 0) {
     return (
       <div className="flex flex-col items-center rounded-xl border border-dashed bg-card p-12 text-center">
@@ -104,7 +114,7 @@ function ProjectsBody({ projects, search }: { projects: Project[]; search: strin
         <TableBody>
           {shown.map((p, i) => {
             const step = nextStep(p);
-            const staggered = i < STAGGERED;
+            const staggered = entering && i < STAGGERED;
             return (
               <TableRow
                 key={p.id}

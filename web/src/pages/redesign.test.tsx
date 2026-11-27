@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, screen, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import { Route, Routes } from "react-router-dom";
 import ActivityPage from "./ActivityPage";
 import ChangePasswordPage from "./ChangePasswordPage";
@@ -87,6 +87,25 @@ describe("Projects", () => {
     const after = bodyRows();
     expect(after[0]).toBe(before[0]);
     expect(after[1]).toBe(before[1]);
+  });
+
+  it("plays the stagger once: a list that comes back in another order does not replay it", async () => {
+    const list = [1, 2, 3].map((id) => project({ id, title: `Book ${id}` }));
+    mockApi({ "GET /v1/projects": () => json(200, list) });
+    const { client } = renderApp(<ProjectsPage />);
+    await screen.findByText("Book 1");
+    const before = bodyRows();
+    expect(before[0]).toHaveClass("row-enter");
+    // Once the rows are in, the class goes: a row the browser moves would play it again.
+    await waitFor(() => expect(bodyRows()[0]).not.toHaveClass("row-enter"), { timeout: 3000 });
+    act(() => {
+      client.setQueryData(PROJECTS_KEY, [list[2], list[0], list[1]]);
+    });
+    const titles = () => bodyRows().map((r) => within(r).getAllByRole("cell")[0].textContent);
+    await waitFor(() => expect(titles()).toEqual(["Book 3", "Book 1", "Book 2"]));
+    const after = bodyRows();
+    expect(after[0]).toBe(before[2]);
+    for (const row of after) expect(row).not.toHaveClass("row-enter");
   });
 
   it("shows each title as a book's name", async () => {

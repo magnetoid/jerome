@@ -63,4 +63,24 @@ describe("usePageEnter", () => {
     expect(screen.getByTestId("box")).toHaveClass("card-enter");
     expect(screen.getByTestId("box")).not.toHaveClass("page-enter");
   });
+
+  it("stays still while the key changes quickly, as when j is held down", () => {
+    const reads = restarts();
+    const clock = vi.spyOn(performance, "now");
+    clock.mockReturnValue(1000);
+    const { rerender } = render(<Box k="1" cls="card-enter" />);
+    rerender(<Box k="2" cls="card-enter" />);
+    expect(reads).toHaveBeenCalledTimes(1);
+    // A change every 33 ms, about the rate of a held key: no restart, the card stays readable.
+    for (const [i, k] of ["3", "4", "5", "6"].entries()) {
+      clock.mockReturnValue(1033 + i * 33);
+      rerender(<Box k={k} cls="card-enter" />);
+    }
+    expect(reads).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("box")).toHaveClass("card-enter");
+    // After a rest the next change plays again.
+    clock.mockReturnValue(1132 + 150);
+    rerender(<Box k="7" cls="card-enter" />);
+    expect(reads).toHaveBeenCalledTimes(2);
+  });
 });
