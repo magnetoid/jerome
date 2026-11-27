@@ -132,14 +132,16 @@
   }
   body {
     @apply bg-background font-sans text-foreground antialiased;
-    /* A theme switch cross-fades instead of snapping. */
-    transition:
-      background-color 200ms,
-      color 200ms;
   }
   ::selection {
     background-color: color-mix(in oklab, var(--brand) 35%, transparent);
   }
+}
+
+/* A theme switch cross-fades the whole page (a view transition, started by the shell). */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 200ms;
 }
 
 /* Motion. Small and quick: it says what happened and never makes a person wait.
@@ -237,5 +239,10 @@
   }
   .pressable:active:not(:disabled) {
     transform: none;
+  }
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
   }
 }

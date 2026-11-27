@@ -1,7 +1,12 @@
 import { cn } from "@/lib/utils";
 
-/** Jerome's mark, a serif J on a gilt square, with the name beside it unless `wordmark` is off. */
-export default function Logo({ wordmark = true, className }: { wordmark?: boolean; className?: string }) {
+/** Jerome's mark, a serif J on a gilt square, with the name beside it unless `wordmark` is
+ * off. `wordmarkClassName` styles the name alone, for places that hide it on small screens. */
+export default function Logo({ wordmark = true, className, wordmarkClassName }: {
+  wordmark?: boolean;
+  className?: string;
+  wordmarkClassName?: string;
+}) {
   return (
     <span className={cn("inline-flex items-center gap-2.5", className)}>
       <span
@@ -11,7 +16,9 @@ export default function Logo({ wordmark = true, className }: { wordmark?: boolea
       >
         J
       </span>
-      {wordmark && <span className="font-display text-[1.35rem] leading-none tracking-tight">Jerome</span>}
+      {wordmark && (
+        <span className={cn("font-display text-[1.35rem] leading-none tracking-tight", wordmarkClassName)}>Jerome</span>
+      )}
     </span>
   );
 }
