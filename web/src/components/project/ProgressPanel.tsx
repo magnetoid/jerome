@@ -86,7 +86,7 @@ export default function ProgressPanel({ bookId, jobId }: { bookId: string; jobId
           <span>Cost so far</span>
           <span>{money(j.cost_actual)} of {money(j.max_cost)}</span>
         </div>
-        <Progress value={pct} aria-label="Cost so far" />
+        <Progress value={pct} running={isJobActive(j)} aria-label="Cost so far" />
       </div>
 
       <ul className="space-y-3">
@@ -100,7 +100,7 @@ export default function ProgressPanel({ bookId, jobId }: { bookId: string; jobId
                 <span>{name}</span>
                 <span className="text-muted-foreground">{progress.text}</span>
               </div>
-              <Progress value={progress.pct} aria-label={name} />
+              <Progress value={progress.pct} running={t.status === "running"} aria-label={name} />
             </li>
           );
         })}

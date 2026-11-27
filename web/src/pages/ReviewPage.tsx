@@ -17,6 +17,8 @@ import {
   canAccept, canEdit, canReject, defaultChapter, hiddenBy, inView, isDecided, viewItems,
   type Filters, type Suggestion, type View,
 } from "@/lib/review";
+import Loading from "@/components/Loading";
+import { Skeleton } from "@/components/ui/skeleton";
 
 const MemoParagraph = memo(Paragraph);
 /** How many of this session's decisions `u` can step back through. */
@@ -299,5 +301,14 @@ export default function ReviewPage() {
   if (summary.data?.length === 0) {
     return <main className="w-full p-8"><p>This book has no chapters to review.</p></main>;
   }
-  return <main className="p-8 text-sm text-muted-foreground">Loading…</main>;
+  return (
+    <main className="w-full p-4 sm:p-8">
+      <Loading className="mx-auto max-w-3xl space-y-4">
+        <Skeleton className="h-8 w-64 max-w-full" />
+        {["w-full", "w-11/12", "w-full", "w-4/5", "w-full", "w-2/3"].map((w, i) => (
+          <Skeleton key={i} className={`h-4 ${w}`} />
+        ))}
+      </Loading>
+    </main>
+  );
 }

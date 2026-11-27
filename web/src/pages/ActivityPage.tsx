@@ -16,6 +16,8 @@ import { NATIVE_SELECT } from "@/components/NativeSelect";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import Loading from "@/components/Loading";
+import { Skeleton } from "@/components/ui/skeleton";
 
 const compact = (v: unknown) => JSON.stringify(v);
 
@@ -96,7 +98,7 @@ export default function ActivityPage() {
   return (
     <main className="w-full space-y-6 p-4 sm:p-8">
       <header className="flex flex-wrap items-center gap-3">
-        <h1 className="text-2xl font-semibold">Activity</h1>
+        <h1 className="font-display text-3xl font-normal tracking-tight">Activity</h1>
         {book && (
           <Link to={`/projects/${book}`} className="text-sm underline underline-offset-4">
             Back to the book
@@ -144,7 +146,10 @@ export default function ActivityPage() {
       {actions.isError ? (
         <p role="alert">Could not load activity.</p>
       ) : actions.isPending ? (
-        <p className="text-muted-foreground">Loading…</p>
+        <Loading className="space-y-2">
+          <Skeleton className="h-10 w-full" />
+          {Array.from({ length: 6 }, (_, i) => <Skeleton key={i} className="h-11 w-full" />)}
+        </Loading>
       ) : rows.length === 0 ? (
         <p className="text-muted-foreground">Nothing has been changed yet.</p>
       ) : (

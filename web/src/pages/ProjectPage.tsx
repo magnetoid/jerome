@@ -24,6 +24,12 @@ import TranslationPanel, { FlaggedParagraphs, SourceBookLink } from "@/component
 import { PROJECTS_KEY, useProjects, type Project } from "@/hooks/useProjects";
 import { useBookJobs } from "@/hooks/useBookJobs";
 import { bookKey, detailOf, latestReviewJob } from "@/lib/jobs";
+import { cn } from "@/lib/utils";
+import Loading from "@/components/Loading";
+import { Skeleton } from "@/components/ui/skeleton";
+
+/** A section of the page as a card on the paper. */
+const PANEL = "rounded-xl border bg-card p-5 shadow-xs";
 
 interface Book {
   id: number;
@@ -81,12 +87,23 @@ export default function ProjectPage() {
     },
   });
 
-  if (projects.isPending) return <main className="p-8 text-sm text-muted-foreground">Loading…</main>;
+  if (projects.isPending) {
+    return (
+      <main className="w-full p-4 sm:p-8">
+        <Loading className="space-y-6">
+          <Skeleton className="h-9 w-72 max-w-full" />
+          <Skeleton className="h-9 w-48" />
+          <Skeleton className="h-40 w-full" />
+          <Skeleton className="h-40 w-full" />
+        </Loading>
+      </main>
+    );
+  }
   if (projects.isError) {
     return <main className="p-8"><p role="alert" className="text-destructive">{detailOf(projects.error)}</p></main>;
   }
   if (!project) {
-    return <main className="w-full p-8"><h1 className="text-2xl font-semibold">Project not found</h1></main>;
+    return <main className="w-full p-8"><h1 className="font-display text-3xl font-normal tracking-tight">Project not found</h1></main>;
   }
 
   const idle = project.active_job === null;
@@ -113,7 +130,7 @@ export default function ProjectPage() {
   return (
     <main className="w-full space-y-6 p-4 sm:p-8">
       <header className="flex flex-wrap items-center gap-3">
-        <h1 className="text-2xl font-semibold">{project.title}</h1>
+        <h1 className="font-display text-3xl font-normal tracking-tight">{project.title}</h1>
         <StageBadge stage={project.stage} />
         {sourceId != null && <SourceBookLink sourceId={sourceId} variant={project.source_variant} />}
         <div className="ml-auto flex flex-wrap items-center gap-3 text-sm">
@@ -144,8 +161,8 @@ export default function ProjectPage() {
           <TabsTrigger value="settings">Settings</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="overview" className="space-y-8 pt-4">
-          <section className="space-y-4">
+        <TabsContent value="overview" className="space-y-6 pt-4">
+          <section className={cn(PANEL, "space-y-4")}>
             <ImportPanel bookId={id} />
             {!importFailed && <MainPanel project={project} format={format} />}
             {resumable && (
@@ -165,13 +182,13 @@ export default function ProjectPage() {
             )}
           </section>
           {laterFlagged && (
-            <div className="border-t pt-4">
+            <div className={PANEL}>
               <FlaggedParagraphs project={project} format={format} />
             </div>
           )}
           <JobsList jobs={jobs} />
           <ExportMenu bookId={id} format={format} untranslated={untranslated} />
-          <div className="space-y-8 border-t pt-4">
+          <div className={cn(PANEL, "space-y-8")}>
             <PublicationSection bookId={id} />
             <FinishedFiles bookId={id} untranslated={untranslated} />
           </div>

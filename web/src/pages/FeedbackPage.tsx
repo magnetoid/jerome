@@ -76,7 +76,7 @@ export default function FeedbackPage() {
   return (
     <main className="w-full max-w-4xl space-y-6 p-4 sm:p-8">
       <header className="space-y-1">
-        <h1 className="text-2xl font-semibold">Feedback</h1>
+        <h1 className="font-display text-3xl font-normal tracking-tight">Feedback</h1>
         <p className="text-sm text-muted-foreground">
           Bug reports, feature requests and recommendations sent with Send feedback, newest first.
         </p>
