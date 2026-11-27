@@ -513,3 +513,44 @@ describe("translate + proofread projects", () => {
     expect(screen.queryByText(/Export waits for/)).not.toBeInTheDocument();
   });
 });
+
+describe("ProjectPage preview and original file", () => {
+  const header = async () => (await screen.findByRole("heading", { level: 1, name: "Sea Book" })).closest("header")!;
+
+  it("links the preview and the uploaded file", async () => {
+    pageApi();
+    renderPage();
+    const h = await header();
+    await waitFor(() => expect(within(h).getByRole("link", { name: "Preview" })).toHaveAttribute("href", "/projects/1/preview"));
+    const original = within(h).getByRole("link", { name: "Download original" });
+    expect(original).toHaveAttribute("href", "/v1/books/1/original");
+    expect(original).toHaveAttribute("download");
+    expect(within(h).queryByRole("link", { name: "Download original PDF" })).not.toBeInTheDocument();
+  });
+
+  it("offers the PDF of a PDF import", async () => {
+    const report = {
+      pages: 3, text_pages: 3, ocr_pages: 0, engine_pages: { ai: 0, tesseract: 0 },
+      image_pages: 0, blank_pages: 0, failed_pages: [], ai_fallbacks: {},
+    };
+    pageApi({ "GET /v1/books/1": () => json(200, { ...BOOK, import_status: null, import_report: report }) });
+    renderPage();
+    const h = await header();
+    expect(await within(h).findByRole("link", { name: "Download original PDF" })).toHaveAttribute(
+      "href", "/v1/books/1/original?pdf=true",
+    );
+  });
+
+  it.each(["importing", "failed"] as const)("shows neither while the import is %s", async (status) => {
+    const f = pageApi(
+      { "GET /v1/books/1": () => json(200, { ...BOOK, import_status: status, import_error: "broken" }) },
+      project({ stage: status === "importing" ? "importing" : "set_up" }),
+    );
+    renderPage();
+    const h = await header();
+    await waitFor(() => expect(callsTo(f, "GET", "/v1/books/1").length).toBeGreaterThan(0));
+    await act(() => new Promise((r) => setTimeout(r, 50))); // the book's answer is drawn
+    expect(within(h).queryByRole("link", { name: "Preview" })).not.toBeInTheDocument();
+    expect(within(h).queryByRole("link", { name: /Download original/ })).not.toBeInTheDocument();
+  });
+});
