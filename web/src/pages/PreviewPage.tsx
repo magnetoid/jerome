@@ -10,6 +10,8 @@ import {
   STATE_LABELS, TRIM_WIDTHS, normalize, prefsSearch, readPrefs, resolvePrefs, usePreview, writePrefs,
   type PreviewBlock, type PreviewPageData, type PreviewState, type PreviewView, type Prefs,
 } from "@/lib/preview";
+import Loading from "@/components/Loading";
+import { Skeleton } from "@/components/ui/skeleton";
 
 const muted = (text: string) => <p className="text-sm italic text-muted-foreground">{text}</p>;
 
@@ -74,7 +76,7 @@ function ChapterPreview({ bookId, chapterId, chapters }: { bookId: string; chapt
         <Link to={`/projects/${bookId}`} className="text-sm text-muted-foreground underline-offset-4 hover:underline">
           Back to the project
         </Link>
-        <h1 className="text-2xl font-semibold">Preview</h1>
+        <h1 className="font-display text-3xl font-normal tracking-tight">Preview</h1>
       </header>
       <PreviewToolbar
         chapters={chapters}
@@ -87,7 +89,11 @@ function ChapterPreview({ bookId, chapterId, chapters }: { bookId: string; chapt
       {query.isError ? (
         <p role="alert" className="text-destructive">{detailOf(query.error)}</p>
       ) : query.isPending ? (
-        <p className="text-sm text-muted-foreground">Loading…</p>
+        <Loading className="space-y-4 pt-2">
+          {["w-full", "w-11/12", "w-full", "w-4/5", "w-full", "w-2/3"].map((w, i) => (
+            <Skeleton key={i} className={`h-4 ${w}`} />
+          ))}
+        </Loading>
       ) : (
         <div
           role="table"
@@ -179,5 +185,14 @@ export default function PreviewPage() {
     return <main className="p-8"><p role="alert" className="text-destructive">{detailOf(summary.error)}</p></main>;
   }
   if (summary.data?.length === 0) return <main className="w-full p-8"><p>This book has no chapters.</p></main>;
-  return <main className="p-8 text-sm text-muted-foreground">Loading…</main>;
+  return (
+    <main className="w-full p-4 sm:p-8">
+      <Loading className="mx-auto max-w-3xl space-y-4">
+        <Skeleton className="h-8 w-64 max-w-full" />
+        {["w-full", "w-11/12", "w-full", "w-4/5", "w-full", "w-2/3"].map((w, i) => (
+          <Skeleton key={i} className={`h-4 ${w}`} />
+        ))}
+      </Loading>
+    </main>
+  );
 }

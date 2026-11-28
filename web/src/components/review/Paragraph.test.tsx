@@ -155,3 +155,11 @@ describe("Paragraph", () => {
     expect(screen.queryByRole("button", { name: /original/i })).toBeNull();
   });
 });
+
+describe("Paragraph marks, motion", () => {
+  it("changes a mark's colours over a moment, not at once", () => {
+    const { container } = render(<Paragraph block={block(100, 1, "𝔄 teh cat", [sug()])} />);
+    const mark = container.querySelector("[data-sid]")!;
+    expect(mark).toHaveClass("transition-colors", "duration-150");
+  });
+});

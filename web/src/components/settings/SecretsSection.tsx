@@ -116,7 +116,7 @@ function SecretItem({ row, storageReady }: { row: SecretRow; storageReady: boole
   }
 
   return (
-    <div role="group" aria-label={label} className="grid gap-2 rounded-lg border p-4">
+    <div role="group" aria-label={label} className="grid gap-2 rounded-lg border bg-card p-4 shadow-xs">
       <div className="flex flex-wrap items-center gap-2">
         <span className="font-medium">{label}</span>
         <span className="text-sm text-muted-foreground">{statusOf(row)}</span>

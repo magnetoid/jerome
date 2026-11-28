@@ -238,3 +238,42 @@ describe("FocusCard decided mark", () => {
     expect(screen.getByText("Needs you")).toBeInTheDocument();
   });
 });
+
+describe("FocusCard motion", () => {
+  const noop = () => {};
+  const card = (s: Suggestion) => (
+    <FocusCard
+      s={s} hiddenBy={null} editing={false} busy={false} canUndo={false} asking={false}
+      onAccept={noop} onReject={noop} onEdit={noop} onUndo={noop} onSave={noop} onCancelEdit={noop}
+      onAskAi={noop} onUseAiFix={noop} onUseOption={noop} onRemember={noop}
+    />
+  );
+
+  it("enters, and says which suggestion it shows", () => {
+    render(card(sug({ id: 2 })));
+    const el = screen.getByRole("region", { name: "Focused suggestion" });
+    expect(el).toHaveClass("card-enter");
+    expect(el).toHaveAttribute("data-suggestion", "2");
+  });
+
+  it("enters again for another suggestion, as the same card", () => {
+    // One read of offsetWidth is one restart of the CSS animation.
+    const reads = vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockReturnValue(0);
+    try {
+      const { rerender } = render(card(sug({ id: 2 })));
+      const el = screen.getByRole("region", { name: "Focused suggestion" });
+      reads.mockClear();
+
+      rerender(card(sug({ id: 2, status: "accepted" })));
+      expect(reads).not.toHaveBeenCalled();
+
+      rerender(card(sug({ id: 3 })));
+      expect(screen.getByRole("region", { name: "Focused suggestion" })).toBe(el);
+      expect(el).toHaveAttribute("data-suggestion", "3");
+      expect(el).toHaveClass("card-enter");
+      expect(reads).toHaveBeenCalledTimes(1);
+    } finally {
+      reads.mockRestore();
+    }
+  });
+});

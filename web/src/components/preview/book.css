@@ -1,35 +1,7 @@
-@font-face {
-  font-family: "EB Garamond";
-  src: url("/fonts/EBGaramond-Regular.ttf") format("truetype");
-  font-weight: 400;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: "EB Garamond";
-  src: url("/fonts/EBGaramond-Italic.ttf") format("truetype");
-  font-weight: 400;
-  font-style: italic;
-  font-display: swap;
-}
-@font-face {
-  font-family: "EB Garamond";
-  src: url("/fonts/EBGaramond-Bold.ttf") format("truetype");
-  font-weight: 700;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: "EB Garamond";
-  src: url("/fonts/EBGaramond-BoldItalic.ttf") format("truetype");
-  font-weight: 700;
-  font-style: italic;
-  font-display: swap;
-}
-
 /* A book page: the typeface and setting of the published book. */
 .book {
   font-family: "EB Garamond", serif;
+  font-feature-settings: normal;
   font-size: 1.0625rem;
   line-height: 1.45;
   text-align: justify;

@@ -9,6 +9,7 @@ import { money } from "@/lib/format";
 import {
   chaptersKey, detailOf, jobKey, jobNoun, jobsKey, latestReviewJob, type Chapter, type Job,
 } from "@/lib/jobs";
+import Loading from "@/components/Loading";
 
 interface Props {
   bookId: string;
@@ -51,7 +52,7 @@ export default function AttentionPanel({ bookId, activeJobId }: Props) {
     },
   });
 
-  if (source.isPending) return <p className="text-sm text-muted-foreground">Loading…</p>;
+  if (source.isPending) return <Loading />;
   if (source.isError) return <p role="alert" className="text-sm text-destructive">{detailOf(source.error)}</p>;
   if (!job) return <p className="text-sm">Something needs your attention, but no job was found.</p>;
 

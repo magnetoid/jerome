@@ -53,7 +53,7 @@ export default function SettingsPage() {
 
   return (
     <main className="w-full space-y-8 p-6">
-      <h1 className="text-2xl font-semibold">Settings</h1>
+      <h1 className="font-display text-3xl font-normal tracking-tight">Settings</h1>
 
       {me && !isSuperAdmin ? (
         <p className="text-muted-foreground">Only the super admin can change settings.</p>

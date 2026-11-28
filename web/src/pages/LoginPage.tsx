@@ -4,9 +4,10 @@ import { useQueryClient } from "@tanstack/react-query";
 import { ApiError, apiFetch } from "@/lib/api";
 import { ME_KEY, type Me } from "@/hooks/useMe";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import Logo from "@/components/Logo";
 
 /** Only same-site paths: starts with one "/" and is not "//host" or "/\host". */
 export function safeNext(next: string | null): string {
@@ -58,10 +59,12 @@ export default function LoginPage() {
 
   return (
     <main className="flex min-h-screen items-center justify-center p-4">
-      <Card className="w-full max-w-sm">
-        <CardHeader>
-          <CardTitle className="text-2xl">Jerome</CardTitle>
-        </CardHeader>
+      <div className="page-enter w-full max-w-sm">
+        <div className="mb-8 flex flex-col items-center gap-3 text-center">
+          <Logo size="lg" />
+          <p className="text-sm text-muted-foreground">Proofreading and translation for books</p>
+        </div>
+        <Card>
         <CardContent>
           <form onSubmit={onSubmit} className="grid gap-4">
             <div className="grid gap-2">
@@ -96,7 +99,8 @@ export default function LoginPage() {
             </Button>
           </form>
         </CardContent>
-      </Card>
+        </Card>
+      </div>
     </main>
   );
 }

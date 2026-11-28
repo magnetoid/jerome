@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { UploadIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const OK = /\.(docx|epub|pdf)$/i;
@@ -28,9 +29,10 @@ export default function DropZone({ file, onFile, onReject }: Props) {
         role="button"
         tabIndex={0}
         aria-label="Choose a file or drop it here"
+        data-over={over ? "true" : undefined}
         className={cn(
-          "flex cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border-2 border-dashed p-8 text-center outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50",
-          over && "border-primary bg-accent",
+          "group flex cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border-2 border-dashed p-8 text-center outline-none transition-[transform,background-color,border-color] duration-150 hover:border-foreground/30 hover:bg-muted/50 focus-visible:border-brand focus-visible:ring-[3px] focus-visible:ring-ring",
+          over && "scale-[1.01] border-brand bg-brand/10 hover:border-brand hover:bg-brand/10",
         )}
         onClick={() => input.current?.click()}
         onKeyDown={(e) => {
@@ -50,6 +52,13 @@ export default function DropZone({ file, onFile, onReject }: Props) {
           take(e.dataTransfer.files?.[0]);
         }}
       >
+        <UploadIcon
+          aria-hidden
+          className={cn(
+            "mb-1 size-6 text-muted-foreground transition-[transform,color] duration-150 group-hover:text-foreground",
+            over && "-translate-y-1 text-foreground",
+          )}
+        />
         {file ? (
           <span className="font-medium">{file.name}</span>
         ) : (

@@ -46,7 +46,7 @@ function tooltip(s: Suggestion): string {
 
 function markClass(s: Suggestion, active: boolean, focused: boolean): string {
   return cn(
-    "underline-offset-4",
+    "underline-offset-4 transition-colors duration-150",
     s.status === "open" && active && "underline decoration-amber-500 decoration-2",
     s.status === "open" && !active && "underline decoration-dotted decoration-muted-foreground/60",
     s.status !== "open" && !s.auto_applied && "underline decoration-dotted decoration-foreground/25",

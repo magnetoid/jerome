@@ -10,7 +10,7 @@ function Group({ label, children, role }: { label: string; children: ReactNode; 
   return (
     <div className="grid gap-1">
       <span className="text-xs text-muted-foreground">{label}</span>
-      <div role={role ?? "group"} aria-label={label} className="flex rounded-md border p-0.5">
+      <div role={role ?? "group"} aria-label={label} className="flex rounded-md border bg-card p-0.5">
         {children}
       </div>
     </div>
@@ -25,11 +25,15 @@ function Toggle({ on, role, disabled, onClick, children }: {
       type="button"
       role={role}
       aria-checked={on}
+      data-on={on ? "true" : undefined}
       disabled={disabled}
       onClick={onClick}
       className={cn(
-        "h-7 rounded px-2.5 text-sm transition-colors disabled:cursor-not-allowed",
-        on ? "bg-secondary font-medium text-secondary-foreground" : "text-muted-foreground hover:text-foreground",
+        "h-7 rounded px-2.5 text-sm outline-none transition-[background-color,color,box-shadow] duration-[120ms] focus-visible:ring-[3px] focus-visible:ring-ring disabled:cursor-not-allowed",
+        // The chosen option carries a gilt line under it.
+        on
+          ? "bg-secondary font-medium text-secondary-foreground shadow-[inset_0_-2px_0_var(--brand)]"
+          : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
         disabled && !on && "opacity-50",
       )}
     >

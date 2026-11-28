@@ -76,7 +76,7 @@ export default function FeedbackPage() {
   return (
     <main className="w-full max-w-4xl space-y-6 p-4 sm:p-8">
       <header className="space-y-1">
-        <h1 className="text-2xl font-semibold">Feedback</h1>
+        <h1 className="font-display text-3xl font-normal tracking-tight">Feedback</h1>
         <p className="text-sm text-muted-foreground">
           Bug reports, feature requests and recommendations sent with Send feedback, newest first.
         </p>
@@ -109,7 +109,7 @@ export default function FeedbackPage() {
               <li
                 key={f.id}
                 aria-label={`${label} from ${f.created_by}`}
-                className={cn("rounded-lg border p-4", f.status === "done" && "opacity-70")}
+                className={cn("rounded-lg border bg-card p-4 shadow-xs", f.status === "done" && "opacity-70")}
               >
                 <div className="flex flex-col gap-4 sm:flex-row">
                   <div className="min-w-0 flex-1 space-y-2">

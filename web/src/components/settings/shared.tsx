@@ -138,7 +138,7 @@ export function SettingFrame({
   saveLabel?: string;
 }) {
   return (
-    <div role="group" aria-label={label} className="grid gap-2 rounded-lg border p-4">
+    <div role="group" aria-label={label} className="grid gap-2 rounded-lg border bg-card p-4 shadow-xs">
       <div className="font-medium">{label}</div>
       {children}
       <SourceNote row={row} />

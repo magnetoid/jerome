@@ -137,7 +137,7 @@ export default function TeamPage() {
 
   return (
     <main className="w-full space-y-8 p-6">
-      <h1 className="text-2xl font-semibold">Team</h1>
+      <h1 className="font-display text-3xl font-normal tracking-tight">Team</h1>
 
       {me && !isSuperAdmin ? (
         <p className="text-muted-foreground">Only a super admin can manage the team</p>

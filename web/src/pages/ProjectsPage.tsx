@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import { Link } from "react-router-dom";
+import { BookOpenIcon, SearchIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -8,6 +9,8 @@ import {
 } from "@/components/ui/table";
 import StageBadge from "@/components/StageBadge";
 import RunningJobsStrip from "@/components/RunningJobsStrip";
+import Loading from "@/components/Loading";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useProjects, type Project } from "@/hooks/useProjects";
 import { actorLabel } from "@/lib/review";
 import { relativeTime, variantLabel } from "@/lib/format";
@@ -27,6 +30,11 @@ function nextStep(p: Project): { label: string; to: string } {
   }
 }
 
+/** Only the first rows of a list come in one after another; a long list must not take long. */
+const STAGGERED = 12;
+/** How long the rows take to come in: the last row's delay, its animation, and some slack. */
+const STAGGER_MS = STAGGERED * 25 + 180 + 100;
+
 /** The book's language, or the language pair of a translation (`en-GB → de-DE`). */
 function languageOf(p: Project): string {
   if (p.work === "translate" && p.source_variant) return `${p.source_variant} → ${p.variant}`;
@@ -40,14 +48,15 @@ export default function ProjectsPage() {
   return (
     <main className="w-full p-4 sm:p-8">
       <div className="mb-6 flex items-center gap-4">
-        <h1 className="text-2xl font-semibold">Projects</h1>
-        <div className="ml-auto flex items-center gap-2">
+        <h1 className="font-display text-3xl font-normal tracking-tight">Projects</h1>
+        <div className="relative ml-auto">
           <Label htmlFor="project-search" className="sr-only">Search projects</Label>
+          <SearchIcon aria-hidden className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             id="project-search"
             type="search"
             placeholder="Search projects"
-            className="w-64"
+            className="w-64 bg-card pl-8"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
@@ -55,17 +64,33 @@ export default function ProjectsPage() {
       </div>
 
       {q.isError && <p role="alert">Could not load projects. Try reloading the page.</p>}
-      {q.isPending && <p className="text-muted-foreground">Loading…</p>}
+      {q.isPending && (
+        <Loading className="space-y-2">
+          <Skeleton className="h-10 w-full" />
+          {Array.from({ length: 5 }, (_, i) => <Skeleton key={i} className="h-14 w-full" />)}
+        </Loading>
+      )}
       {q.data && <ProjectsBody projects={q.data} search={search} />}
     </main>
   );
 }
 
 function ProjectsBody({ projects, search }: { projects: Project[]; search: string }) {
+  // The rows come in once, when the list first shows. The class then goes: the list is
+  // fetched again every few seconds while a job runs, and a row the browser moves to
+  // another place would play a class it still carried a second time.
+  const [entering, setEntering] = useState(true);
+  useEffect(() => {
+    const done = window.setTimeout(() => setEntering(false), STAGGER_MS);
+    return () => window.clearTimeout(done);
+  }, []);
   if (projects.length === 0) {
     return (
-      <div className="rounded-lg border p-12 text-center">
-        <p className="mb-4 text-lg">No projects yet</p>
+      <div className="flex flex-col items-center rounded-xl border border-dashed bg-card p-12 text-center">
+        <span aria-hidden className="mb-4 grid size-12 place-items-center rounded-full bg-muted text-muted-foreground">
+          <BookOpenIcon className="size-6" />
+        </span>
+        <p className="mb-4 font-display text-2xl">No projects yet</p>
         <Button asChild><Link to="/projects/new">+ New project</Link></Button>
       </div>
     );
@@ -87,12 +112,17 @@ function ProjectsBody({ projects, search }: { projects: Project[]; search: strin
           </TableRow>
         </TableHeader>
         <TableBody>
-          {shown.map((p) => {
+          {shown.map((p, i) => {
             const step = nextStep(p);
+            const staggered = entering && i < STAGGERED;
             return (
-              <TableRow key={p.id}>
-                <TableCell className="font-medium">
-                  <Link to={`/projects/${p.id}`} className="underline-offset-2 hover:underline">{p.title}</Link>
+              <TableRow
+                key={p.id}
+                className={staggered ? "row-enter" : undefined}
+                style={staggered ? ({ "--i": i } as CSSProperties) : undefined}
+              >
+                <TableCell>
+                  <Link to={`/projects/${p.id}`} className="font-display text-lg leading-tight underline-offset-4 hover:underline">{p.title}</Link>
                 </TableCell>
                 <TableCell>{languageOf(p)}</TableCell>
                 <TableCell><StageBadge stage={p.stage} /></TableCell>

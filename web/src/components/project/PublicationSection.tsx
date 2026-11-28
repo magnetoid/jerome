@@ -9,6 +9,7 @@ import {
   TRIM_SIZES, useDeleteCover, usePublication, useSavePublication, useUploadCover,
   type Publication, type PublicationValues,
 } from "@/lib/publication";
+import Loading from "@/components/Loading";
 
 /** Text fields of the form, with their labels; an empty field is sent as null (cleared). */
 const TEXT_FIELDS = [
@@ -27,7 +28,7 @@ export default function PublicationSection({ bookId }: { bookId: string }) {
   return (
     <section className="space-y-3">
       <h2 className="text-lg font-medium">Publication</h2>
-      {publication.isPending && <p className="text-sm text-muted-foreground">Loading…</p>}
+      {publication.isPending && <Loading />}
       {publication.isError && (
         <p role="alert" className="text-sm text-destructive">{detailOf(publication.error)}</p>
       )}

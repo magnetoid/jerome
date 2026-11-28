@@ -1,4 +1,35 @@
 @import "tailwindcss";
+@import "tw-animate-css";
+
+/* The book face, served by Jerome itself. Display type here, and the Book view's text. */
+@font-face {
+  font-family: "EB Garamond";
+  src: url("/fonts/EBGaramond-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "EB Garamond";
+  src: url("/fonts/EBGaramond-Italic.ttf") format("truetype");
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: "EB Garamond";
+  src: url("/fonts/EBGaramond-Bold.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "EB Garamond";
+  src: url("/fonts/EBGaramond-BoldItalic.ttf") format("truetype");
+  font-weight: 700;
+  font-style: italic;
+  font-display: swap;
+}
 
 /* dark: variants follow the .dark class that next-themes sets on <html>. */
 @custom-variant dark (&:where(.dark, .dark *));
@@ -27,61 +58,197 @@
   --color-input: var(--input);
   --color-ring: var(--ring);
   --color-ai: var(--ai);
+  --color-brand: var(--brand);
+  --color-brand-foreground: var(--brand-foreground);
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-sans--font-feature-settings: "cv11", "ss01";
+  --font-display: "EB Garamond", ui-serif, Georgia, serif;
+  --font-display--font-feature-settings: normal;
 }
 
+/* Paper, ink and gilt: warm neutrals, ink for actions, gilt as the one accent. */
 :root {
   color-scheme: light dark;
   --radius: 0.625rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.129 0.042 264.695);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.129 0.042 264.695);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.129 0.042 264.695);
-  --primary: oklch(0.208 0.042 265.755);
-  --primary-foreground: oklch(0.984 0.003 247.858);
-  --secondary: oklch(0.968 0.007 247.896);
-  --secondary-foreground: oklch(0.208 0.042 265.755);
-  --muted: oklch(0.968 0.007 247.896);
-  --muted-foreground: oklch(0.554 0.046 257.417);
-  --accent: oklch(0.968 0.007 247.896);
-  --accent-foreground: oklch(0.208 0.042 265.755);
+  --background: oklch(0.985 0.006 85);
+  --foreground: oklch(0.21 0.02 60);
+  --card: oklch(0.998 0.003 85);
+  --card-foreground: oklch(0.21 0.02 60);
+  --popover: oklch(0.998 0.003 85);
+  --popover-foreground: oklch(0.21 0.02 60);
+  --primary: oklch(0.24 0.02 60);
+  --primary-foreground: oklch(0.985 0.006 85);
+  --secondary: oklch(0.955 0.008 85);
+  --secondary-foreground: oklch(0.24 0.02 60);
+  --muted: oklch(0.955 0.008 85);
+  --muted-foreground: oklch(0.5 0.02 70);
+  --accent: oklch(0.955 0.008 85);
+  --accent-foreground: oklch(0.24 0.02 60);
   --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.929 0.013 255.508);
-  --input: oklch(0.929 0.013 255.508);
-  --ring: oklch(0.704 0.04 256.788);
+  --border: oklch(0.9 0.01 85);
+  --input: oklch(0.9 0.01 85);
+  /* Gilt. An accent only: markers, focus rings, progress. Never body text on paper. */
+  --brand: oklch(0.72 0.13 78);
+  --brand-foreground: oklch(0.24 0.02 60);
+  --ring: oklch(0.72 0.13 78 / 55%);
   /* Changes the AI applied, and its notes on them, in the review screen. */
   --ai: oklch(0.5 0.2 295);
+
+  /* Motion: one easing, three lengths. */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --dur-fast: 120ms;
+  --dur-base: 180ms;
+  --dur-page: 240ms;
 }
 
 /* The dark tokens apply under .dark. */
 .dark {
-  --background: oklch(0.129 0.042 264.695);
-  --foreground: oklch(0.984 0.003 247.858);
-  --card: oklch(0.208 0.042 265.755);
-  --card-foreground: oklch(0.984 0.003 247.858);
-  --popover: oklch(0.208 0.042 265.755);
-  --popover-foreground: oklch(0.984 0.003 247.858);
-  --primary: oklch(0.929 0.013 255.508);
-  --primary-foreground: oklch(0.208 0.042 265.755);
-  --secondary: oklch(0.279 0.041 260.031);
-  --secondary-foreground: oklch(0.984 0.003 247.858);
-  --muted: oklch(0.279 0.041 260.031);
-  --muted-foreground: oklch(0.704 0.04 256.788);
-  --accent: oklch(0.279 0.041 260.031);
-  --accent-foreground: oklch(0.984 0.003 247.858);
+  --background: oklch(0.17 0.008 70);
+  --foreground: oklch(0.95 0.01 85);
+  --card: oklch(0.21 0.008 70);
+  --card-foreground: oklch(0.95 0.01 85);
+  --popover: oklch(0.21 0.008 70);
+  --popover-foreground: oklch(0.95 0.01 85);
+  --primary: oklch(0.93 0.012 85);
+  --primary-foreground: oklch(0.2 0.01 70);
+  --secondary: oklch(0.26 0.008 70);
+  --secondary-foreground: oklch(0.95 0.01 85);
+  --muted: oklch(0.26 0.008 70);
+  --muted-foreground: oklch(0.72 0.015 80);
+  --accent: oklch(0.26 0.008 70);
+  --accent-foreground: oklch(0.95 0.01 85);
   --destructive: oklch(0.704 0.191 22.216);
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.551 0.027 264.364);
+  --brand: oklch(0.8 0.12 82);
+  --brand-foreground: oklch(0.2 0.01 70);
+  --ring: oklch(0.8 0.12 82 / 55%);
   --ai: oklch(0.78 0.13 295);
 }
 
 @layer base {
   * {
-    @apply border-border outline-ring/50;
+    @apply border-border outline-ring;
+  }
+  /* A link without a ring of its own still shows where the keyboard is. */
+  a:focus-visible {
+    outline: 2px solid var(--brand);
+    outline-offset: 2px;
+    border-radius: 2px;
   }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background font-sans text-foreground antialiased;
+  }
+  ::selection {
+    background-color: color-mix(in oklab, var(--brand) 35%, transparent);
+  }
+}
+
+/* A theme switch cross-fades the whole page (a view transition, started by the shell). */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 200ms;
+}
+
+/* Motion. Small and quick: it says what happened and never makes a person wait.
+   None of these keeps a fill after it ends, so no element is left with a transform. */
+@keyframes page-enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+@keyframes row-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+@keyframes card-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+@keyframes shimmer {
+  to {
+    transform: translateX(100%);
+  }
+}
+@keyframes pulse-dot {
+  50% {
+    opacity: 0.35;
+    transform: scale(0.75);
+  }
+}
+@keyframes skeleton {
+  50% {
+    opacity: 0.5;
+  }
+}
+
+@layer components {
+  /* A page's content, on a route change. */
+  .page-enter {
+    animation: page-enter var(--dur-page) var(--ease-out);
+  }
+  /* A list row on first show; --i is its index, for the stagger. */
+  .row-enter {
+    animation: row-enter var(--dur-base) var(--ease-out) backwards;
+    animation-delay: calc(var(--i, 0) * 25ms);
+  }
+  /* A card whose subject changed. */
+  .card-enter {
+    animation: card-enter var(--dur-fast) var(--ease-out);
+  }
+  /* A light band crossing something that is running. */
+  .shimmer {
+    position: relative;
+    overflow: hidden;
+  }
+  .shimmer::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    transform: translateX(-100%);
+    background-image: linear-gradient(90deg, transparent, oklch(1 0 0 / 50%), transparent);
+    animation: shimmer 1.6s linear infinite;
+  }
+  .pulse-dot {
+    animation: pulse-dot 1.4s ease-in-out infinite;
+  }
+  /* A placeholder in the shape of content that is loading. */
+  .skeleton {
+    border-radius: calc(var(--radius) - 2px);
+    background-color: var(--muted);
+    animation: skeleton 1.4s ease-in-out infinite;
+  }
+  .pressable {
+    transition: transform var(--dur-fast) var(--ease-out);
+  }
+  .pressable:active:not(:disabled) {
+    transform: scale(0.97);
+  }
+}
+
+/* A person who asked for less motion gets none: nothing moves, pulses or shimmers. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0s !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0s !important;
+    scroll-behavior: auto !important;
+  }
+  .pressable:active:not(:disabled) {
+    transform: none;
+  }
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
   }
 }

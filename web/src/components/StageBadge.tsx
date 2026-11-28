@@ -18,10 +18,16 @@ const STAGES: Record<
   done: { label: "Done", variant: "outline", className: "border-green-600 text-green-700 dark:text-green-400" },
 };
 
+/** Stages in which Jerome is working right now: their badge carries a pulsing dot. */
+const RUNNING: ReadonlySet<Stage> = new Set(["importing", "translating", "proofreading"]);
+
 export default function StageBadge({ stage }: { stage: Stage }) {
   const s = STAGES[stage];
   return (
-    <Badge variant={s.variant} className={cn(s.className)} data-stage={stage}>
+    <Badge variant={s.variant} className={cn(RUNNING.has(stage) && "gap-1.5", s.className)} data-stage={stage}>
+      {RUNNING.has(stage) && (
+        <span data-running-dot aria-hidden className="pulse-dot size-1.5 shrink-0 rounded-full bg-brand" />
+      )}
       {s.label}
     </Badge>
   );
