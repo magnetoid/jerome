@@ -32,6 +32,8 @@ interface Book {
   /** The hidden source book of a translation; absent from older servers. */
   source_book_id?: number | null;
   import_status?: "importing" | "failed" | null;
+  /** Set once a PDF import finished: the book was made from a PDF. */
+  import_report?: unknown;
 }
 
 function MainPanel({ project, format }: { project: Project; format: string }) {
@@ -90,6 +92,8 @@ export default function ProjectPage() {
   const idle = project.active_job === null;
   // A PDF whose import failed has no review to act on; the ImportPanel offers Retry.
   const importFailed = book.data?.import_status === "failed";
+  // Preview and the original file wait for the import to finish.
+  const imported = book.data !== undefined && book.data.import_status !== "importing" && !importFailed;
   const format = book.data?.format ?? project.format;
   // A cancelled job is not a stage of its own (the stage shows what is there to review), but
   // the cancel promised it could be resumed: offer that until another job takes its place.
@@ -112,9 +116,26 @@ export default function ProjectPage() {
         <h1 className="text-2xl font-semibold">{project.title}</h1>
         <StageBadge stage={project.stage} />
         {sourceId != null && <SourceBookLink sourceId={sourceId} variant={project.source_variant} />}
-        <Link to={`/activity?book=${id}`} className="ml-auto text-sm text-muted-foreground underline underline-offset-4">
-          Activity for this book
-        </Link>
+        <div className="ml-auto flex flex-wrap items-center gap-3 text-sm">
+          {imported && (
+            <>
+              <Button asChild size="sm" variant="outline">
+                <Link to={`/projects/${id}/preview`}>Preview</Link>
+              </Button>
+              <a href={`/v1/books/${id}/original`} download className="text-muted-foreground underline underline-offset-4">
+                Download original
+              </a>
+              {book.data?.import_report != null && (
+                <a href={`/v1/books/${id}/original?pdf=true`} download className="text-muted-foreground underline underline-offset-4">
+                  Download original PDF
+                </a>
+              )}
+            </>
+          )}
+          <Link to={`/activity?book=${id}`} className="text-muted-foreground underline underline-offset-4">
+            Activity for this book
+          </Link>
+        </div>
       </header>
 
       <Tabs defaultValue="overview">

@@ -15,6 +15,7 @@ from jerome.api import (
     routes_exports,
     routes_feedback,
     routes_jobs,
+    routes_preview,
     routes_projects,
     routes_publication,
     routes_publish,
@@ -28,7 +29,7 @@ from jerome.api.auth import LoginThrottle
 from jerome.api.deps import current_principal
 from jerome.api.limits import BodyLimitMiddleware
 from jerome.api.runtime import install as install_settings
-from jerome.api.web import mount_web
+from jerome.api.web import mount_fonts, mount_web
 from jerome.config import Settings, get_settings
 from jerome.core.app_settings import InvalidSetting
 from jerome.core.publication import InvalidPublication
@@ -123,6 +124,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(routes_agent_actions.router, prefix="/v1", dependencies=auth)
     app.include_router(routes_activity.router, prefix="/v1", dependencies=auth)
     app.include_router(routes_feedback.router, prefix="/v1", dependencies=auth)
+    app.include_router(routes_preview.router, prefix="/v1", dependencies=auth)
+    mount_fonts(app)
     mount_mcp(app)  # /mcp, outside /v1, with its own Bearer-only auth
     # The catch-all web app goes last, so it never shadows an API route.
     if settings.web_dir is not None:

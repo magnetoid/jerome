@@ -123,7 +123,8 @@ def _review_changes(
     return changes, statuses
 
 
-def _safe_title(book) -> str:
+def safe_title(book) -> str:
+    """The book's title made safe for a file name."""
     title = re.sub(r"[/\\\x00-\x1f\x7f]", "_", book.title or "").strip()
     return title or PurePath(book.original_filename or "").stem or "book"
 
@@ -169,7 +170,7 @@ def _review_copy(
         {"jerome_review_export_id": str(rx.id)},
     )
     data = write_docx(original_for(session, storage, book), changes, options)
-    filename = f"{_safe_title(book)}-review-{rx.id}.docx"
+    filename = f"{safe_title(book)}-review-{rx.id}.docx"
     storage.save_export(book.id, filename, data)
     return ExportFile(filename, DOCX_MEDIA_TYPE, data)
 
